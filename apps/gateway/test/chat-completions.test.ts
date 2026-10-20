@@ -1,12 +1,10 @@
 import { request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { parseConfig } from '@ai-gateway/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { gatewayConfigSchema } from '../src/config.js';
 import { createGateway, type Gateway } from '../src/gateway.js';
 import { parseModelsConfig } from '../src/models-config.js';
 import type { MockProvider } from '../src/providers/mock.js';
-import { captureLogger, sseData } from './helpers.js';
+import { captureLogger, sseData, testConfig } from './helpers.js';
 
 /** Real timings, kept small; timeout cases use wide margins so they cannot flake. */
 const models = parseModelsConfig(
@@ -38,11 +36,7 @@ let gateway: Gateway;
 let baseUrl: string;
 
 beforeAll(async () => {
-  const config = parseConfig(gatewayConfigSchema, {
-    DATABASE_URL: process.env.DATABASE_URL,
-    REDIS_URL: process.env.REDIS_URL,
-    PORT: '0',
-  });
+  const config = testConfig();
   gateway = createGateway(config, captureLogger().logger, { models });
   await gateway.start();
   const { port } = gateway.app.server.address() as AddressInfo;
@@ -175,10 +169,7 @@ describe('chat completions over HTTP against the mock (streaming)', () => {
   });
 
   it('lets an in-flight stream finish during shutdown, then closes its socket', async () => {
-    const config = parseConfig(gatewayConfigSchema, {
-      DATABASE_URL: process.env.DATABASE_URL,
-      REDIS_URL: process.env.REDIS_URL,
-      PORT: '0',
+    const config = testConfig({
       SHUTDOWN_TIMEOUT_MS: '20000',
     });
     const own = createGateway(config, captureLogger().logger, { models });

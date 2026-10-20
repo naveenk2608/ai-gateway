@@ -1,9 +1,7 @@
 import type { AddressInfo } from 'node:net';
-import { parseConfig } from '@ai-gateway/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { gatewayConfigSchema } from '../src/config.js';
 import { createGateway, type Gateway } from '../src/gateway.js';
-import { captureLogger, noModels } from './helpers.js';
+import { captureLogger, noModels, testConfig } from './helpers.js';
 
 /** Nothing listens on port 1, so connections are refused at once. */
 const CLOSED_PORT_PG = 'postgres://gateway@127.0.0.1:1/gateway';
@@ -12,11 +10,10 @@ const CLOSED_PORT_REDIS = 'redis://127.0.0.1:1';
 let running: Gateway | undefined;
 
 async function start(overrides: Record<string, string> = {}) {
-  const config = parseConfig(gatewayConfigSchema, {
-    DATABASE_URL: process.env.DATABASE_URL,
-    REDIS_URL: process.env.REDIS_URL,
-    PORT: '0',
+  const config = testConfig({
     READY_CHECK_TIMEOUT_MS: '1000',
+    // Some cases point at an unreachable Postgres; the global setup has already migrated.
+    MIGRATE_ON_START: 'false',
     ...overrides,
   });
   const { logger } = captureLogger();

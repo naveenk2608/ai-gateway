@@ -1,12 +1,10 @@
 import { request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { parseConfig } from '@ai-gateway/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { gatewayConfigSchema } from '../src/config.js';
 import { createGateway, type Gateway } from '../src/gateway.js';
 import { parseModelsConfig } from '../src/models-config.js';
 import { openAIStream, sendJson, startFakeUpstream, type FakeUpstream } from './fake-upstream.js';
-import { captureLogger, sseData } from './helpers.js';
+import { captureLogger, sseData, testConfig } from './helpers.js';
 
 /** The gateway calling an OpenAI-compatible upstream over real HTTP (undici, ADR 004). */
 let upstream: FakeUpstream;
@@ -57,11 +55,7 @@ beforeAll(async () => {
     },
     'hosted-test',
   );
-  const config = parseConfig(gatewayConfigSchema, {
-    DATABASE_URL: process.env.DATABASE_URL,
-    REDIS_URL: process.env.REDIS_URL,
-    PORT: '0',
-  });
+  const config = testConfig();
   gateway = createGateway(config, captureLogger().logger, {
     models,
     env: { TEST_UPSTREAM_KEY: 'test-key-not-secret' },

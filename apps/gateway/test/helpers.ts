@@ -1,8 +1,24 @@
+import { randomBytes } from 'node:crypto';
 import { Writable } from 'node:stream';
-import type { ManualClock } from '@ai-gateway/shared';
+import { parseConfig, type ManualClock } from '@ai-gateway/shared';
 import { createLogger, type Logger } from '@ai-gateway/shared/node';
 import { vi } from 'vitest';
+import { gatewayConfigSchema, type GatewayConfig } from '../src/config.js';
 import { parseModelsConfig, type ModelsConfig } from '../src/models-config.js';
+
+/** One random pepper per test run: no secret is committed, and keys from other runs never match. */
+export const TEST_PEPPER = randomBytes(32).toString('hex');
+
+/** Gateway config for integration tests: Compose services, a random port, the test pepper. */
+export function testConfig(overrides: Record<string, string | undefined> = {}): GatewayConfig {
+  return parseConfig(gatewayConfigSchema, {
+    DATABASE_URL: process.env.DATABASE_URL,
+    REDIS_URL: process.env.REDIS_URL,
+    PORT: '0',
+    API_KEY_PEPPER: TEST_PEPPER,
+    ...overrides,
+  });
+}
 
 export type LogLine = Record<string, unknown> & { msg?: string; requestId?: string };
 

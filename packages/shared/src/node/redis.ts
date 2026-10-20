@@ -3,12 +3,26 @@ import type { Logger } from 'pino';
 
 export type { Redis } from 'ioredis';
 
-export function createRedis(url: string, logger: Logger): Redis {
+export interface RedisOptions {
+  /**
+   * Queue commands while disconnected. Off by default: commands fail at once, so callers
+   * (readiness, fail-closed limits in M4) see an outage instead of hanging. Subscriber and
+   * blocking-read connections turn it on so their first command waits for the connection.
+   */
+  offlineQueue?: boolean;
+  /** Names the connection in logs. */
+  role?: string;
+}
+
+export function createRedis(
+  url: string,
+  logger: Logger,
+  { offlineQueue = false, role }: RedisOptions = {},
+): Redis {
+  if (role) logger = logger.child({ redis: role });
   const redis = new Redis(url, {
-    // Commands fail immediately while disconnected instead of queueing, so callers (readiness now,
-    // fail-closed limits in M4) see the outage at once rather than hanging.
-    enableOfflineQueue: false,
-    maxRetriesPerRequest: 1,
+    enableOfflineQueue: offlineQueue,
+    maxRetriesPerRequest: offlineQueue ? null : 1,
     connectTimeout: 2_000,
     retryStrategy: (attempt) => Math.min(attempt * 200, 2_000),
   });

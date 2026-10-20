@@ -1,11 +1,9 @@
 import type { AddressInfo } from 'node:net';
-import { parseConfig } from '@ai-gateway/shared';
 import OpenAI, { APIError, NotFoundError, RateLimitError } from 'openai';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { gatewayConfigSchema } from '../src/config.js';
 import { createGateway, type Gateway } from '../src/gateway.js';
 import { parseModelsConfig } from '../src/models-config.js';
-import { captureLogger } from './helpers.js';
+import { captureLogger, testConfig } from './helpers.js';
 
 /** Contract test: the official OpenAI Node SDK, unmodified, pointed at the gateway. */
 const models = parseModelsConfig(
@@ -31,11 +29,7 @@ let gateway: Gateway;
 let client: OpenAI;
 
 beforeAll(async () => {
-  const config = parseConfig(gatewayConfigSchema, {
-    DATABASE_URL: process.env.DATABASE_URL,
-    REDIS_URL: process.env.REDIS_URL,
-    PORT: '0',
-  });
+  const config = testConfig();
   gateway = createGateway(config, captureLogger().logger, { models });
   await gateway.start();
   const { port } = gateway.app.server.address() as AddressInfo;

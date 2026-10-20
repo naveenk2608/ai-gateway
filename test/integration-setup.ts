@@ -1,4 +1,7 @@
 import { Socket } from 'node:net';
+import { fileURLToPath } from 'node:url';
+import { createLogger } from '../packages/shared/src/node/logger.js';
+import { migrateDatabase } from '../packages/shared/src/node/migrate.js';
 
 /** Defaults match the Compose stack (local-only, no password). CI sets its own values. */
 export const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://gateway@localhost:5432/gateway';
@@ -31,4 +34,10 @@ export default async function setup(): Promise<void> {
   }
   process.env.DATABASE_URL = DATABASE_URL;
   process.env.REDIS_URL = REDIS_URL;
+  // Tests share one database; each creates its own users and projects, so they never collide.
+  await migrateDatabase({
+    databaseUrl: DATABASE_URL,
+    dir: fileURLToPath(new URL('../db/migrations', import.meta.url)),
+    logger: createLogger({ name: 'test-setup', level: 'warn' }),
+  });
 }

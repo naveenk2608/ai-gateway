@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { TEST_PEPPER } from './helpers.js';
 
 const fixture = fileURLToPath(new URL('./fixtures/slow-server.ts', import.meta.url));
 
@@ -10,7 +11,14 @@ let child: ChildProcess | undefined;
 
 function startFixture(env: Record<string, string>) {
   child = spawn(process.execPath, ['--conditions=development', '--import', 'tsx', fixture], {
-    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', LOG_LEVEL: 'warn', ...env },
+    env: {
+      ...process.env,
+      HOST: '127.0.0.1',
+      PORT: '0',
+      LOG_LEVEL: 'warn',
+      API_KEY_PEPPER: TEST_PEPPER,
+      ...env,
+    },
     stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
   });
   const proc = child;

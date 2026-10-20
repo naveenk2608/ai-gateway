@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --workspace-concurrency=1 typecheck",
     "format": "tsx scripts/format.ts --write",
-    "format:check": "tsx scripts/format.ts --check"
+    "format:check": "tsx scripts/format.ts --check",
+    "db:migrate": "pnpm --filter @ai-gateway/gateway db:migrate"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
