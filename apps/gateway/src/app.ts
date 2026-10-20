@@ -173,6 +173,8 @@ export function buildApp({ logger, readiness, trustProxy = 0 }: AppOptions) {
   });
   void app.register(swaggerUi, { routePrefix: '/docs' });
   void app.register((instance, _opts, done) => {
+    // The bare host has no page of its own; send visitors to the API docs.
+    instance.get('/', { schema: { hide: true } }, (_request, reply) => reply.redirect('/docs'));
     registerHealthRoutes(instance, readiness);
     done();
   });

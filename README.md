@@ -1,5 +1,8 @@
 # AI Gateway
 
+**Live demo: <https://ai-gateway-8var.onrender.com/docs>.** It runs on free hosting that sleeps
+when idle, so the first request can take about a minute.
+
 A self-hostable, OpenAI-compatible AI gateway. It sits between your apps and model providers and
 adds per-project API keys, rate and token limits, budgets, routing with retries and failover,
 circuit breakers, an exact-match cache, and a record of every request with its cost. Everything

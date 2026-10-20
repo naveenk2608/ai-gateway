@@ -53,6 +53,15 @@ describe('OpenAPI docs', () => {
     expect(res.headers['content-type']).toMatch(/text\/html/);
   });
 
+  it('redirects / to /docs and leaves it out of the spec', async () => {
+    const app = gatewayApp();
+    const res = await app.inject('/');
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe('/docs');
+    const doc = (await app.inject('/docs/json')).json<OpenApiDocument>();
+    expect(Object.keys(doc.paths)).not.toContain('/');
+  });
+
   it('generates the spec from the route schemas', async () => {
     const res = await gatewayApp().inject('/docs/json');
     expect(res.statusCode).toBe(200);
