@@ -53,13 +53,16 @@ function usageRows(requestIds: string[]) {
 
 describe('usage consumer', () => {
   it('turns the same event published 3 times into one usage row', async () => {
-    const settings = isolatedSettings();
+    // A claim timeout far beyond the test, so only the normal read path can process events.
+    const settings = isolatedSettings({ WORKER_CLAIM_IDLE_MS: 600_000 });
     const consumer = await startConsumer(settings);
     const event = makeEvent({ projectId: await createProject(db) });
     const payload = JSON.stringify(event);
     for (let i = 0; i < 3; i++) await publish(redis, settings.EVENTS_STREAM, payload);
 
     await vi.waitFor(() => expect(consumer.stats.processed).toBe(3), { timeout: 10_000 });
+    // Read straight from the stream, not recovered later by XAUTOCLAIM.
+    expect(consumer.stats.reclaimed).toBe(0);
     expect(await usageRows([event.request.id])).toHaveLength(1);
     const records = await db
       .selectFrom('request_records')

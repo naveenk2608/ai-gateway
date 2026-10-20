@@ -69,6 +69,9 @@ importers:
       '@ai-gateway/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@ai-gateway/worker':
+        specifier: workspace:*
+        version: link:../worker
       '@fastify/cookie':
         specifier: 11.1.3
         version: 11.1.3

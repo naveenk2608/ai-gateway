@@ -1,4 +1,5 @@
-import { commonConfigShape, USAGE_STREAM } from '@ai-gateway/shared';
+import { commonConfigShape } from '@ai-gateway/shared';
+import { consumerSettingsShape } from '@ai-gateway/worker';
 import { z } from 'zod';
 import { API_KEY_PATTERN } from './auth/api-keys.js';
 
@@ -16,8 +17,13 @@ export const gatewayConfigSchema = z
     /** Default server for Ollama deployments that do not set baseUrl. */
     OLLAMA_BASE_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:11434'),
 
-    /** Redis Stream that usage events are written to; the worker reads the same name. */
-    EVENTS_STREAM: z.string().min(1).default(USAGE_STREAM),
+    /**
+     * Run the usage consumer inside the gateway process, for hosts with no background workers
+     * (Render's free plan). Off by default: normally the worker process consumes. Uses the same
+     * EVENTS_* and WORKER_* settings as the worker.
+     */
+    RUN_WORKER_IN_PROCESS: flag.default(false),
+    ...consumerSettingsShape,
     /** Usage events held in memory while Redis is unreachable; beyond it, events are dropped. */
     EVENTS_BUFFER_MAX: z.coerce.number().int().positive().default(10_000),
     /** Approximate cap on the usage stream's length, so Redis memory stays bounded. */

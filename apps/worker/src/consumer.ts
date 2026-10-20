@@ -223,9 +223,10 @@ export class UsageConsumer {
       this.#o.stream,
       '>',
     );
-    if (!Array.isArray(reply)) return [];
-    const streamReply = reply[0] as unknown;
-    return Array.isArray(streamReply) ? toEntries(streamReply[1]) : [];
+    if (!Array.isArray(reply) || reply.length === 0) return [];
+    // RESP2: [[stream, entries]]. A RESP3 map arrives flattened: [stream, entries].
+    const first: unknown = reply[0];
+    return toEntries(Array.isArray(first) ? first[1] : reply[1]);
   }
 
   /** Inserts valid events; leaves invalid or failing ones pending, to be retried or dead-lettered. */

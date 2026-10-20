@@ -21,6 +21,9 @@ export function createRedis(
 ): Redis {
   if (role) logger = logger.child({ redis: role });
   const redis = new Redis(url, {
+    // RESP2 replies have one documented shape per command (ioredis 6 defaults to RESP3, where
+    // some stream replies change shape), and every Redis-compatible server speaks it.
+    protocol: 2,
     enableOfflineQueue: offlineQueue,
     maxRetriesPerRequest: offlineQueue ? null : 1,
     connectTimeout: 2_000,

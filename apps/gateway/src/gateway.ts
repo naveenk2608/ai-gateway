@@ -23,6 +23,7 @@ import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
 import { registerChatCompletions } from './proxy/chat-completions.js';
 import { drainAndClose, type DrainOutcome } from './shutdown.js';
+import { createUsageConsumer, type UsageConsumer } from '@ai-gateway/worker';
 
 /** src/ and dist/ both sit three levels below the repository root, where db/migrations lives. */
 export const DEFAULT_MIGRATIONS_DIR = fileURLToPath(
@@ -36,6 +37,8 @@ export interface Gateway {
   verifier: KeyVerifier;
   invalidation: AuthInvalidation;
   events: EventBus;
+  /** The in-process usage consumer, when RUN_WORKER_IN_PROCESS is on. */
+  consumer: UsageConsumer | undefined;
   /** Applies pending migrations (if enabled), then listens. */
   start(): Promise<void>;
   /** Drains in-flight requests, then closes the Postgres pool and Redis client. */
@@ -86,6 +89,10 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     streamMaxLen: config.EVENTS_STREAM_MAXLEN,
   });
 
+  const inProcess = config.RUN_WORKER_IN_PROCESS
+    ? createUsageConsumer({ settings: config, redisUrl: config.REDIS_URL, db, logger, clock })
+    : undefined;
+
   const app = buildApp({
     logger,
     readiness: {
@@ -114,8 +121,13 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
 
   // onClose runs after in-flight requests finish, so nothing is still using the pools.
   app.addHook('onClose', async () => {
-    // Flush buffered usage events while Redis is still open.
+    // Flush buffered usage events while Redis is still open, then let the consumer finish its
+    // batch; whatever it leaves pending is claimed by the next worker.
     await events.close(Math.min(2_000, config.SHUTDOWN_TIMEOUT_MS));
+    if (inProcess) {
+      await inProcess.consumer.stop();
+      await inProcess.close();
+    }
     await Promise.allSettled([
       pool.end(),
       closeRedis(redis),
@@ -131,6 +143,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     verifier,
     invalidation,
     events,
+    consumer: inProcess?.consumer,
     async start() {
       if (config.MIGRATE_ON_START) {
         await migrateDatabase({
@@ -151,6 +164,10 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       );
       if (boot) logger.info(boot, 'bootstrap settings applied');
       invalidation.start();
+      if (inProcess) {
+        await inProcess.consumer.start();
+        logger.info('usage consumer running in the gateway process');
+      }
       await app.listen({ host: config.HOST, port: config.PORT });
     },
     async shutdown() {
