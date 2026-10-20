@@ -1,5 +1,7 @@
 # Local stack. `docker compose up` starts Postgres and Redis for development and integration
 # tests; `docker compose --profile full up --build` adds the gateway, worker and dashboard.
+# `--profile observability` adds Prometheus and Grafana, scraping the gateway and worker (ADR 017):
+# `docker compose --profile full --profile observability up -d --build`.
 #
 # Local development only: Postgres uses trust auth and every port is bound to 127.0.0.1, so no
 # password exists anywhere in the repo. Real deployments pass credentials through DATABASE_URL
@@ -56,6 +58,10 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
+      # Private metrics listener for Prometheus, reachable on the Compose network only (the port
+      # is not published), so it needs no token. /metrics on 8080 stays off without METRICS_TOKEN.
+      METRICS_PORT: 9464
+      METRICS_HOST: 0.0.0.0
     extra_hosts:
       # Makes host.docker.internal resolve on Linux too (Docker Desktop provides it already).
       - host.docker.internal:host-gateway
@@ -85,6 +91,8 @@ services:
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
+      # Metrics on WORKER_METRICS_PORT (9465), for Prometheus on the Compose network only.
+      METRICS_HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,6 +111,45 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+
+  prometheus:
+    profiles: [observability]
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # A day of history, capped in size: enough to watch a demo or a test run.
+      - --storage.tsdb.retention.time=1d
+      - --storage.tsdb.retention.size=256MB
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - 127.0.0.1:${PROMETHEUS_PORT:-9090}:9090
+    mem_limit: 256m
+
+  grafana:
+    profiles: [observability]
+    image: grafana/grafana:13.2.3
+    environment:
+      # Local and read-only: anonymous viewers, no login form, no admin password anywhere. The
+      # datasource and dashboard are provisioned from files.
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ai-gateway.json
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: 'false'
+      GF_NEWS_NEWS_FEED_ENABLED: 'false'
+      GF_PLUGINS_PREINSTALL_DISABLED: 'true'
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - 127.0.0.1:${GRAFANA_PORT:-3001}:3000
+    depends_on:
+      - prometheus
+    mem_limit: 256m
 
 volumes:
   postgres-data:

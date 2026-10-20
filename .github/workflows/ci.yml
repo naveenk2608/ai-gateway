@@ -85,4 +85,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - run: docker compose --profile full --profile observability config --quiet
+      # The observability profile's Prometheus config (ADR 017), checked by Prometheus itself.
+      - run: >-
+          docker run --rm --entrypoint promtool
+          -v "$PWD/infra/compose/observability:/etc/prometheus:ro"
+          prom/prometheus:v3.15.0 check config /etc/prometheus/prometheus.yml
       - run: docker compose --profile full build
