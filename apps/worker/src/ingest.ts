@@ -7,7 +7,7 @@ import {
   type UsageEvent,
 } from '@ai-gateway/shared';
 import type { Database, Db } from '@ai-gateway/shared/node';
-import type { Insertable } from 'kysely';
+import { sql, type Insertable } from 'kysely';
 
 interface Price {
   id: string;
@@ -81,7 +81,9 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
   if (events.length === 0) return;
   const prices = await loadPrices(trx, events);
 
-  await trx
+  // RETURNING lists only the requests inserted now: a re-delivered event adds nothing to the
+  // rollups below.
+  const insertedRequests = await trx
     .insertInto('request_records')
     .values(
       events.map(({ request: r, attempts, ...event }) => ({
@@ -103,6 +105,7 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
       })),
     )
     .onConflict((oc) => oc.doNothing())
+    .returning('id')
     .execute();
   const attempts = events.flatMap((event) =>
     event.attempts.map((a) => ({
@@ -200,6 +203,11 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
           .execute();
   const costs = new Map(usageRows.map((row) => [row.request_id, row.cost_micro_usd ?? null]));
   await updateBudgetLedger(trx, events, costs, new Set(inserted.map((row) => row.request_id)));
+  // Per-minute, hourly and daily rollups (ADR 015), from the rows inserted above.
+  if (insertedRequests.length > 0) {
+    const ids = insertedRequests.map((row) => row.id);
+    await sql`SELECT rollup_requests(${ids}::uuid[])`.execute(trx);
+  }
 }
 
 interface PeriodDelta {

@@ -7,6 +7,7 @@ import {
 } from '@ai-gateway/shared';
 import type { Db, Logger, Redis } from '@ai-gateway/shared/node';
 import { ingestEvents } from './ingest.js';
+import { pruneRollups, type RollupRetention } from './retention.js';
 
 export interface ConsumerOptions {
   /** A dedicated connection: XREADGROUP BLOCK holds it. */
@@ -24,6 +25,8 @@ export interface ConsumerOptions {
   claimIdleMs: number;
   maxDeliveries: number;
   trimIntervalMs: number;
+  /** Rollup retention (ADR 015), applied every `intervalMs`; omitted, rollups are kept forever. */
+  retention?: RollupRetention & { intervalMs: number };
   /** Test-only fault injection: throw SimulatedCrash to stop the consumer as a kill would. */
   faults?: { crash?(point: 'before-commit' | 'after-commit'): void };
 }
@@ -134,6 +137,7 @@ export class UsageConsumer {
   #running: Promise<void> | undefined;
   #nextClaimAt = 0;
   #nextTrimAt = 0;
+  #nextPruneAt = 0;
   readonly #stats: ConsumerStats = { processed: 0, deadLettered: 0, reclaimed: 0 };
 
   constructor(options: ConsumerOptions) {
@@ -209,6 +213,10 @@ export class UsageConsumer {
         if (now >= this.#nextTrimAt) {
           await this.#trim();
           this.#nextTrimAt = now + this.#o.trimIntervalMs;
+        }
+        if (this.#o.retention && now >= this.#nextPruneAt) {
+          this.#nextPruneAt = now + this.#o.retention.intervalMs;
+          await this.#prune(this.#o.retention, now);
         }
         const entries = await this.#read();
         if (entries.length > 0) await this.#process(entries);
@@ -404,6 +412,18 @@ export class UsageConsumer {
       { streamId: entry.id, deliveries, error },
       'usage event moved to the dead-letter stream',
     );
+  }
+
+  /** Deletes expired rollup rows. A failure is logged and retried at the next interval. */
+  async #prune(retention: RollupRetention, now: number): Promise<void> {
+    try {
+      const deleted = await pruneRollups(this.#o.db, now, retention);
+      if (deleted.minute + deleted.hour + deleted.day > 0) {
+        this.#o.logger.info({ deleted }, 'expired rollup rows deleted');
+      }
+    } catch (err) {
+      this.#o.logger.warn({ err }, 'rollup retention failed');
+    }
   }
 
   /**

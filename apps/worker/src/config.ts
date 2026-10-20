@@ -28,6 +28,15 @@ export const consumerSettingsShape = {
   WORKER_MAX_DELIVERIES: positiveInt.max(100).default(5),
   /** How often fully processed events are trimmed from the stream. */
   WORKER_TRIM_INTERVAL_MS: positiveInt.default(60_000),
+  /**
+   * Rollup retention (ADR 015). The analytics ranges need minute rows for 24 h, hourly rows for
+   * 7 days and daily rows for 30 days, so shorter values are refused.
+   */
+  ROLLUP_RETENTION_MINUTE_HOURS: positiveInt.min(25).default(48),
+  ROLLUP_RETENTION_HOUR_DAYS: positiveInt.min(8).default(35),
+  ROLLUP_RETENTION_DAY_DAYS: positiveInt.min(31).default(400),
+  /** How often expired rollup rows are deleted. */
+  ROLLUP_RETENTION_INTERVAL_MS: positiveInt.default(3_600_000),
 };
 
 export const consumerSettingsSchema = z.object(consumerSettingsShape);

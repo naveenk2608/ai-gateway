@@ -58,6 +58,12 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
     claimIdleMs: settings.WORKER_CLAIM_IDLE_MS,
     maxDeliveries: settings.WORKER_MAX_DELIVERIES,
     trimIntervalMs: settings.WORKER_TRIM_INTERVAL_MS,
+    retention: {
+      minuteHours: settings.ROLLUP_RETENTION_MINUTE_HOURS,
+      hourDays: settings.ROLLUP_RETENTION_HOUR_DAYS,
+      dayDays: settings.ROLLUP_RETENTION_DAY_DAYS,
+      intervalMs: settings.ROLLUP_RETENTION_INTERVAL_MS,
+    },
     faults: deps.faults,
   });
   return { consumer, close: () => closeRedis(redis) };

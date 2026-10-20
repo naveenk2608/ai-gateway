@@ -12,6 +12,7 @@ export interface PgPoolOptions {
 }
 
 const INT8_OID = 20;
+const INT8_ARRAY_OID = 1016;
 
 /** bigint columns (micro-dollars, counts) as numbers; values past 2^53 would lose precision, so they throw. */
 function parseInt8(value: string): number {
@@ -23,6 +24,13 @@ function parseInt8(value: string): number {
 const types = {
   getTypeParser: ((oid: number, format?: 'text' | 'binary'): unknown => {
     if (oid === INT8_OID && format !== 'binary') return parseInt8;
+    if (oid === INT8_ARRAY_OID && format !== 'binary') {
+      // Histogram buckets (bigint[]) as number[], with the same range check.
+      const parseArray = pg.types.getTypeParser(oid as number, 'text') as (
+        value: string,
+      ) => string[];
+      return (value: string) => parseArray(value).map(parseInt8);
+    }
     return pg.types.getTypeParser(oid, format) as unknown;
   }) as typeof pg.types.getTypeParser,
 };

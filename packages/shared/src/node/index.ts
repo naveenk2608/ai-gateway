@@ -8,6 +8,7 @@ export {
   type Db,
   type RequestStatus,
   type Role,
+  type UsageRollupsTable,
   type UsageSource,
 } from './db.js';
 export { MIGRATION_LOCK_KEY, migrateDatabase, type MigrateOptions } from './migrate.js';

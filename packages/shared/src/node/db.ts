@@ -214,6 +214,34 @@ export interface FailedEventsTable {
   failed_at: CreatedAt;
 }
 
+/** One row of usage_rollups_minute, _hour or _day (ADR 015); sums over its bucket and key. */
+export interface UsageRollupsTable {
+  bucket_start: Timestamp;
+  project_id: string;
+  api_key_id: string | null;
+  model: string;
+  deployment: string | null;
+  provider: string | null;
+  status: RequestStatus;
+  error_code: string | null;
+  requests: number;
+  cache_hits: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_micro_usd: number;
+  attempts: number;
+  retries: number;
+  fallbacks: number;
+  latency_ms_sum: number;
+  latency_buckets: number[];
+  ttft_count: number;
+  ttft_ms_sum: number;
+  ttft_buckets: number[];
+  throughput_tokens: number;
+  throughput_ms: number;
+}
+
 export interface Database {
   users: UsersTable;
   user_sessions: UserSessionsTable;
@@ -231,6 +259,9 @@ export interface Database {
   provider_health_events: ProviderHealthEventsTable;
   audit_logs: AuditLogsTable;
   failed_events: FailedEventsTable;
+  usage_rollups_minute: UsageRollupsTable;
+  usage_rollups_hour: UsageRollupsTable;
+  usage_rollups_day: UsageRollupsTable;
 }
 
 export type Db = Kysely<Database>;
