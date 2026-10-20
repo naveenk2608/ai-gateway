@@ -4,7 +4,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
-| 2026-10-20 | M0 | CI workflow (`.github/workflows/ci.yml`) has not run on GitHub yet: the repo has no remote. Its steps were run on a fresh clone in a Linux container instead. Push and confirm the first run is green. | open |
+| 2026-10-20 | M0 | CI workflow (`.github/workflows/ci.yml`) passed on GitHub for commit `0d8c049`: lint/typecheck/unit tests/build, integration tests (Postgres + Redis) and container images all green. | done |
 | 2026-10-20 | M0 | Toolchain pins below latest: TypeScript 6.0.3 (typescript-eslint 8.72 supports `<6.1`; TS 7 is out) and pnpm 10.34.7 (corepack 0.32 bundled with Node 22.16 cannot run pnpm 12). Revisit when typescript-eslint supports TS 7. | open |
 | 2026-10-20 | M1 | Drain marks responses `Connection: close` in `onSend`. SSE responses send headers before a drain can start, so M1 must end or flag streams on drain itself (and the drain timeout must cover long streams). | planned M1 |
 | 2026-10-20 | M1 | ADR 002 (Fastify + Zod + OpenAPI) file is written in M1 with the OpenAPI work; M0 already uses Fastify. | planned M1 |
