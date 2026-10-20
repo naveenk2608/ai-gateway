@@ -20,6 +20,20 @@ export {
   type UsageEvent,
   type UsageSourceValue,
 } from './events.js';
+export {
+  addBuckets,
+  ANALYTICS_RANGES,
+  isAnalyticsRange,
+  LATENCY_BUCKET_BOUNDS_MS,
+  LATENCY_BUCKET_COUNT,
+  latencyBucketIndex,
+  percentileFromBuckets,
+  rangeWindow,
+  seriesStarts,
+  type AnalyticsRange,
+  type RangeWindow,
+  type RollupGranularity,
+} from './analytics.js';
 export { budgetPeriodAt, budgetPeriodOf, type BudgetPeriod } from './budget.js';
 export { costMicroUsd, priceAt, type PriceVersion } from './pricing.js';
 export { estimatePromptTokens, estimateTextTokens, type EstimatedMessage } from './tokens.js';
