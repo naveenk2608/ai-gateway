@@ -4,18 +4,27 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-10-20 | M4 | Limit keys are not hash-tagged, and the reservation sweeper reads keys named inside its script: Redis Cluster is not supported, a single primary is. | by design |
+| 2026-10-20 | M4 | After Redis loses its data, budget totals are rebuilt from `budget_periods`; usage still in transit at that moment (not yet ingested) is not counted. Normally under a second of traffic; an outbox (future work) would close it. | by design |
+| 2026-10-20 | M4 | Requests whose model has no `model_prices` row cost nothing and are not limited by budgets. Add prices (SQL or seed) for every paid model. | by design |
+| 2026-10-20 | M4 | Budgets are per UTC calendar month only; daily or custom periods are not supported. A request is counted in the month it started. | open |
+| 2026-10-20 | M4 | Requests with unknown API key IDs are not rate-limited per client IP; each one costs a Postgres lookup (unknown keys are not cached). Add a per-IP bucket for failed lookups. | open |
+| 2026-10-20 | M4 | No `x-ratelimit-limit/remaining/reset` headers on successful responses; only rejections carry `retry-after`. | open |
+| 2026-10-20 | M4 | The prompt estimate is stored per request (`usage_events.estimated_prompt_tokens`) for comparison with reported counts; an estimate-error metric arrives with Prometheus in M8. | planned M8 |
+| 2026-10-20 | M4 | The "Redis stopped" acceptance test points a gateway at an unreachable Redis instead of stopping the Compose container that other test files share; from the gateway's side both are refused connections. | by design |
+| 2026-10-20 | M4 | `TRUST_PROXY` must match the proxies in front of the gateway; the right value for Render was not verified here. With 0, login limits per IP count all clients behind the proxy together. | open |
 | 2026-10-20 | M3 | Usage events can be lost if Redis is unreachable for longer than the in-memory buffer lasts (`EVENTS_BUFFER_MAX`), or if they are still buffered when the shutdown flush times out; both are logged with counts. A transactional outbox would close the gap (future work). | by design |
 | 2026-10-20 | M3 | The worker-kill acceptance test injects faults just before and after the commit instead of killing a real process; a process-level kill test against the Compose stack could be added. | open |
 | 2026-10-20 | M3 | No replay tool for the dead-letter stream; `failed_events.payload` keeps each original event for one. | open |
 | 2026-10-20 | M3 | The worker trims the stream only when it has a single consumer group; `MAXLEN ~ EVENTS_STREAM_MAXLEN` still caps it otherwise. | by design |
-| 2026-10-20 | M3 | Token estimates use about four characters per token; M4 replaces this with a tokenizer approximation and tracks the estimate error. | planned M4 |
+| 2026-10-20 | M3 | Token estimates use about four characters per token; M4 replaces this with a tokenizer approximation and tracks the estimate error. Done: word/number/symbol pre-split approximation, estimate stored per request. | done |
 | 2026-10-20 | M3 | Event emission and consumer metrics (buffered, dropped, stream lag, DLQ size) are only in logs and in-process stats; they become Prometheus metrics in M8. | planned M8 |
-| 2026-10-20 | M3 | Requests rejected before validation or authentication (400, 401, 413) are not recorded as request records; M4 records rejections (rate limits) as events. | planned M4 |
-| 2026-10-20 | M2 | Admin login and invalid API keys are not rate-limited; failed logins are only logged. Add per-IP/per-email login limits and invalid-key limits with the M4 Lua scripts. | planned M4 |
+| 2026-10-20 | M3 | Requests rejected before validation or authentication (400, 401, 413) are not recorded as request records; M4 records rejections (rate limits) as events. Limit and budget rejections are recorded since M4; 400/401/413 still are not. | open |
+| 2026-10-20 | M2 | Admin login and invalid API keys are not rate-limited; failed logins are only logged. Add per-IP/per-email login limits and invalid-key limits with the M4 Lua scripts. Logins limited per email and IP in M4; invalid keys still open (see M4 row). | done |
 | 2026-10-20 | M2 | `API_KEY_PEPPER` cannot be rotated without invalidating every key. Dual-pepper verification (try new, then old, rehash on use) would allow it. | open |
 | 2026-10-20 | M2 | No endpoints yet to change one's own password, reset a password, disable a user or list sessions; expired sessions are deleted only at that user's next login. | open |
 | 2026-10-20 | M2 | `api_keys.last_used_at` is not tracked (it would add a write per request). The dashboard can derive last use from usage rows (M6). | planned M6 |
-| 2026-10-20 | M2 | `model_deployments`, `routing_policies`, `budget_*` and `provider_health_events` tables exist but are unused: deployments still come from `config/models.json`. Routing (M5), budgets (M4) and the settings pages (M7) start using them. Prices have no admin endpoint; insert rows with SQL or the seed. | planned M4/M5/M7 |
+| 2026-10-20 | M2 | `model_deployments`, `routing_policies`, `budget_*` and `provider_health_events` tables exist but are unused: deployments still come from `config/models.json`. Routing (M5), budgets (M4) and the settings pages (M7) start using them. Budget tables used since M4. Prices have no admin endpoint; insert rows with SQL or the seed. | planned M4/M5/M7 |
 | 2026-10-20 | M2 | `request_records` and `usage_events` are not partitioned. Revisit with retention in M6. | planned M6 |
 | 2026-10-20 | M2 | CSRF protection for the admin API is `SameSite=Strict` cookies plus JSON bodies; add a CSRF token if the dashboard is ever served from a different site than the API. | by design |
 | 2026-10-20 | M1 | `POST /v1/chat/completions` is unauthenticated until API keys arrive in M2; the gateway binds to 127.0.0.1 by default. Resolved: API keys required on /v1 (M2). | done |

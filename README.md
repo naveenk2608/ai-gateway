@@ -3,12 +3,13 @@
 A self-hostable, OpenAI-compatible AI gateway: auth, limits and budgets, routing with failover,
 and per-request accounting. Architecture decisions are recorded in [docs/adr/](docs/adr/).
 
-**Status: M3 (usage accounting).** `POST /v1/chat/completions` works in OpenAI format,
+**Status: M4 (distributed limits and budgets).** `POST /v1/chat/completions` works in OpenAI format,
 streaming and non-streaming, in front of a deterministic mock provider, Ollama, or any
 OpenAI-compatible API. Callers authenticate with per-project API keys; an admin API (session
 login, roles, key management, audit log) manages projects and keys. Every request is recorded,
 with its upstream attempts, tokens and cost, through a Redis Stream that the worker writes to
-Postgres exactly once in effect.
+Postgres exactly once in effect. Rate, token and concurrency limits per key and per project, and
+monthly budgets per project, hold across any number of gateway instances (Redis Lua scripts).
 
 ## Requirements
 
@@ -81,7 +82,8 @@ Mock settings: `latencyMs` (non-streaming delay), `ttftMs` (time to first token)
 
 Timeouts, per deployment: `timeoutMs` bounds a non-streaming call, or the wait for a stream's
 first token; `streamIdleTimeoutMs` bounds the silence between tokens after that. A client that
-disconnects cancels the upstream call.
+disconnects cancels the upstream call. `maxOutputTokens` (default 4096) is sent upstream when the
+client sets no `max_tokens`; it is the worst case that limits and budgets reserve.
 
 ## Endpoints
 
@@ -112,9 +114,13 @@ can help, and upstream rate limits pass on `Retry-After`.
 | 400 | `invalid_request` | The body failed validation. |
 | 401 | `invalid_api_key` | Missing, unknown, revoked or expired API key. |
 | 403 | `model_not_allowed` | The model is outside the project's allow-list. |
+| 400 | `request_exceeds_limit` | The request could never fit: more tokens than the TPM limit, or a worst-case cost above the project's per-request cap or whole budget. Lower `max_tokens`. |
 | 404 | `model_not_found` | No such model, or its deployment is disabled. |
+| 429 | `rpm_limit_exceeded`, `tpm_limit_exceeded`, `concurrency_limit_exceeded` | A key or project limit; see [Limits and budgets](#limits-and-budgets). |
+| 429 | `budget_exceeded` | The project's monthly budget is used up (`x-should-retry: false`). |
 | 429 | `upstream_rate_limited` | The provider rate-limited the call. |
 | 502 | `upstream_error`, `upstream_unavailable`, `upstream_invalid_response`, `upstream_auth_failed`, `upstream_model_not_found` | The provider failed, could not be reached, or is misconfigured. |
+| 503 | `limits_unavailable` | Redis is unreachable and `LIMITS_FAIL_MODE=closed`; only requests with limits are affected. |
 | 504 | `upstream_timeout` | The deployment's timeout passed. |
 
 A failure after a stream has started is sent as a final `{"error": ...}` event, and the stream
@@ -145,16 +151,47 @@ project: `viewer` reads, `admin` also manages keys and settings, `owner` also ma
 | `POST /admin/auth/login`, `POST /admin/auth/logout`, `GET /admin/me` | any user |
 | `GET /admin/projects`, `POST /admin/projects` (creator becomes owner) | any user |
 | `GET /admin/projects/:projectId` | viewer |
-| `PATCH /admin/projects/:projectId` (name, `allowedModels`) | admin |
+| `PATCH /admin/projects/:projectId` (name, `allowedModels`, `limits`, `budget`) | admin |
 | `GET /admin/projects/:projectId/members` | viewer |
 | `POST`, `PATCH`, `DELETE /admin/projects/:projectId/members[/:userId]` | owner |
 | `GET /admin/projects/:projectId/api-keys` | viewer |
-| `POST /admin/projects/:projectId/api-keys`, `.../:apiKeyId/revoke`, `.../:apiKeyId/rotate` | admin |
+| `POST /admin/projects/:projectId/api-keys`, `PATCH .../:apiKeyId` (name, `limits`), `.../:apiKeyId/revoke`, `.../:apiKeyId/rotate` | admin |
 | `GET /admin/projects/:projectId/audit-logs` | admin |
 | `GET /admin/requests/:requestId` (the `x-request-id` header): request, usage, attempts | viewer |
 
 A project the caller does not belong to answers 404, exactly like one that does not exist. Every
-change writes an `audit_logs` row in the same transaction, tagged with the request ID.
+change writes an `audit_logs` row in the same transaction, tagged with the request ID. Logins are
+limited per email and per client IP (`LOGIN_ATTEMPTS_PER_MINUTE`, `..._PER_IP`); behind a proxy,
+set `TRUST_PROXY` to the number of proxies so the client IP is the real one.
+
+## Limits and budgets
+
+Limits are set per project (all its keys together) and per API key, with the admin API; `null`
+means no limit. They hold across every gateway instance because each request's checks run in one
+Redis Lua script that takes all of them or none (ADR 008).
+
+```bash
+curl -s -X PATCH http://127.0.0.1:8080/admin/projects/$PROJECT_ID -b "gw_session=$SESSION"   -H 'content-type: application/json'   -d '{"limits": {"requestsPerMinute": 60, "tokensPerMinute": 100000, "concurrentRequests": 10},
+       "budget": {"monthlyLimitMicroUsd": 5000000, "maxRequestCostMicroUsd": 50000}}'
+```
+
+| Limit | How it works |
+| --- | --- |
+| `requestsPerMinute` | Token bucket, refilled evenly over the minute. |
+| `tokensPerMinute` | Token bucket. Before the call it reserves the estimated prompt (a tokenizer approximation) plus `max_tokens`; after, it is corrected to the tokens actually used. |
+| `concurrentRequests` | Leases that running requests renew; a crashed instance's leases expire after `LIMITS_LEASE_TTL_MS` (30 s). |
+| `budget.monthlyLimitMicroUsd` | Per UTC month, in micro-dollars ($1 = 1,000,000). Each request reserves its worst-case cost first and is charged its actual cost after (ADR 009). |
+| `budget.maxRequestCostMicroUsd` | The most one request may reserve; larger requests get a 400. |
+
+Rejections are 429 with `retry-after` and the reason as `code`, and are recorded as `rejected`
+requests. Spend stays within **budget + requests in flight x max request cost**: a request can
+cost more than it reserved only if the provider counts more prompt tokens than estimated or its
+reservation expired while it ran. Postgres keeps each project's monthly spend
+(`budget_periods`); when Redis loses its data (a restart with no persistence) the totals are
+rebuilt from it rather than starting from zero. Requests whose model has no price cost nothing.
+
+If Redis is unreachable, `LIMITS_FAIL_MODE=closed` (default) answers 503 to requests that have any
+limit or budget; `open` admits them unchecked (ADR 010). Requests with no limits never touch Redis.
 
 ## Usage accounting
 
@@ -198,6 +235,7 @@ and an API key if they are missing (existing users, passwords and keys are never
 | `BOOTSTRAP_API_KEY` | First API key, to call `/v1` | `pnpm key:generate` on your machine |
 | `BOOTSTRAP_PROJECT_NAME` | Name of that project (optional) | default `Default project` |
 | `RUN_WORKER_IN_PROCESS` | Run the usage consumer inside the gateway (no worker service) | `true` |
+| `TRUST_PROXY` | Proxies in front of the gateway whose `X-Forwarded-For` entries to trust, for the client IP in login limits | the number of proxies your host puts in front (0 trusts none) |
 
 Then open `/docs`, click **Authorize**, paste the key, and call `POST /v1/chat/completions`.
 
@@ -232,7 +270,6 @@ docs/adr         architecture decision records
 
 ## Notes
 
-- Login attempts are not rate-limited yet (limits arrive in M4); use a strong admin password.
 - Local Postgres uses trust auth and every Compose port binds to 127.0.0.1, so the repo holds no
   database password. Real deployments pass credentials in `DATABASE_URL`.
 - In Compose, the gateway reaches Ollama on the host at `host.docker.internal:11434`.
