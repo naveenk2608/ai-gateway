@@ -9,6 +9,8 @@ export const gatewayConfigSchema = z.object({
   READY_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(2_000),
   /** JSON file mapping logical model names to deployments; defaults to config/models.json. */
   MODELS_CONFIG_PATH: z.string().min(1).optional(),
+  /** Default server for Ollama deployments that do not set baseUrl. */
+  OLLAMA_BASE_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:11434'),
 });
 
 export type GatewayConfig = z.output<typeof gatewayConfigSchema>;

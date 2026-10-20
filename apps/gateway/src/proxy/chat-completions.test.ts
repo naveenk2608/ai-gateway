@@ -41,7 +41,12 @@ function setup() {
     },
     'test',
   );
-  const registry = createRegistry(models, { clock, logger, env: {} });
+  const registry = createRegistry(models, {
+    clock,
+    logger,
+    env: {},
+    ollamaBaseUrl: 'http://127.0.0.1:1',
+  });
   const app = buildApp({ logger, readiness: { checks: {}, timeoutMs: 50 } });
   registerChatCompletions(app, { registry, clock });
 

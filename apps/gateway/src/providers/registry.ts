@@ -2,6 +2,7 @@ import type { Clock, Env } from '@ai-gateway/shared';
 import type { Logger } from '@ai-gateway/shared/node';
 import type { DeploymentConfig, ModelsConfig } from '../models-config.js';
 import { MockProvider } from './mock.js';
+import { OllamaProvider } from './ollama.js';
 import { OpenAICompatibleProvider } from './openai-compatible.js';
 import type { Provider } from './types.js';
 
@@ -20,6 +21,8 @@ export interface RegistryDeps {
   logger: Logger;
   /** Where API keys named by `apiKeyEnv` are looked up. */
   env: Env;
+  /** Used by Ollama deployments that do not set their own baseUrl. */
+  ollamaBaseUrl: string;
 }
 
 export class ProviderRegistry {
@@ -55,6 +58,13 @@ function createProvider(config: DeploymentConfig, deps: RegistryDeps): Created {
   switch (config.provider) {
     case 'mock':
       return { provider: new MockProvider(config.mock, deps.clock) };
+    case 'ollama':
+      return {
+        provider: new OllamaProvider({
+          baseUrl: config.baseUrl ?? deps.ollamaBaseUrl,
+          clock: deps.clock,
+        }),
+      };
     case 'openai-compatible': {
       const apiKey = deps.env[config.apiKeyEnv];
       if (!apiKey) return { disabled: `${config.apiKeyEnv} is not set` };

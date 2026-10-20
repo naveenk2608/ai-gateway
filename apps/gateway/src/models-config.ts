@@ -50,7 +50,21 @@ const openAICompatibleDeployment = z
   })
   .strict();
 
-const deployment = z.discriminatedUnion('provider', [mockDeployment, openAICompatibleDeployment]);
+const ollamaDeployment = z
+  .object({
+    provider: z.literal('ollama'),
+    model: z.string().min(1),
+    /** Server root; defaults to OLLAMA_BASE_URL. */
+    baseUrl: z.url({ protocol: /^https?$/ }).optional(),
+    ...attemptTimeouts,
+  })
+  .strict();
+
+const deployment = z.discriminatedUnion('provider', [
+  mockDeployment,
+  ollamaDeployment,
+  openAICompatibleDeployment,
+]);
 
 export const modelsConfigSchema = z
   .object({

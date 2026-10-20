@@ -20,10 +20,12 @@ const config = parseModelsConfig(
   'test',
 );
 
+const deps = { clock: systemClock, ollamaBaseUrl: 'http://127.0.0.1:11434' };
+
 describe('createRegistry', () => {
   it('disables a hosted deployment whose API key variable is not set', async () => {
     const { logger, lines } = captureLogger();
-    const registry = createRegistry(config, { clock: systemClock, logger, env: {} });
+    const registry = createRegistry(config, { ...deps, logger, env: {} });
 
     expect(registry.resolve('mock-1')?.provider.kind).toBe('mock');
     expect(registry.resolve('gpt-x')).toBeUndefined();
@@ -38,7 +40,7 @@ describe('createRegistry', () => {
   it('enables it when the key is present, and never logs the key', async () => {
     const { logger, lines } = captureLogger();
     const registry = createRegistry(config, {
-      clock: systemClock,
+      ...deps,
       logger,
       env: { EXAMPLE_API_KEY: 'sk-test-value-not-real' },
     });
@@ -48,6 +50,24 @@ describe('createRegistry', () => {
     expect(deployment?.providerModel).toBe('gpt-x');
     expect(registry.modelNames()).toEqual(['mock-1', 'gpt-x']);
     expect(JSON.stringify(lines)).not.toContain('sk-test-value-not-real');
+    await registry.close();
+  });
+
+  it('points Ollama deployments at OLLAMA_BASE_URL unless they set their own', async () => {
+    const { logger } = captureLogger();
+    const ollama = parseModelsConfig(
+      {
+        deployments: {
+          shared: { provider: 'ollama', model: 'llama3.2:1b' },
+          own: { provider: 'ollama', model: 'qwen', baseUrl: 'http://gpu-box:11434' },
+        },
+        models: { a: { deployment: 'shared' }, b: { deployment: 'own' } },
+      },
+      'test',
+    );
+    const registry = createRegistry(ollama, { ...deps, logger, env: {} });
+    expect(registry.resolve('a')?.provider.kind).toBe('ollama');
+    expect(registry.resolve('b')?.providerModel).toBe('qwen');
     await registry.close();
   });
 

@@ -33,7 +33,12 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
   const clock = deps.clock ?? systemClock;
   const pool = createPgPool(config.DATABASE_URL, logger);
   const redis = createRedis(config.REDIS_URL, logger);
-  const registry = createRegistry(deps.models, { clock, logger, env: deps.env ?? process.env });
+  const registry = createRegistry(deps.models, {
+    clock,
+    logger,
+    env: deps.env ?? process.env,
+    ollamaBaseUrl: config.OLLAMA_BASE_URL,
+  });
 
   const app = buildApp({
     logger,
