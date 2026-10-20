@@ -17,6 +17,7 @@ import {
 } from '@ai-gateway/shared/node';
 import { registerAdminApi } from './admin/index.js';
 import { redisInfraProbe } from './admin/infra.js';
+import { processInstanceProbe } from './admin/instance.js';
 import { modelCatalog } from './admin/model-routes.js';
 import { ResponseCache } from './cache/response-cache.js';
 import { buildApp, type App } from './app.js';
@@ -206,6 +207,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     : null;
 
   metrics.watch({ breakers, events, pool, checks, timeoutMs: config.READY_CHECK_TIMEOUT_MS });
+  const processProbe = processInstanceProbe(() => events.stats());
   // The pipeline state stays visible here while the worker is down (stream lag rising).
   watchPipeline(metrics.registry, () =>
     readPipelineState(redis, clock, {
@@ -272,6 +274,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         group: config.EVENTS_CONSUMER_GROUP,
         deployments: deployments.map((d) => d.id),
         checks,
+        instance: () => processProbe.read(),
       }),
       models: modelCatalog(deps.models, registry),
     }),
@@ -282,6 +285,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     // Flush buffered usage events while Redis is still open, then let the consumer finish its
     // batch; whatever it leaves pending is claimed by the next worker.
     prices.stop();
+    processProbe.stop();
     await Promise.all([sweeper.stop(), healthChecker.stop()]);
     await events.close(Math.min(2_000, config.SHUTDOWN_TIMEOUT_MS));
     if (inProcess) {

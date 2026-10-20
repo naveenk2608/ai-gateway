@@ -153,6 +153,26 @@ describe.each(pages)('$name page', ({ page, empty, data }) => {
   });
 });
 
+describe('Infrastructure instance card', () => {
+  const page = () => <Infrastructure projectId={PROJECT_ID} filters={filters} />;
+
+  it('shows what the answering instance measured', async () => {
+    stubApi('data');
+    show(page());
+    expect(await screen.findByText('86.4 MiB')).toBeTruthy();
+    expect(screen.getByText('This gateway instance')).toBeTruthy();
+    expect(screen.getByText('4.2%')).toBeTruthy();
+    expect(screen.getByText('12.5 ms')).toBeTruthy();
+    expect(screen.queryByText(/not measured yet/)).toBeNull();
+  });
+
+  it('says CPU and event-loop delay are not measured on a first reading', async () => {
+    stubApi('empty');
+    show(page());
+    expect((await screen.findAllByText(/not measured yet: needs a second reading/)).length).toBe(2);
+  });
+});
+
 describe('roles in the settings page', () => {
   const mutationButtons = [
     'Save project settings',

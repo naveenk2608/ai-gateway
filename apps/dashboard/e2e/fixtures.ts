@@ -283,6 +283,16 @@ export function emptyResponses(role: Role): Responses {
       },
       failedEvents: { total: 0, inWindow: 0 },
       dependencies: {},
+      // A first reading: CPU and event-loop delay are not measured yet.
+      instance: {
+        uptimeSeconds: 5,
+        residentMemoryBytes: 80_000_000,
+        heapUsedBytes: 20_000_000,
+        heapTotalBytes: 30_000_000,
+        cpuShare: null,
+        eventLoopDelayP99Ms: null,
+        usageEvents: { buffered: 0, published: 0, dropped: 0 },
+      },
     } satisfies InfraResponse,
   };
 }
@@ -449,6 +459,15 @@ export function sampleResponses(role: Role): Responses {
       dependencies: {
         postgres: { status: 'ok', latencyMs: 3 },
         redis: { status: 'ok', latencyMs: 1 },
+      },
+      instance: {
+        uptimeSeconds: 7_200,
+        residentMemoryBytes: 90_596_966,
+        heapUsedBytes: 25_000_000,
+        heapTotalBytes: 40_000_000,
+        cpuShare: 0.042,
+        eventLoopDelayP99Ms: 12.5,
+        usageEvents: { buffered: 0, published: 1_234, dropped: 0 },
       },
     } satisfies InfraResponse,
   };

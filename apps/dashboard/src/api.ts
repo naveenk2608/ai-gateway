@@ -264,6 +264,16 @@ export interface InfraResponse {
   } | null;
   failedEvents: { total: number; inWindow: number };
   dependencies: Record<string, { status: 'ok' | 'fail'; latencyMs: number }>;
+  /** The gateway process that answered; CPU and event-loop delay are null on its first reading. */
+  instance: {
+    uptimeSeconds: number;
+    residentMemoryBytes: number;
+    heapUsedBytes: number;
+    heapTotalBytes: number;
+    cpuShare: number | null;
+    eventLoopDelayP99Ms: number | null;
+    usageEvents: { buffered: number; published: number; dropped: number };
+  };
 }
 
 export const RANGES = ['1h', '24h', '7d', '30d'] as const;

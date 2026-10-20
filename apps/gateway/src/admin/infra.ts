@@ -2,10 +2,11 @@ import type { Clock } from '@ai-gateway/shared';
 import type { Redis } from '@ai-gateway/shared/node';
 import { readPipelineState } from '@ai-gateway/worker';
 import { z } from 'zod';
+import type { InstanceState } from './instance.js';
 
 /**
  * Operational state read on demand for the analytics API: the usage event pipeline in Redis,
- * circuit-breaker states and dependency round trips. Values are measured when asked, never stored
+ * circuit-breaker states, dependency round trips and the answering process itself. Values are measured when asked, never stored
  * or estimated. History is kept by Prometheus (ADR 017), not here.
  */
 
@@ -45,6 +46,8 @@ export interface InfraProbe {
   breakers(): Promise<BreakerState[]>;
   /** Named round trips (postgres, redis); each rejects when its dependency is down. */
   checks: Record<string, () => Promise<void>>;
+  /** The process answering this request, measured now. */
+  instance(): InstanceState;
 }
 
 export function redisInfraProbe(options: {
@@ -57,10 +60,12 @@ export function redisInfraProbe(options: {
   /** Key prefix of the breaker hashes written by HealthReporter. */
   prefix?: string;
   checks: Record<string, () => Promise<void>>;
+  instance: () => InstanceState;
 }): InfraProbe {
   const { redis, clock, prefix = 'gw:' } = options;
   return {
     checks: options.checks,
+    instance: options.instance,
     pipeline: () => readPipelineState(redis, clock, options),
     async breakers() {
       return Promise.all(

@@ -1,12 +1,22 @@
 import { useQuery } from '@tanstack/react-query';
 import { analyticsPath, api, type AnalyticsFilters, type InfraResponse } from './api.js';
-import { formatAge, formatCount, formatLatency, formatTime } from './format.js';
+import {
+  formatAge,
+  formatBytes,
+  formatCount,
+  formatLatency,
+  formatPercent,
+  formatTime,
+} from './format.js';
 import { QueryCard, Stat } from './ui.js';
 
 /**
- * Only values the gateway measures (M6 infra endpoint). Host metrics, container restarts and
- * history depend on the deployment and arrive with Prometheus (M8).
+ * Only values the gateway measures (the infra endpoint). History lives in Prometheus and Grafana
+ * (ADR 017); host metrics and container restarts depend on the deployment and are not shown.
  */
+
+/** Shown where a value needs a second reading (CPU, event-loop delay). */
+const NOT_YET = 'not measured yet: needs a second reading';
 export function Infrastructure({
   projectId,
   filters,
@@ -90,9 +100,58 @@ export function Infrastructure({
           </ul>
         )}
       </QueryCard>
+      <QueryCard
+        title="This gateway instance"
+        what="instance measurements"
+        query={infra}
+        isEmpty={() => false}
+        empty=""
+      >
+        {({ instance, measuredAt }) => (
+          <>
+            <p className="muted small">
+              Measured {formatTime(measuredAt)} by the instance that answered. With several
+              instances, each refresh may reach a different one.
+            </p>
+            <div className="stats">
+              <Stat label="Uptime" value={formatAge(instance.uptimeSeconds * 1_000)} />
+              <Stat
+                label="Memory (RSS)"
+                value={formatBytes(instance.residentMemoryBytes)}
+                note={`heap ${formatBytes(instance.heapUsedBytes)} of ${formatBytes(instance.heapTotalBytes)}`}
+              />
+              <Stat
+                label="CPU"
+                value={formatPercent(instance.cpuShare)}
+                note={instance.cpuShare === null ? NOT_YET : 'of one core, since the last refresh'}
+              />
+              <Stat
+                label="Event-loop delay p99"
+                value={
+                  instance.eventLoopDelayP99Ms === null
+                    ? '—'
+                    : formatLatency(instance.eventLoopDelayP99Ms)
+                }
+                note={instance.eventLoopDelayP99Ms === null ? NOT_YET : 'since the last refresh'}
+              />
+              <Stat
+                label="Usage events buffered"
+                value={formatCount(instance.usageEvents.buffered)}
+                note="waiting for Redis"
+              />
+              <Stat
+                label="Usage events dropped"
+                value={formatCount(instance.usageEvents.dropped)}
+                note={`${formatCount(instance.usageEvents.published)} written since start`}
+              />
+            </div>
+          </>
+        )}
+      </QueryCard>
       <p className="muted small">
-        Host CPU and memory, container restarts and history depend on where the gateway runs and are
-        not shown here.
+        History is kept by Prometheus and shown in Grafana when they run (the Compose
+        <code>observability</code> profile). Host CPU and memory and container restarts depend on
+        where the gateway runs and are not shown here.
       </p>
     </>
   );

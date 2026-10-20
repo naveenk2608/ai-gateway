@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api, ApiError, canManage, isUnauthenticated } from './api.js';
-import { budgetShare, formatCount, formatLatency, formatUsd } from './format.js';
+import { budgetShare, formatBytes, formatCount, formatLatency, formatUsd } from './format.js';
 
 function fakeFetch(status: number, body: unknown) {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -74,5 +74,12 @@ describe('formatting', () => {
     expect(budgetShare(250_000, 1_000_000)).toBe('25%');
     expect(budgetShare(1, null)).toBeNull();
     expect(budgetShare(5, 0)).toBe('over budget');
+  });
+
+  it('formats bytes in binary units', () => {
+    expect(formatBytes(null)).toBe('—');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1_536)).toBe('1.5 KiB');
+    expect(formatBytes(90_596_966)).toBe('86.4 MiB');
   });
 });

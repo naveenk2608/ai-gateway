@@ -5,6 +5,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { hostname } from 'node:os';
 import { ANALYTICS_RANGES, budgetPeriodAt, uuidv7, type UsageEvent } from '@ai-gateway/shared';
 import { ingestEvents } from '@ai-gateway/worker';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -370,6 +371,28 @@ describe('analytics sections', () => {
       postgres: { status: 'ok' },
       redis: { status: 'ok' },
     });
+  });
+
+  it('infra reports the answering process, without naming its host', async () => {
+    type Instance = {
+      residentMemoryBytes: number;
+      heapUsedBytes: number;
+      uptimeSeconds: number;
+      cpuShare: number | null;
+      eventLoopDelayP99Ms: number | null;
+      usageEvents: { buffered: number; published: number; dropped: number };
+    };
+    const first = await get<{ instance: Instance }>(`/admin/analytics/infra?${q()}`);
+    const second = await get<{ instance: Instance }>(`/admin/analytics/infra?${q()}`);
+    for (const { instance } of [first.body, second.body]) {
+      expect(instance.residentMemoryBytes).toBeGreaterThan(0);
+      expect(instance.heapUsedBytes).toBeGreaterThan(0);
+      expect(instance.uptimeSeconds).toBeGreaterThanOrEqual(0);
+      expect(instance.usageEvents.dropped).toBe(0);
+    }
+    // CPU and event-loop delay cover the time since the previous reading.
+    expect(second.body.instance.cpuShare).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(second.body)).not.toContain(hostname());
   });
 });
 

@@ -52,6 +52,19 @@ export function formatAxisTime(iso: string, stepSeconds: number, locale?: string
       : date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
+/** Bytes in binary units, e.g. "512 B", "86.4 MiB". */
+export function formatBytes(bytes: number | null): string {
+  if (bytes === null) return '—';
+  const units = ['B', 'KiB', 'MiB', 'GiB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1_024 && unit < units.length - 1) {
+    value /= 1_024;
+    unit++;
+  }
+  return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
 /** A duration in ms as the largest sensible unit, e.g. "4 s", "3 min". */
 export function formatAge(ms: number | null): string {
   if (ms === null) return '—';

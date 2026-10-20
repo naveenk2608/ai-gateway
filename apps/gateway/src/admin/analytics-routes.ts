@@ -24,6 +24,7 @@ import {
   type Filters,
 } from './analytics.js';
 import { breakerSchema, pipelineSchema } from './infra.js';
+import { instanceSchema } from './instance.js';
 import { errorResponses, iso, type AdminDeps } from './schemas.js';
 
 const security = [{ session: [] }];
@@ -821,7 +822,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
         description:
           'Fleet-wide values measured when asked; `range` only sets the window for ' +
           '`failedEvents.inWindow`, and the other filters do not apply. `pipeline` is null when ' +
-          'Redis is unreachable. Host metrics and history come with Prometheus (M8).',
+          'Redis is unreachable. `instance` is the gateway process that answered: with several ' +
+          'instances, each call may reach a different one. History is in Prometheus (`/metrics`, ' +
+          'ADR 017); host metrics and container restarts depend on the deployment.',
         security,
         querystring: analyticsQuerySchema,
         response: {
@@ -834,6 +837,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
               z.string(),
               z.object({ status: z.enum(['ok', 'fail']), latencyMs: z.number() }),
             ),
+            instance: instanceSchema,
           }),
           ...errorResponses,
         },
@@ -867,6 +871,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
         pipeline,
         failedEvents: failed,
         dependencies,
+        instance: infra.instance(),
       };
     },
   );
