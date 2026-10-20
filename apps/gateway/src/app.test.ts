@@ -148,7 +148,7 @@ describe('GET /metrics', () => {
 
   function metricsApp(metricsToken?: string) {
     const { logger } = captureLogger();
-    const metrics = new GatewayMetrics(createMetricsRegistry());
+    const metrics = new GatewayMetrics(createMetricsRegistry(), { deployments: [], models: [] });
     const app = buildApp({
       logger,
       readiness: { checks: {}, timeoutMs: 50 },

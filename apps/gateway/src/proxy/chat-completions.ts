@@ -9,6 +9,7 @@ import { GatewayError } from '../errors.js';
 import { CACHE_HEADER, cacheable, cacheKey, type ResponseCache } from '../cache/response-cache.js';
 import type { EventBus } from '../events/bus.js';
 import type { AdmissionControl } from '../limits/admission.js';
+import type { GatewayMetrics } from '../metrics.js';
 import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { runRouted, type RoutingDeps } from '../routing/routed.js';
@@ -46,6 +47,8 @@ export interface ChatRouteOptions {
   routing: RoutingDeps;
   /** The exact-match response cache (ADR 013); absent when CACHE_ENABLED is off. */
   cache?: ResponseCache | null;
+  /** Records each finished request (attempts, routing, latency, tokens). */
+  metrics?: GatewayMetrics;
 }
 
 interface ResponseMeta {
@@ -210,14 +213,16 @@ function upstreamFailure(err: unknown): unknown {
 }
 
 export function registerChatCompletions(app: FastifyInstance, options: ChatRouteOptions): void {
-  const { registry, clock, verifier, events, admission, routing, cache = null } = options;
+  const { registry, clock, verifier, events, admission, routing, cache = null, metrics } = options;
   app.decorateRequest('apiKey', null);
   app.decorateRequest('trace', null);
 
   /** Hands the finished trace to the event bus; publish() never blocks the response. */
   const emit = (trace: RequestTrace, httpStatus: number) => {
     const event = trace.finish(httpStatus);
-    if (event) events.publish(event);
+    if (!event) return;
+    events.publish(event);
+    metrics?.requestFinished(event);
   };
 
   app.withTypeProvider<ZodTypeProvider>().post(
@@ -321,6 +326,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
             : null;
         if (cache && key) {
           const hit = await cache.get(key);
+          metrics?.cacheLookup(hit !== null);
           void reply.header(CACHE_HEADER, hit ? 'hit' : 'miss');
           if (hit) {
             trace.cacheHit = true;

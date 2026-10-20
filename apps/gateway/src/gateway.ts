@@ -84,18 +84,26 @@ export interface GatewayDeps {
 
 export function createGateway(config: GatewayConfig, logger: Logger, deps: GatewayDeps): Gateway {
   const clock = deps.clock ?? systemClock;
-  // One registry per process (ADR 017); tests build several gateways, each with its own.
-  const metrics = new GatewayMetrics(createMetricsRegistry());
-  let metricsServer: MetricsServer | undefined;
   const pool = createPgPool(config.DATABASE_URL, logger);
   const db = createDb(pool);
   const redis = createRedis(config.REDIS_URL, logger);
+  const checks = { postgres: () => pingPostgres(pool), redis: () => pingRedis(redis) };
   const registry = createRegistry(deps.models, {
     clock,
     logger,
     env: deps.env ?? process.env,
     ollamaBaseUrl: config.OLLAMA_BASE_URL,
   });
+  // One registry per process (ADR 017); tests build several gateways, each with its own.
+  const metrics = new GatewayMetrics(createMetricsRegistry(), {
+    deployments: registry.deployments().map((d) => ({
+      id: d.id,
+      provider: d.provider.kind,
+      providerModel: d.providerModel,
+    })),
+    models: registry.modelNames(),
+  });
+  let metricsServer: MetricsServer | undefined;
 
   const verifier = new KeyVerifier({
     load: databaseKeyLoader(db),
@@ -157,7 +165,10 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     deployments.map((d) => d.id),
     { failureThreshold: config.BREAKER_FAILURE_THRESHOLD, openMs: config.BREAKER_OPEN_MS },
     clock,
-    (t) => reporter.report(t),
+    (t) => {
+      reporter.report(t);
+      metrics.breakerTransition(t);
+    },
   );
   const healthChecker = new HealthChecker({
     breakers,
@@ -189,6 +200,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       })
     : null;
 
+  metrics.watch({ breakers, events, pool, checks, timeoutMs: config.READY_CHECK_TIMEOUT_MS });
+
   const inProcess = config.RUN_WORKER_IN_PROCESS
     ? createUsageConsumer({ settings: config, redisUrl: config.REDIS_URL, db, logger, clock })
     : undefined;
@@ -199,10 +212,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     metrics,
     metricsToken: config.METRICS_TOKEN,
     readiness: {
-      checks: {
-        postgres: () => pingPostgres(pool),
-        redis: () => pingRedis(redis),
-      },
+      checks,
       timeoutMs: config.READY_CHECK_TIMEOUT_MS,
     },
   });
@@ -215,6 +225,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       admission,
       routing,
       cache,
+      metrics,
     });
     done();
   });
@@ -240,7 +251,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         dlqStream: config.EVENTS_DLQ_STREAM,
         group: config.EVENTS_CONSUMER_GROUP,
         deployments: deployments.map((d) => d.id),
-        checks: { postgres: () => pingPostgres(pool), redis: () => pingRedis(redis) },
+        checks,
       }),
       models: modelCatalog(deps.models, registry),
     }),
