@@ -9,8 +9,8 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: MVP (milestones M0-M5) plus the analytics API (M6).** Architecture decisions are in
-[docs/adr/](docs/adr/).
+**Status: MVP (milestones M0-M5), the analytics API (M6) and the full dashboard (M7).**
+Architecture decisions are in [docs/adr/](docs/adr/).
 
 - `POST /v1/chat/completions` in OpenAI format, streaming and non-streaming; the official OpenAI
   SDKs work unchanged.
@@ -23,7 +23,9 @@ real models, and Ollama works too.
   dead-letter path; costs from versioned prices.
 - An analytics API over per-minute, hourly and daily rollups: traffic, cost and budgets, model
   comparison, reliability, rejections and pipeline health, for 1 h to 30 days.
-- A dashboard: overview counters, a request list with routing history, API key management.
+- A dashboard on that API: overview, requests with filters and routing history, cost and budgets,
+  model comparison, reliability, security, infrastructure, and settings (project, limits and
+  budget, members, API keys, deployments and routing). Usable on a phone.
 
 ```mermaid
 flowchart LR
@@ -112,6 +114,8 @@ In Compose the gateway reaches Ollama on the host at `host.docker.internal:11434
 | --- | --- |
 | `pnpm test` | Unit tests; no services needed |
 | `pnpm test:int` | Integration tests against Compose Postgres and Redis (`docker compose up -d` first): API contracts, isolation, Lua limits across two instances, routing and breakers, the usage pipeline, the OpenAI SDK |
+| `pnpm test:e2e` | The dashboard in Chromium at 375 px, with API answers from fixtures (`pnpm --filter @ai-gateway/dashboard exec playwright install chromium` once) |
+| `pnpm check:dashboard-data` | Fails on hand-written numbers in dashboard chart data |
 | `pnpm lint`, `pnpm typecheck`, `pnpm format` | ESLint, `tsc`, Prettier |
 
 CI (GitHub Actions) runs all of them plus the container builds on every push. The SIGTERM
@@ -291,6 +295,25 @@ an `audit_logs` row in the same transaction. Logins are limited per email and pe
 (`LOGIN_ATTEMPTS_PER_MINUTE`, `LOGIN_ATTEMPTS_PER_MINUTE_PER_IP`); behind a proxy, set
 `TRUST_PROXY` to the number of proxies in front so the client IP is the real one.
 
+## Dashboard
+
+Eight pages, all read from the admin and analytics APIs; nothing is computed or filled in by the
+dashboard, and a page with no data says so.
+
+| Page | Shows |
+| --- | --- |
+| Overview | Requests by outcome, tokens, cost, p50/p95 latency and TTFT, a request-rate chart, spend this month, gateway readiness |
+| Requests | Filters (range, status, key, model, provider), a paginated list, each request's routing history |
+| Cost | Spend by provider, model, project and key; a trend; budgets with alerts; the monthly projection |
+| Models | Latency, TTFT, tokens per second, cost, failure and fallback rates side by side (not answer quality) |
+| Reliability | Failures, retries and fallbacks over time, errors by code, breaker states and changes |
+| Security | Rejections by reason and key over time |
+| Infrastructure | Usage stream lag, pending events, dead letters, Postgres and Redis round trips |
+| Settings | Project name and allowed models, limits and budget, members, API keys, deployments and routing (read-only) |
+
+Viewers see every page but no control that changes anything; admins also manage keys and project
+settings, and owners also manage members. The API enforces the same roles.
+
 ## Analytics
 
 Read-only endpoints for the dashboard, one per section (ADR 015). Each takes `range` (`1h`,
@@ -376,7 +399,7 @@ message naming each problem. [.env.example](.env.example) lists them all with th
 ```text
 apps/gateway     Fastify API: /v1 proxy, providers, routing, limits, cache, /admin API
 apps/worker      usage-event consumer (also runs inside the gateway with RUN_WORKER_IN_PROCESS)
-apps/dashboard   React + Vite + TanStack Query/Table
+apps/dashboard   React + Vite + TanStack Query/Table + Recharts; e2e/ holds browser checks
 packages/shared  config, clock, logger, ids, token estimates, Postgres/Redis clients
 db/migrations    numbered plain-SQL migrations
 infra/compose    Docker Compose stack (compose.yaml at the root includes it)

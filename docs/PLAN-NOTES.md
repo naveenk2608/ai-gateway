@@ -4,18 +4,24 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-10-21 | M7 | Deployments and routing policies are shown read-only in Settings: they come from `config/models.json`. Per-project routing policies (the unused `routing_policies` table) and editing them need router changes; not started. | open |
+| 2026-10-21 | M7 | The Infrastructure page shows only what the gateway measures now (stream lag, pending, dead letters, round trips). History and process metrics come with Prometheus in M8. | planned M8 |
+| 2026-10-21 | M7 | The dashboard bundle is one chunk over 500 kB minified (Recharts); pages could be loaded lazily. | open |
+| 2026-10-21 | M7 | jsdom is pinned to 29.1.1: jsdom 30 requires Node 22.22+, and the repo supports Node ^22.12. | open |
+| 2026-10-21 | M7 | The browser checks (Playwright) answer the admin API from fixtures; no browser test drives the dashboard against a running gateway. The API side is covered by the gateway's integration tests. | open |
+| 2026-10-21 | M7 | Removing a member, revoking or rotating a key ask for confirmation with `window.confirm`; there is no undo. | by design |
 | 2026-10-21 | M6 | Requests with an invalid, revoked or expired API key are refused before a project is trusted, so the Security section cannot count them per project (`invalidApiKeys.count` is null). Revoked or expired keys could be attributed (the secret matched); a per-IP counter for unknown keys belongs with the M4 per-IP limit note. | open |
 | 2026-10-21 | M6 | Failed health checks are only logged; `provider_health_events` records breaker transitions, including the half-open after a passing check. | open |
 | 2026-10-21 | M6 | Breaker states in Redis (`gw:health:<deployment>`) keep an entry per gateway instance forever; entries of instances that are gone stay visible with their last time. | open |
 | 2026-10-21 | M6 | Raw `request_records`, `provider_attempts` and `usage_events` have no retention or partitioning yet; only rollups expire. Revisit with M10 sizing. | open |
 | 2026-10-21 | M6 | Events ingested by an older gateway or worker after the rollup migration ran (during a rolling deploy) are stored without rollups. Running `SELECT rollup_requests(...)` for those IDs would add them; there is no CLI for it. | open |
 | 2026-10-21 | M6 | The overview's `month` spend is per project from `budget_periods` and ignores the key, model, provider and status filters. | by design |
-| 2026-10-20 | M5 | Routing policies come from `config/models.json` only; the `routing_policies` table (per-project overrides) is still unused. The settings pages (M7) bring per-project policies and editing. | planned M7 |
+| 2026-10-20 | M5 | Routing policies come from `config/models.json` only; the `routing_policies` table (per-project overrides) is still unused. The settings pages (M7) bring per-project policies and editing. M7 shows them read-only; see the M7 row. | open |
 | 2026-10-20 | M5 | Breaker state is visible fleet-wide in Redis (`gw:health:<deployment>`) and as `provider_health_events` rows, but no admin endpoint shows it yet; the Reliability page (M6/M7) will. Done in M6: `GET /admin/analytics/reliability`. | done |
 | 2026-10-20 | M5 | Failed attempts are not charged: their usage is unknown. A provider that bills a timed-out request is undercounted. | by design |
 | 2026-10-20 | M5 | `GET /admin/projects/:id/overview` aggregates the last 24 h of `request_records` directly; M6 replaces it with rollups and time ranges. The request list has no filters yet (M6/M7). Done in M6: replaced by `/admin/analytics/overview` and `/admin/analytics/requests` with ranges and filters. | done |
 | 2026-10-20 | M5 | The response cache is off by default (`CACHE_ENABLED`): it keeps completions in Redis, and storing completions by default is a non-goal. Prompts only appear hashed. | by design |
-| 2026-10-20 | M5 | The dashboard is checked by typecheck, lint, build, unit tests of its API client and formatters, and an API smoke test through the nginx container; it was not rendered in a browser here and has no component tests. M7 adds page tests with its acceptance checks. | open |
+| 2026-10-20 | M5 | The dashboard is checked by typecheck, lint, build, unit tests of its API client and formatters, and an API smoke test through the nginx container; it was not rendered in a browser here and has no component tests. M7 adds page tests with its acceptance checks. Done in M7: component tests per page and Chromium checks at 375 px. | done |
 | 2026-10-20 | M5 | Latency EWMA and breakers are per instance and start empty after a restart; `lowest_latency` sends the first requests to unmeasured deployments to measure them. | by design |
 | 2026-10-20 | M4 | Limit keys are not hash-tagged, and the reservation sweeper reads keys named inside its script: Redis Cluster is not supported, a single primary is. | by design |
 | 2026-10-20 | M4 | After Redis loses its data, budget totals are rebuilt from `budget_periods`; usage still in transit at that moment (not yet ingested) is not counted. Normally under a second of traffic; an outbox (future work) would close it. | by design |
@@ -54,7 +60,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 | 2026-10-20 | M1 | ADR 002 (Fastify + Zod + OpenAPI) file is written in M1 with the OpenAPI work; M0 already uses Fastify. Written, with ADR 004 (undici, abort per attempt). | done |
 | 2026-10-20 | M2 | Root script `db:migrate` is added with the first migrations (node-pg-migrate, ADR 003). Done, plus `db:seed` and `key:generate`. | done |
 | 2026-10-20 | M3 | Worker has no consumer yet; it holds the Postgres pool and Redis client the consumer will use. The pg pool's client-side query timeout defaults to 5 s; batch inserts may need a larger value. Done: the worker's pool allows 30 s. | done |
-| 2026-10-20 | M5 | Dashboard libraries from ADR 018 (TanStack Query/Table, Recharts) are added with the pages that need them. Query and Table added in M5 (Table pinned to v8, whose API is known; v9 exists); Recharts with the M7 charts. | planned M7 |
+| 2026-10-20 | M5 | Dashboard libraries from ADR 018 (TanStack Query/Table, Recharts) are added with the pages that need them. Query and Table added in M5 (Table pinned to v8, whose API is known; v9 exists); Recharts with the M7 charts. Recharts 3.10.1 added in M7. | done |
 | 2026-10-20 | M8 | ADR 017 file (observability) is written in M8; M0 provides pino JSON logs with `requestId` only. | planned M8 |
 | 2026-10-20 | M9 | Root script `bench` is added with the k6 scripts. | planned M9 |
 | 2026-10-20 | M10 | No pre-stop delay between SIGTERM and closing the listener. Behind an ALB, rely on target deregistration delay; revisit if the load balancer keeps routing to a draining instance. | planned M10 |

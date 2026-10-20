@@ -29,3 +29,6 @@ nginx in the container image.
 - Same-origin `/api` keeps the admin session cookie (ADR 007) simple: no CORS, no cross-site cookie
   settings.
 - The dashboard only renders data returned by the backend; empty data shows an empty state.
+- M7: every page is tested in jsdom (Testing Library) for its loading, empty, error and data
+  states, and in Chromium (Playwright) at 375 px; a CI script rejects array literals with numbers
+  in dashboard source, so chart data cannot be written by hand.
