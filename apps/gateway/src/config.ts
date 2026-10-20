@@ -7,6 +7,8 @@ export const gatewayConfigSchema = z.object({
   HOST: z.string().min(1).default('127.0.0.1'),
   PORT: z.coerce.number().int().min(0).max(65_535).default(8080),
   READY_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(2_000),
+  /** JSON file mapping logical model names to deployments; defaults to config/models.json. */
+  MODELS_CONFIG_PATH: z.string().min(1).optional(),
 });
 
 export type GatewayConfig = z.output<typeof gatewayConfigSchema>;

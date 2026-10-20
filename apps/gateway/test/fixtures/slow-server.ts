@@ -8,10 +8,12 @@ import { parseConfig } from '@ai-gateway/shared';
 import { createLogger, onShutdownSignal } from '@ai-gateway/shared/node';
 import { gatewayConfigSchema } from '../../src/config.js';
 import { createGateway } from '../../src/gateway.js';
+import { parseModelsConfig } from '../../src/models-config.js';
 
 const config = parseConfig(gatewayConfigSchema, process.env);
 const logger = createLogger({ name: 'gateway', level: config.LOG_LEVEL });
-const gateway = createGateway(config, logger);
+const models = parseModelsConfig({ deployments: {}, models: {} }, 'fixture');
+const gateway = createGateway(config, logger, { models });
 const slowMs = Number(process.env.SLOW_MS ?? '1000');
 
 gateway.app.get('/slow', async () => {

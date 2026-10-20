@@ -1,5 +1,8 @@
 import { Writable } from 'node:stream';
+import type { ManualClock } from '@ai-gateway/shared';
 import { createLogger, type Logger } from '@ai-gateway/shared/node';
+import { vi } from 'vitest';
+import { parseModelsConfig, type ModelsConfig } from '../src/models-config.js';
 
 export type LogLine = Record<string, unknown> & { msg?: string; requestId?: string };
 
@@ -15,6 +18,20 @@ export function captureLogger(): { logger: Logger; lines: LogLine[] } {
     },
   });
   return { logger: createLogger({ name: 'gateway', level: 'info', destination }), lines };
+}
+
+/** A models config with no deployments, for tests that do not call providers. */
+export const noModels: ModelsConfig = parseModelsConfig({ deployments: {}, models: {} }, 'test');
+
+/**
+ * Waits (in real time) until code under test has queued `count` sleeps on the manual clock, so the
+ * test can advance time knowing the waits it wants to skip have started.
+ */
+export async function sleepsQueued(clock: ManualClock, count: number): Promise<void> {
+  await vi.waitFor(() => {
+    if (clock.pendingSleeps < count)
+      throw new Error(`${clock.pendingSleeps}/${count} sleeps queued`);
+  });
 }
 
 /** A promise plus its resolver, for holding a request open until the test releases it. */

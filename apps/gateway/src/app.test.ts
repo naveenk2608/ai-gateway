@@ -93,7 +93,7 @@ describe('error responses', () => {
     expect(res.json()).toEqual({
       error: {
         message: 'Too many requests',
-        type: 'invalid_request_error',
+        type: 'rate_limit_error',
         param: null,
         code: 'rate_limited',
       },

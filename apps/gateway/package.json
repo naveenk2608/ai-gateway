@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "config"
   ],
   "scripts": {
     "dev": "tsx watch --conditions=development --env-file-if-exists=../../.env src/main.ts",
@@ -14,7 +15,9 @@
   },
   "dependencies": {
     "@ai-gateway/shared": "workspace:*",
+    "@fastify/swagger": "9.9.1",
     "fastify": "5.12.7",
+    "fastify-type-provider-zod": "7.0.0",
     "zod": "4.6.7"
   }
 }

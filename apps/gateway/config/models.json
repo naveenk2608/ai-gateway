@@ -1,0 +1,37 @@
+{
+  "deployments": {
+    "mock": {
+      "provider": "mock",
+      "mock": { "ttftMs": 200, "tokensPerSecond": 40, "latencyMs": 300, "completionTokens": 24 }
+    },
+    "mock-slow": {
+      "provider": "mock",
+      "timeoutMs": 5000,
+      "mock": { "latencyMs": 10000, "ttftMs": 10000 }
+    },
+    "mock-rate-limited": {
+      "provider": "mock",
+      "mock": { "failWith": 429, "retryAfterMs": 2000 }
+    },
+    "mock-error": {
+      "provider": "mock",
+      "mock": { "failWith": 500 }
+    },
+    "mock-flaky": {
+      "provider": "mock",
+      "mock": { "errorRate": 0.3, "seed": 42 }
+    },
+    "mock-drop": {
+      "provider": "mock",
+      "mock": { "tokensPerSecond": 20, "completionTokens": 40, "dropAfterTokens": 10 }
+    }
+  },
+  "models": {
+    "mock-1": { "deployment": "mock" },
+    "mock-slow": { "deployment": "mock-slow" },
+    "mock-rate-limited": { "deployment": "mock-rate-limited" },
+    "mock-error": { "deployment": "mock-error" },
+    "mock-flaky": { "deployment": "mock-flaky" },
+    "mock-drop": { "deployment": "mock-drop" }
+  }
+}

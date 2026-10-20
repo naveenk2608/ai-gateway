@@ -1,5 +1,5 @@
-/** OpenAI error `type` values the gateway emits so far; later milestones add more. */
-export type ErrorType = 'invalid_request_error' | 'server_error';
+/** OpenAI-style error `type` values the gateway emits so far; later milestones add more. */
+export type ErrorType = 'invalid_request_error' | 'rate_limit_error' | 'server_error';
 
 export interface ErrorBody {
   error: {
@@ -15,6 +15,13 @@ export interface GatewayErrorOptions {
   retryable?: boolean;
   type?: ErrorType;
   param?: string | null;
+  /** Sent as the Retry-After header. */
+  retryAfterSeconds?: number | undefined;
+}
+
+function defaultType(httpStatus: number): ErrorType {
+  if (httpStatus === 429) return 'rate_limit_error';
+  return httpStatus >= 500 ? 'server_error' : 'invalid_request_error';
 }
 
 /**
@@ -27,6 +34,7 @@ export class GatewayError extends Error {
   readonly retryable: boolean;
   readonly type: ErrorType;
   readonly param: string | null;
+  readonly retryAfterSeconds: number | undefined;
 
   constructor(code: string, message: string, options: GatewayErrorOptions) {
     super(message);
@@ -34,9 +42,9 @@ export class GatewayError extends Error {
     this.code = code;
     this.httpStatus = options.httpStatus;
     this.retryable = options.retryable ?? false;
-    this.type =
-      options.type ?? (options.httpStatus >= 500 ? 'server_error' : 'invalid_request_error');
+    this.type = options.type ?? defaultType(options.httpStatus);
     this.param = options.param ?? null;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 
   toBody(): ErrorBody {

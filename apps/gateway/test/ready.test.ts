@@ -3,7 +3,7 @@ import { parseConfig } from '@ai-gateway/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { gatewayConfigSchema } from '../src/config.js';
 import { createGateway, type Gateway } from '../src/gateway.js';
-import { captureLogger } from './helpers.js';
+import { captureLogger, noModels } from './helpers.js';
 
 /** Nothing listens on port 1, so connections are refused at once. */
 const CLOSED_PORT_PG = 'postgres://gateway@127.0.0.1:1/gateway';
@@ -20,7 +20,7 @@ async function start(overrides: Record<string, string> = {}) {
     ...overrides,
   });
   const { logger } = captureLogger();
-  running = createGateway(config, logger);
+  running = createGateway(config, logger, { models: noModels });
   await running.start();
   const { port } = running.app.server.address() as AddressInfo;
   return `http://127.0.0.1:${port}`;

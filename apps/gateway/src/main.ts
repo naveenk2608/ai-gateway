@@ -1,10 +1,27 @@
+import { fileURLToPath } from 'node:url';
+import { ConfigError } from '@ai-gateway/shared';
 import { createLogger, loadConfigOrExit, onShutdownSignal } from '@ai-gateway/shared/node';
 import { gatewayConfigSchema } from './config.js';
 import { createGateway } from './gateway.js';
+import { readModelsConfig, type ModelsConfig } from './models-config.js';
 
 const config = loadConfigOrExit(gatewayConfigSchema);
 const logger = createLogger({ name: 'gateway', level: config.LOG_LEVEL });
-const gateway = createGateway(config, logger);
+
+// src/ and dist/ are both one level below the package root, where config/ lives.
+const modelsPath =
+  config.MODELS_CONFIG_PATH ?? fileURLToPath(new URL('../config/models.json', import.meta.url));
+let models: ModelsConfig;
+try {
+  models = readModelsConfig(modelsPath);
+} catch (err) {
+  if (!(err instanceof ConfigError)) throw err;
+  process.stderr.write(`${err.message}
+`);
+  process.exit(1);
+}
+
+const gateway = createGateway(config, logger, { models });
 
 onShutdownSignal(logger, async () => ((await gateway.shutdown()) === 'drained' ? 0 : 1));
 
