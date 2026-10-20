@@ -7,6 +7,7 @@ import { registerAccountRoutes, registerLoginRoute } from './auth-routes.js';
 import { registerMemberRoutes } from './member-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { registerRequestRoutes } from './request-routes.js';
+import { registerUsageRoutes } from './usage-routes.js';
 import type { AdminDeps } from './schemas.js';
 
 export type { AdminDeps } from './schemas.js';
@@ -28,6 +29,7 @@ export async function registerAdminApi(app: FastifyInstance, deps: AdminDeps): P
     registerApiKeyRoutes(scoped, deps);
     registerAuditRoutes(scoped, deps);
     registerRequestRoutes(scoped, deps);
+    registerUsageRoutes(scoped, deps);
     done();
   });
 }

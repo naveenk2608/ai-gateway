@@ -135,7 +135,7 @@ async function transitions(deployment: string) {
 describe('failover and circuit breaker', () => {
   it('fails over while the primary fails, opens its breaker, and recovers when it heals', async () => {
     // The primary fails every request: each one is served by the secondary.
-    const failedOver = [];
+    const failedOver: Awaited<ReturnType<typeof chat>>[] = [];
     for (let i = 0; i < 3; i++) failedOver.push(await chat('mock-failover'));
     expect(failedOver.map((r) => r.status)).toEqual([200, 200, 200]);
     expect(mock(primary).stats().requests).toBe(3);

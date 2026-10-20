@@ -34,6 +34,7 @@ let url: string;
 let key: string;
 let cookie: string;
 let otherCookie: string;
+let projectId: string;
 const tag = randomBytes(4).toString('hex');
 
 beforeAll(async () => {
@@ -63,7 +64,7 @@ beforeAll(async () => {
       effective_from: new Date(Date.now() - 60_000),
     })
     .execute();
-  const projectId = await createProject(db);
+  projectId = await createProject(db);
   key = (await createApiKey(db, projectId)).plaintext;
   const owner = await createUser(db, [{ projectId, role: 'viewer' }]);
   const outsider = await createUser(db, [{ projectId: await createProject(db), role: 'owner' }]);
@@ -166,5 +167,71 @@ describe('usage pipeline with the worker running in the gateway process', () => 
       .executeTakeFirstOrThrow();
     // The x-request-id the client saw, and the attemptId from the logs, are the stored keys.
     expect(row).toEqual({ request_id: id, attemptId: attempts[0]?.id });
+  });
+});
+
+interface Summary {
+  id: string;
+  startedAt: string;
+  status: string;
+  costMicroUsd: number | null;
+}
+
+async function page(query: string): Promise<{ data: Summary[]; nextCursor: string | null }> {
+  const res = await fetch(`${url}/admin/projects/${projectId}/requests${query}`, {
+    headers: { cookie },
+  });
+  expect(res.status).toBe(200);
+  return (await res.json()) as { data: Summary[]; nextCursor: string | null };
+}
+
+describe('request list and overview for the dashboard', () => {
+  it('pages through every request, newest first, without gaps or repeats', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) ids.push(await chat('mock-priced'));
+    await detail(ids.at(-1)!);
+    await vi.waitFor(async () => {
+      const all = (await page('?limit=100')).data.map((r) => r.id);
+      expect(all).toEqual(expect.arrayContaining(ids));
+    });
+
+    const everything = (await page('?limit=100')).data;
+    const seen: Summary[] = [];
+    let cursor: string | null = '';
+    while (cursor !== null) {
+      const next = await page(`?limit=2${cursor ? `&cursor=${cursor}` : ''}`);
+      expect(next.data.length).toBeLessThanOrEqual(2);
+      seen.push(...next.data);
+      cursor = next.nextCursor;
+    }
+    expect(seen.map((r) => r.id)).toEqual(everything.map((r) => r.id));
+    const order = [...seen].sort(
+      (a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id),
+    );
+    expect(seen).toEqual(order);
+  });
+
+  it('rejects a forged cursor', async () => {
+    const res = await fetch(`${url}/admin/projects/${projectId}/requests?cursor=bm9wZQ`, {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'invalid_cursor' } });
+  });
+
+  it('sums the last 24 hours from the stored requests', async () => {
+    await detail(await chat('mock-priced'));
+    const list = (await page('?limit=100')).data;
+    const res = await fetch(`${url}/admin/projects/${projectId}/overview`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const overview = (await res.json()) as Record<string, unknown>;
+    expect(overview).toMatchObject({
+      requests: list.length,
+      succeeded: list.filter((r) => r.status === 'success').length,
+      failed: list.filter((r) => r.status === 'error').length,
+      costMicroUsd: list.reduce((sum, r) => sum + (r.costMicroUsd ?? 0), 0),
+      month: { budgetMicroUsd: null },
+    });
+    expect((overview.month as { spentMicroUsd: number }).spentMicroUsd).toBe(overview.costMicroUsd);
   });
 });
