@@ -4,7 +4,7 @@ What is left to build, milestone by milestone, from M8 to the end of the project
 has enough detail to start work from the repository alone: read this file, then
 [PLAN-NOTES.md](PLAN-NOTES.md) and the ADRs in [adr/](adr/).
 
-## Where the project stands (2026-10-21)
+## Where the project stands (2026-10-21, after M8)
 
 - M0–M7 are done and tagged `m0-done` … `m7-done`: the OpenAI-compatible proxy (streaming and
   non-streaming), API keys, admin auth and RBAC, the usage pipeline (Redis Stream → worker →
@@ -16,7 +16,9 @@ has enough detail to start work from the repository alone: read this file, then
 - CI (`.github/workflows/ci.yml`) has four jobs: `check` (format, lint, dashboard-data check,
   typecheck, unit tests, build), `integration` (Postgres + Redis services), `dashboard-e2e`
   (Chromium at 375 px) and `images` (all Compose images build).
-- Accepted decisions are ADR 001–016 and 018. ADR 017 (observability) is written in M8.
+- M8 (observability) is built and verified (see its section); one deploy check waits on the owner
+  setting `METRICS_TOKEN` on Render. Tag `m8-done` once it passes.
+- Accepted decisions are ADR 001–018.
 
 ## How to work on a milestone
 
@@ -91,21 +93,21 @@ ID. Ops metrics stay separate from the business analytics of M6.
 
 **Acceptance**
 
-- [ ] Unit tests for metric recording, and a cardinality test that feeds many random models,
+- [x] Unit tests for metric recording, and a cardinality test that feeds many random models,
       paths and IDs and fails if any metric exceeds its series bound or uses a label outside the
       allow-list.
-- [ ] Integration test: real requests through the mock provider, then a scrape of `/metrics`
+- [x] Integration test: real requests through the mock provider, then a scrape of `/metrics`
       shows the counters moved; `/metrics` rejects a missing or wrong token and serves the right
       one.
-- [ ] A test checks that every metric queried in the Grafana dashboard JSON is registered by the
+- [x] A test checks that every metric queried in the Grafana dashboard JSON is registered by the
       code; CI validates the Prometheus config with `promtool check config`.
-- [ ] One request ID can be followed through gateway and worker logs by a single trace ID.
-- [ ] Stopping the worker makes stream lag rise visibly on the Infrastructure page.
-- [ ] The observability profile was started once, Prometheus showed both targets up and the
+- [x] One request ID can be followed through gateway and worker logs by a single trace ID.
+- [x] Stopping the worker makes stream lag rise visibly on the Infrastructure page.
+- [x] The observability profile was started once, Prometheus showed both targets up and the
       dashboard rendered real series, then the profile was stopped.
-- [ ] All four CI jobs green; Render live on the last commit with `/ready` 200 and `/metrics`
-      401 without the token. After the owner sets `METRICS_TOKEN` in the Render dashboard
-      (Generate), `/metrics` returns 200 with it.
+- [x] All four CI jobs green; Render live on the last commit with `/ready` 200.
+- [ ] After the owner sets `METRICS_TOKEN` in the Render dashboard (Generate), Render `/metrics`
+      returns 401 without it or with a wrong one, and 200 with it (404 until it is set).
 
 **ADR to write.** ADR 017 — observability: pino JSON logs with request and trace IDs,
 prom-client `/metrics` behind a token or a private listener, W3C trace context in logs and
