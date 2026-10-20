@@ -5,8 +5,19 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { useState } from 'react';
-import { api, type RequestDetail as Detail, type RequestSummary } from './api.js';
+import { useState, type FormEvent } from 'react';
+import {
+  analyticsPath,
+  api,
+  RANGES,
+  type AnalyticsFilters,
+  type ApiKey,
+  type Range,
+  type RequestDetail as Detail,
+  type RequestPage,
+  type RequestStatus,
+  type RequestSummary,
+} from './api.js';
 import { formatCount, formatLatency, formatTime, formatUsd } from './format.js';
 import { Empty, ErrorState, Loading } from './ui.js';
 
@@ -103,20 +114,110 @@ function RequestDetail({ requestId, onClose }: { requestId: string; onClose: () 
   );
 }
 
+const STATUSES: RequestStatus[] = ['success', 'error', 'canceled', 'rejected'];
+
+/** Range, status, key, model and provider; text fields apply when the form is submitted. */
+function RequestFilters({
+  projectId,
+  filters,
+  onChange,
+}: {
+  projectId: string;
+  filters: AnalyticsFilters;
+  onChange: (filters: AnalyticsFilters) => void;
+}) {
+  const keys = useQuery({
+    queryKey: ['api-keys', projectId],
+    queryFn: ({ signal }) =>
+      api<{ data: ApiKey[] }>(`/admin/projects/${projectId}/api-keys`, { signal }),
+  });
+  const [model, setModel] = useState(filters.model ?? '');
+  const [provider, setProvider] = useState(filters.provider ?? '');
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    onChange({
+      ...filters,
+      model: model.trim() || undefined,
+      provider: provider.trim() || undefined,
+    });
+  };
+  return (
+    <form className="filters" onSubmit={submit} aria-label="Filters">
+      <label>
+        Range
+        <select
+          value={filters.range}
+          onChange={(e) => onChange({ ...filters, range: e.target.value as Range })}
+        >
+          {RANGES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Status
+        <select
+          value={filters.status ?? ''}
+          onChange={(e) =>
+            onChange({ ...filters, status: (e.target.value || undefined) as RequestStatus })
+          }
+        >
+          <option value="">any</option>
+          {STATUSES.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        API key
+        <select
+          value={filters.apiKeyId ?? ''}
+          onChange={(e) => onChange({ ...filters, apiKeyId: e.target.value || undefined })}
+        >
+          <option value="">any</option>
+          {keys.data?.data.map((key) => (
+            <option key={key.id} value={key.id}>
+              {key.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Model
+        <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="any" />
+      </label>
+      <label>
+        Provider
+        <input value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="any" />
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  );
+}
+
 export function Requests({ projectId }: { projectId: string }) {
+  const [filters, setFilters] = useState<AnalyticsFilters>({ range: '24h' });
   // Cursors of the pages before this one, so "Newer" can go back.
   const [cursors, setCursors] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const cursor = cursors.at(-1);
   const page = useQuery({
-    queryKey: ['requests', projectId, cursor ?? null],
+    queryKey: ['requests', projectId, filters, cursor ?? null],
     queryFn: ({ signal }) =>
-      api<{ data: RequestSummary[]; nextCursor: string | null }>(
-        `/admin/analytics/requests?projectId=${projectId}&range=30d&limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      api<RequestPage>(
+        analyticsPath('requests', projectId, filters, {
+          limit: String(PAGE_SIZE),
+          cursor,
+        }),
         { signal },
       ),
     placeholderData: keepPreviousData,
   });
+  const filtered = Object.keys(filters).length > 1;
   // The dashboard is not built with React Compiler, so its memoization caveat does not apply.
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -135,13 +236,23 @@ export function Requests({ projectId }: { projectId: string }) {
             Refresh
           </button>
         </div>
+        <RequestFilters
+          projectId={projectId}
+          filters={filters}
+          onChange={(next) => {
+            setFilters(next);
+            setCursors([]);
+          }}
+        />
         {page.isPending ? (
           <Loading what="requests" />
         ) : page.isError ? (
           <ErrorState error={page.error} retry={() => void page.refetch()} />
         ) : page.data.data.length === 0 ? (
           <Empty>
-            No requests in the last 30 days. They appear here once the worker has recorded them.
+            {filtered
+              ? `No requests in the last ${filters.range} match these filters.`
+              : `No requests in the last ${filters.range}. They appear here once the worker has recorded them.`}
           </Empty>
         ) : (
           <>

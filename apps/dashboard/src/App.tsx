@@ -6,15 +6,38 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { api, isUnauthenticated, type Me } from './api.js';
-import { ApiKeys } from './ApiKeys.js';
+import {
+  api,
+  isUnauthenticated,
+  RANGES,
+  type AnalyticsFilters,
+  type Me,
+  type Range,
+} from './api.js';
+import { Cost } from './Cost.js';
+import { Infrastructure } from './Infrastructure.js';
 import { Login } from './Login.js';
+import { Models } from './Models.js';
 import { Overview } from './Overview.js';
+import { Reliability } from './Reliability.js';
 import { Requests } from './Requests.js';
+import { Security } from './Security.js';
+import { NewProject, Settings } from './Settings.js';
 import { Empty, ErrorState, Loading } from './ui.js';
 
-const TABS = { overview: 'Overview', requests: 'Requests', keys: 'API keys' } as const;
+const TABS = {
+  overview: 'Overview',
+  requests: 'Requests',
+  cost: 'Cost',
+  models: 'Models',
+  reliability: 'Reliability',
+  security: 'Security',
+  infra: 'Infrastructure',
+  settings: 'Settings',
+} as const;
 type Tab = keyof typeof TABS;
+/** Pages that show one time range, chosen in the toolbar. */
+const RANGED: Tab[] = ['overview', 'cost', 'models', 'reliability', 'security', 'infra'];
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,7 +53,7 @@ const queryClient = new QueryClient({
 function useTab(): [Tab, (tab: Tab) => void] {
   const read = (): Tab => {
     const hash = window.location.hash.slice(1);
-    return hash in TABS ? (hash as Tab) : 'overview';
+    return Object.hasOwn(TABS, hash) ? (hash as Tab) : 'overview';
   };
   const [tab, setTab] = useState<Tab>(read);
   useEffect(() => {
@@ -45,6 +68,8 @@ function Dashboard({ me }: { me: Me }) {
   const client = useQueryClient();
   const [tab, setTab] = useTab();
   const [projectId, setProjectId] = useState(me.projects[0]?.id ?? '');
+  const [range, setRange] = useState<Range>('24h');
+  const filters: AnalyticsFilters = { range };
   const project = me.projects.find((p) => p.id === projectId) ?? me.projects[0];
   const logout = useMutation({
     mutationFn: () => api('/admin/auth/logout', { method: 'POST' }),
@@ -76,25 +101,51 @@ function Dashboard({ me }: { me: Me }) {
         </div>
       </header>
       {!project ? (
-        <Empty>You are not a member of any project yet. Ask a project owner to add you.</Empty>
+        <>
+          <Empty>
+            You are not a member of any project yet. Ask a project owner to add you, or create one.
+          </Empty>
+          <NewProject />
+        </>
       ) : (
         <>
-          <nav className="tabs" aria-label="Pages">
-            {(Object.keys(TABS) as Tab[]).map((t) => (
-              <button
-                key={t}
-                type="button"
-                className={t === tab ? 'tab active' : 'tab'}
-                aria-current={t === tab ? 'page' : undefined}
-                onClick={() => setTab(t)}
-              >
-                {TABS[t]}
-              </button>
-            ))}
-          </nav>
-          {tab === 'overview' && <Overview projectId={project.id} />}
+          <div className="toolbar">
+            <nav className="tabs" aria-label="Pages">
+              {(Object.keys(TABS) as Tab[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={t === tab ? 'tab active' : 'tab'}
+                  aria-current={t === tab ? 'page' : undefined}
+                  onClick={() => setTab(t)}
+                >
+                  {TABS[t]}
+                </button>
+              ))}
+            </nav>
+            {RANGED.includes(tab) && (
+              <label className="range">
+                Range
+                <select value={range} onChange={(e) => setRange(e.target.value as Range)}>
+                  {RANGES.map((r) => (
+                    <option key={r} value={r}>
+                      last {r}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          {tab === 'overview' && <Overview projectId={project.id} filters={filters} />}
           {tab === 'requests' && <Requests key={project.id} projectId={project.id} />}
-          {tab === 'keys' && <ApiKeys projectId={project.id} role={project.role} />}
+          {tab === 'cost' && <Cost projectId={project.id} filters={filters} />}
+          {tab === 'models' && <Models projectId={project.id} filters={filters} />}
+          {tab === 'reliability' && <Reliability projectId={project.id} filters={filters} />}
+          {tab === 'security' && <Security projectId={project.id} filters={filters} />}
+          {tab === 'infra' && <Infrastructure projectId={project.id} filters={filters} />}
+          {tab === 'settings' && (
+            <Settings key={project.id} projectId={project.id} userId={me.user.id} />
+          )}
         </>
       )}
     </main>

@@ -341,3 +341,182 @@ code.secret {
 .badge.key-expiring {
   color: var(--warn);
 }
+
+/* --- M7 pages --- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The tab row scrolls sideways on narrow screens instead of widening the page. */
+.toolbar .tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-top: 0;
+  border-bottom: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab {
+  white-space: nowrap;
+}
+
+.range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  margin-top: 16px;
+}
+
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.filters input {
+  width: 9rem;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 0 24px;
+}
+
+.chart {
+  margin: 16px 0 0;
+  min-width: 0;
+}
+
+th.num,
+td.num {
+  text-align: right;
+}
+
+table.breakdown td:first-child {
+  width: 100%;
+  white-space: normal;
+}
+
+.bar {
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+.note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--warn);
+  background: var(--bg);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 16px 0 0;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+fieldset label {
+  flex: 1 1 10rem;
+}
+
+.form input {
+  width: 100%;
+}
+
+.badge.alert-ok,
+.badge.breaker-closed {
+  color: var(--ok);
+}
+
+.badge.alert-warning,
+.badge.breaker-half_open {
+  color: var(--warn);
+}
+
+.badge.alert-exceeded,
+.badge.breaker-open {
+  color: var(--fail);
+}
+
+td .badge {
+  margin-left: 6px;
+}
+
+@media (max-width: 480px) {
+  main {
+    padding: 16px 12px;
+  }
+
+  .card {
+    padding: 14px;
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stat-value {
+    font-size: 1.15rem;
+    overflow-wrap: anywhere;
+  }
+
+  .filters input,
+  .filters select,
+  .row input,
+  .row select {
+    width: 100%;
+  }
+
+  .filters label,
+  .row > * {
+    flex: 1 1 100%;
+  }
+
+  .facts {
+    grid-template-columns: 1fr;
+  }
+}
