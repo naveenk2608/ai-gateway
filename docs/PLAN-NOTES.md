@@ -4,10 +4,16 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-10-21 | M6 | Requests with an invalid, revoked or expired API key are refused before a project is trusted, so the Security section cannot count them per project (`invalidApiKeys.count` is null). Revoked or expired keys could be attributed (the secret matched); a per-IP counter for unknown keys belongs with the M4 per-IP limit note. | open |
+| 2026-10-21 | M6 | Failed health checks are only logged; `provider_health_events` records breaker transitions, including the half-open after a passing check. | open |
+| 2026-10-21 | M6 | Breaker states in Redis (`gw:health:<deployment>`) keep an entry per gateway instance forever; entries of instances that are gone stay visible with their last time. | open |
+| 2026-10-21 | M6 | Raw `request_records`, `provider_attempts` and `usage_events` have no retention or partitioning yet; only rollups expire. Revisit with M10 sizing. | open |
+| 2026-10-21 | M6 | Events ingested by an older gateway or worker after the rollup migration ran (during a rolling deploy) are stored without rollups. Running `SELECT rollup_requests(...)` for those IDs would add them; there is no CLI for it. | open |
+| 2026-10-21 | M6 | The overview's `month` spend is per project from `budget_periods` and ignores the key, model, provider and status filters. | by design |
 | 2026-10-20 | M5 | Routing policies come from `config/models.json` only; the `routing_policies` table (per-project overrides) is still unused. The settings pages (M7) bring per-project policies and editing. | planned M7 |
-| 2026-10-20 | M5 | Breaker state is visible fleet-wide in Redis (`gw:health:<deployment>`) and as `provider_health_events` rows, but no admin endpoint shows it yet; the Reliability page (M6/M7) will. | planned M6/M7 |
+| 2026-10-20 | M5 | Breaker state is visible fleet-wide in Redis (`gw:health:<deployment>`) and as `provider_health_events` rows, but no admin endpoint shows it yet; the Reliability page (M6/M7) will. Done in M6: `GET /admin/analytics/reliability`. | done |
 | 2026-10-20 | M5 | Failed attempts are not charged: their usage is unknown. A provider that bills a timed-out request is undercounted. | by design |
-| 2026-10-20 | M5 | `GET /admin/projects/:id/overview` aggregates the last 24 h of `request_records` directly; M6 replaces it with rollups and time ranges. The request list has no filters yet (M6/M7). | planned M6 |
+| 2026-10-20 | M5 | `GET /admin/projects/:id/overview` aggregates the last 24 h of `request_records` directly; M6 replaces it with rollups and time ranges. The request list has no filters yet (M6/M7). Done in M6: replaced by `/admin/analytics/overview` and `/admin/analytics/requests` with ranges and filters. | done |
 | 2026-10-20 | M5 | The response cache is off by default (`CACHE_ENABLED`): it keeps completions in Redis, and storing completions by default is a non-goal. Prompts only appear hashed. | by design |
 | 2026-10-20 | M5 | The dashboard is checked by typecheck, lint, build, unit tests of its API client and formatters, and an API smoke test through the nginx container; it was not rendered in a browser here and has no component tests. M7 adds page tests with its acceptance checks. | open |
 | 2026-10-20 | M5 | Latency EWMA and breakers are per instance and start empty after a restart; `lowest_latency` sends the first requests to unmeasured deployments to measure them. | by design |
@@ -30,9 +36,9 @@ Deferred work, open questions and known issues found while building. Newest firs
 | 2026-10-20 | M2 | Admin login and invalid API keys are not rate-limited; failed logins are only logged. Add per-IP/per-email login limits and invalid-key limits with the M4 Lua scripts. Logins limited per email and IP in M4; invalid keys still open (see M4 row). | done |
 | 2026-10-20 | M2 | `API_KEY_PEPPER` cannot be rotated without invalidating every key. Dual-pepper verification (try new, then old, rehash on use) would allow it. | open |
 | 2026-10-20 | M2 | No endpoints yet to change one's own password, reset a password, disable a user or list sessions; expired sessions are deleted only at that user's next login. | open |
-| 2026-10-20 | M2 | `api_keys.last_used_at` is not tracked (it would add a write per request). The dashboard can derive last use from usage rows (M6). | planned M6 |
+| 2026-10-20 | M2 | `api_keys.last_used_at` is not tracked (it would add a write per request). The dashboard can derive last use from usage rows (M6). Not done in M6: the latest rollup bucket per key would give it to the minute. | open |
 | 2026-10-20 | M2 | `model_deployments`, `routing_policies`, `budget_*` and `provider_health_events` tables exist but are unused: deployments still come from `config/models.json`. Routing (M5), budgets (M4) and the settings pages (M7) start using them. Budget tables used since M4. Prices have no admin endpoint; insert rows with SQL or the seed. | planned M4/M5/M7 |
-| 2026-10-20 | M2 | `request_records` and `usage_events` are not partitioned. Revisit with retention in M6. | planned M6 |
+| 2026-10-20 | M2 | `request_records` and `usage_events` are not partitioned. Revisit with retention in M6. M6 added rollup retention only; see the M6 row on raw-record retention. | open |
 | 2026-10-20 | M2 | CSRF protection for the admin API is `SameSite=Strict` cookies plus JSON bodies; add a CSRF token if the dashboard is ever served from a different site than the API. | by design |
 | 2026-10-20 | M1 | `POST /v1/chat/completions` is unauthenticated until API keys arrive in M2; the gateway binds to 127.0.0.1 by default. Resolved: API keys required on /v1 (M2). | done |
 | 2026-10-20 | M1 | The Ollama and OpenAI-compatible adapters are verified only against local fake servers that follow each documented wire format. No real Ollama (not installed on the dev machine) or paid API was called. Next: a smoke test against a real Ollama. | open |

@@ -9,7 +9,8 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: MVP (milestones M0-M5).** Architecture decisions are in [docs/adr/](docs/adr/).
+**Status: MVP (milestones M0-M5) plus the analytics API (M6).** Architecture decisions are in
+[docs/adr/](docs/adr/).
 
 - `POST /v1/chat/completions` in OpenAI format, streaming and non-streaming; the official OpenAI
   SDKs work unchanged.
@@ -20,6 +21,8 @@ real models, and Ollama works too.
   health checks. Each attempt is stored with the reason it was made.
 - Usage accounting through a Redis Stream into Postgres, exactly once in effect, with a
   dead-letter path; costs from versioned prices.
+- An analytics API over per-minute, hourly and daily rollups: traffic, cost and budgets, model
+  comparison, reliability, rejections and pipeline health, for 1 h to 30 days.
 - A dashboard: overview counters, a request list with routing history, API key management.
 
 ```mermaid
@@ -275,8 +278,7 @@ settings, `owner` also manages members.
 | `GET /admin/projects`, `POST /admin/projects` (the creator becomes owner) | any user |
 | `GET /admin/projects/:projectId` | viewer |
 | `PATCH /admin/projects/:projectId` (name, `allowedModels`, `limits`, `budget`) | admin |
-| `GET /admin/projects/:projectId/overview` (last 24 h, spend this month) | viewer |
-| `GET /admin/projects/:projectId/requests?limit&cursor` (newest first) | viewer |
+| `GET /admin/analytics/...` (see [Analytics](#analytics)) | viewer |
 | `GET /admin/requests/:requestId`: the request, its usage and every attempt with its routing reason | viewer |
 | `GET /admin/projects/:projectId/members` | viewer |
 | `POST`, `PATCH`, `DELETE /admin/projects/:projectId/members[/:userId]` | owner |
@@ -288,6 +290,34 @@ Another project's resources answer 404, exactly like ones that do not exist. Eve
 an `audit_logs` row in the same transaction. Logins are limited per email and per client IP
 (`LOGIN_ATTEMPTS_PER_MINUTE`, `LOGIN_ATTEMPTS_PER_MINUTE_PER_IP`); behind a proxy, set
 `TRUST_PROXY` to the number of proxies in front so the client IP is the real one.
+
+## Analytics
+
+Read-only endpoints for the dashboard, one per section (ADR 015). Each takes `range` (`1h`,
+`24h`, `7d` or `30d`; anything else is a 400 listing them) and the filters `projectId`,
+`apiKeyId`, `provider`, `model` and `status`. Without `projectId` they cover every project the
+caller belongs to; another project's ID is a 404.
+
+| Route | What it returns |
+| --- | --- |
+| `GET /admin/analytics/overview` | Counts by status, tokens, cost, latency and TTFT percentiles, a request-rate series, spend this month |
+| `GET /admin/analytics/requests?limit&cursor` | Requests in the range, newest first, keyset-paginated |
+| `GET /admin/analytics/models` | Per model and deployment: latency, TTFT, output tokens per second, cost, failure and fallback rates |
+| `GET /admin/analytics/cost` | Spend by provider, model, project and key; a cost series; budgets with alerts at 80% and 100%; a monthly projection |
+| `GET /admin/analytics/reliability` | Errors by code, retries, fallbacks per deployment, breaker states and changes |
+| `GET /admin/analytics/security` | Rejections by reason (rate, token, concurrency, budget, policy) and by key |
+| `GET /admin/analytics/infra` | Usage stream length, unread and pending events, dead letters, Postgres and Redis round trips, measured now |
+
+The worker keeps rollups per minute, hour and day in the same transaction as the request rows, so
+totals always match the stored requests and a re-delivered event changes nothing. `1h` and `24h`
+read minute rows, `7d` hourly rows and `30d` daily rows (UTC); series have 60, 96, 168 and 30
+points. Percentiles come from latency histograms (10 ms to 120 s) and are approximate. The
+projection is null, with a reason, until there are 7 full days of data. Retention:
+`ROLLUP_RETENTION_MINUTE_HOURS` (48), `ROLLUP_RETENTION_HOUR_DAYS` (35), `ROLLUP_RETENTION_DAY_DAYS`
+(400).
+
+Speed and cost comparisons say nothing about answer quality. Requests with an invalid API key are
+refused before a project is known, so they are not counted per project.
 
 ## Usage accounting
 
@@ -362,4 +392,5 @@ docs/adr         architecture decision records
 - The cache is exact-match only and off by default; sampled requests are cached only on request.
 - No response-quality evaluation: routing weighs latency, cost and failures only.
 - Redis Cluster is not supported (one Redis primary is).
+- Analytics percentiles are approximate (histogram buckets), and days are UTC days.
 - More deferred work is listed in [docs/PLAN-NOTES.md](docs/PLAN-NOTES.md).
