@@ -79,6 +79,23 @@ describe('usage consumer', () => {
     expect(await pendingCount(redis, settings)).toBe(0);
   });
 
+  it('recreates its consumer group when Redis comes back without its data', async () => {
+    const settings = isolatedSettings({ WORKER_CLAIM_IDLE_MS: 600_000 });
+    const consumer = await startConsumer(settings);
+    const projectId = await createProject(db);
+    const before = makeEvent({ projectId });
+    await publish(redis, settings.EVENTS_STREAM, JSON.stringify(before));
+    await vi.waitFor(() => expect(consumer.stats.processed).toBe(1), { timeout: 10_000 });
+
+    // A restart with no persistence: the stream and its consumer group are gone.
+    await redis.del(settings.EVENTS_STREAM);
+    const after = makeEvent({ projectId });
+    await publish(redis, settings.EVENTS_STREAM, JSON.stringify(after));
+
+    await vi.waitFor(() => expect(consumer.stats.processed).toBe(2), { timeout: 10_000 });
+    expect(await usageRows([before.request.id, after.request.id])).toHaveLength(2);
+  });
+
   it.each(['before-commit', 'after-commit'] as const)(
     'a worker killed mid-batch (%s) loses no events and duplicates none after a restart',
     async (point) => {

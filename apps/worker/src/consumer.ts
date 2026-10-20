@@ -52,6 +52,7 @@ export interface ConsumerStats {
 }
 
 const BUSYGROUP = /BUSYGROUP/;
+const NOGROUP = /NOGROUP/;
 const MAX_BACKOFF_MS = 30_000;
 
 /** Errors that mean "Postgres is unreachable right now", worth retrying in place. */
@@ -172,6 +173,22 @@ export class UsageConsumer {
     }
   }
 
+  /**
+   * Redis restarted without its data (a host with no persistence, such as Render's free Redis):
+   * the stream and its group are gone. Recreating the group from the start of the stream picks up
+   * every event written since.
+   */
+  async #recreateGroup(): Promise<boolean> {
+    this.#o.logger.warn('usage consumer group missing, recreating it (Redis lost its data)');
+    try {
+      await this.#ensureGroup();
+      return true;
+    } catch (err) {
+      this.#o.logger.warn({ err }, 'recreating the usage consumer group failed');
+      return false;
+    }
+  }
+
   get #stopping(): boolean {
     return this.#stop.signal.aborted;
   }
@@ -202,6 +219,9 @@ export class UsageConsumer {
           return;
         }
         if (this.#stopping) return;
+        if (err instanceof Error && NOGROUP.test(err.message) && (await this.#recreateGroup())) {
+          continue;
+        }
         this.#o.logger.error({ err, retryInMs: backoffMs }, 'usage consumer error');
         await this.#sleep(backoffMs);
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
