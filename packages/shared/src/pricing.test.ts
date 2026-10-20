@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { estimateTokens } from './events.js';
 import { costMicroUsd, priceAt } from './pricing.js';
 
 describe('costMicroUsd', () => {
@@ -38,13 +37,5 @@ describe('priceAt', () => {
 
   it('finds nothing before the first version', () => {
     expect(priceAt(versions, 999)).toBeUndefined();
-  });
-});
-
-describe('estimateTokens', () => {
-  it('counts about four characters per token, rounding up', () => {
-    expect(estimateTokens('')).toBe(0);
-    expect(estimateTokens('abc')).toBe(1);
-    expect(estimateTokens('abcdefgh')).toBe(2);
   });
 });

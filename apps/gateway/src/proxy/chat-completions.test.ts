@@ -422,10 +422,11 @@ describe('usage events', () => {
       errorCode: 'upstream_unavailable',
     });
     expect(event.attempts[0]?.outcome).toBe('connection');
-    // "Say hello" is 9 characters, "This is" 7: about 3 and 2 tokens.
+    // "Say hello" is 2 words plus 6 framing tokens; the two chunks "This" and " is" one each.
     expect(event).toMatchObject({
       usageSource: 'estimated',
-      usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 },
+      usage: { promptTokens: 8, completionTokens: 2, totalTokens: 10 },
+      estimatedPromptTokens: 8,
     });
   });
 

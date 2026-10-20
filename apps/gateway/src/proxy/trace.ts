@@ -1,5 +1,6 @@
 import {
-  estimateTokens,
+  estimatePromptTokens,
+  estimateTextTokens,
   uuidv7,
   type AttemptRecord,
   type Clock,
@@ -26,11 +27,15 @@ export class RequestTrace {
   readonly #clock: Clock;
   readonly #start: TraceStart;
   readonly startedAt: number;
+  /** Tokenizer approximation of the prompt, used by limits and budgets before the call. */
+  readonly estimatedPromptTokens: number;
   readonly attempts: AttemptRecord[] = [];
   #deployment: string | null = null;
   #firstTokenAt: number | undefined;
   #usage: Usage | null = null;
-  #completionChars = 0;
+  /** Estimated tokens of the completion text seen so far, summed per chunk. */
+  #completionTokens = 0;
+  #completionText = false;
   #errorCode: string | null = null;
   #finished = false;
   /** Set once the SSE body owns the response; the stream then finishes the trace itself. */
@@ -40,6 +45,9 @@ export class RequestTrace {
     this.#start = start;
     this.#clock = clock;
     this.startedAt = clock.now();
+    this.estimatedPromptTokens = estimatePromptTokens(
+      start.messages.map((m) => ({ text: messageText(m.content), name: m.name })),
+    );
   }
 
   nextAttemptNumber(): number {
@@ -56,7 +64,9 @@ export class RequestTrace {
   }
 
   addCompletionText(text: string): void {
-    this.#completionChars += text.length;
+    if (text === '') return;
+    this.#completionText = true;
+    this.#completionTokens += estimateTextTokens(text);
   }
 
   setUsage(usage: Usage | null): void {
@@ -108,6 +118,7 @@ export class RequestTrace {
       attempts: this.attempts,
       usage,
       usageSource,
+      estimatedPromptTokens: this.estimatedPromptTokens,
     };
   }
 
@@ -126,10 +137,9 @@ export class RequestTrace {
         usageSource: 'reported',
       };
     }
-    if (this.#completionChars > 0) {
-      const promptText = this.#start.messages.map((m) => messageText(m.content)).join('\n');
-      const promptTokens = estimateTokens(promptText);
-      const completionTokens = Math.ceil(this.#completionChars / 4);
+    if (this.#completionText) {
+      const promptTokens = this.estimatedPromptTokens;
+      const completionTokens = this.#completionTokens;
       return {
         usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens },
         usageSource: 'estimated',

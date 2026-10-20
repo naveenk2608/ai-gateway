@@ -58,16 +58,10 @@ export const usageEventSchema = z.object({
   /** Tokens for the request; null when unknown (`usageSource: 'missing'`). */
   usage: z.object({ promptTokens: count, completionTokens: count, totalTokens: count }).nullable(),
   usageSource: usageSourceSchema,
+  /** The gateway's prompt-token estimate, made before the call (M4); compare with reported usage. */
+  estimatedPromptTokens: count.optional(),
 });
 
 export type UsageEvent = z.output<typeof usageEventSchema>;
 export type AttemptRecord = z.output<typeof attemptRecordSchema>;
 export type UsageSourceValue = z.output<typeof usageSourceSchema>;
-
-/**
- * Rough token count for text whose usage the provider did not report: about four characters per
- * token for English. Only used for `estimated` usage, never for `reported`.
- */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
