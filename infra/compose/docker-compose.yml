@@ -1,0 +1,94 @@
+# Local stack. `docker compose up` starts Postgres and Redis for development and integration
+# tests; `docker compose --profile full up --build` adds the gateway, worker and dashboard.
+#
+# Local development only: Postgres uses trust auth and every port is bound to 127.0.0.1, so no
+# password exists anywhere in the repo. Real deployments pass credentials through DATABASE_URL
+# (Secrets Manager in M10).
+
+name: ai-gateway
+
+services:
+  postgres:
+    image: postgres:16.15-alpine3.24
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_DB: gateway
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - 127.0.0.1:${POSTGRES_PORT:-5432}:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U gateway -d gateway]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4.11-alpine3.21
+    ports:
+      - 127.0.0.1:${REDIS_PORT:-6379}:6379
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    profiles: [full]
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: gateway
+    environment:
+      DATABASE_URL: postgres://gateway@postgres:5432/gateway
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
+    ports:
+      - 127.0.0.1:${GATEWAY_PORT:-8080}:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Longer than SHUTDOWN_TIMEOUT_MS so the drain finishes before Docker sends SIGKILL.
+    stop_grace_period: 15s
+    healthcheck:
+      test: [CMD, wget, -qO-, http://127.0.0.1:8080/health]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    profiles: [full]
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      DATABASE_URL: postgres://gateway@postgres:5432/gateway
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 15s
+
+  dashboard:
+    profiles: [full]
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: dashboard
+    ports:
+      - 127.0.0.1:${DASHBOARD_PORT:-3000}:80
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

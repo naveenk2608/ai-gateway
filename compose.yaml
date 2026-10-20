@@ -1,0 +1,5 @@
+# Lets `docker compose ...` run from the repo root. The stack lives in infra/compose/.
+name: ai-gateway
+
+include:
+  - infra/compose/docker-compose.yml

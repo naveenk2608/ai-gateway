@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds and reports
+dist/
+build/
+coverage/
+*.tsbuildinfo
+bench/results/*.json
+!bench/results/.gitkeep
+
+# env and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfvars
+!infra/terraform/example.tfvars
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.log

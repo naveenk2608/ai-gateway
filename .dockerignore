@@ -1,0 +1,11 @@
+# Host node_modules hold platform-specific binaries; the image installs its own.
+**/node_modules
+**/dist
+**/coverage
+.git
+.github
+.vscode
+.env
+.env.*
+!.env.example
+*.log
