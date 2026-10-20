@@ -11,6 +11,13 @@ export interface BudgetPeriod {
   end: number;
 }
 
+/** The period a `YYYY-MM` key names. */
+export function budgetPeriodOf(key: string): BudgetPeriod {
+  const match = /^(\d{4})-(\d{2})$/.exec(key);
+  if (!match) throw new RangeError(`not a budget period: ${key}`);
+  return budgetPeriodAt(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
+}
+
 export function budgetPeriodAt(at: number): BudgetPeriod {
   const date = new Date(at);
   const year = date.getUTCFullYear();

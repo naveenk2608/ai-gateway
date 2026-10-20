@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { budgetPeriodAt } from './budget.js';
+import { budgetPeriodAt, budgetPeriodOf } from './budget.js';
 import { estimatePromptTokens, estimateTextTokens } from './tokens.js';
 
 describe('estimateTextTokens', () => {
@@ -58,5 +58,10 @@ describe('budgetPeriodAt', () => {
     expect(budgetPeriodAt(Date.UTC(2026, 11, 31, 23, 59, 59, 999)).key).toBe('2026-12');
     expect(budgetPeriodAt(Date.UTC(2027, 0, 1)).key).toBe('2027-01');
     expect(budgetPeriodAt(Date.UTC(2026, 11, 15)).end).toBe(Date.UTC(2027, 0, 1));
+  });
+
+  it('parses a period key back', () => {
+    expect(budgetPeriodOf('2026-12')).toEqual(budgetPeriodAt(Date.UTC(2026, 11, 1)));
+    expect(() => budgetPeriodOf('2026-1')).toThrow(RangeError);
   });
 });

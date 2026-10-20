@@ -43,6 +43,7 @@ function setup(spend = 0) {
     policy: { ...UNLIMITED, ...policy },
     tokens: 0,
     costMicroUsd: 0,
+    startedAt: clock.now(),
     ...extra,
   });
   const admitted = async (policy: Partial<UsagePolicy>, extra: Partial<AdmitRequest> = {}) => {
@@ -160,6 +161,7 @@ describe('concurrency (lease set)', () => {
           policy: { ...UNLIMITED, ...limited },
           tokens: 0,
           costMicroUsd: 0,
+          startedAt: t.clock.now(),
         }),
       ),
     );

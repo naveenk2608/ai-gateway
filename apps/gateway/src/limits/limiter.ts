@@ -22,6 +22,8 @@ export interface AdmitRequest {
   tokens: number;
   /** The most this request can cost, reserved against the budget. */
   costMicroUsd: number;
+  /** When the request started: picks its budget period, as the worker does. */
+  startedAt: number;
 }
 
 export type Admission =
@@ -90,7 +92,7 @@ export class Limiter {
   async admit(request: AdmitRequest): Promise<Admission> {
     const { policy } = request;
     const now = this.#o.clock.now();
-    const period = budgetPeriodAt(now);
+    const period = budgetPeriodAt(request.startedAt);
     const keys = this.#keys(request.projectId, request.apiKeyId, period);
     const budgeted = policy.monthlyBudgetMicroUsd !== null;
     const openMember = `${request.projectId}|${period.key}|${request.requestId}`;

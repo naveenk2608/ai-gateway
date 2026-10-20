@@ -1,4 +1,11 @@
-import { costMicroUsd, priceAt, uuidv7, type UsageEvent } from '@ai-gateway/shared';
+import {
+  budgetPeriodAt,
+  costMicroUsd,
+  priceAt,
+  uuidv7,
+  type BudgetPeriod,
+  type UsageEvent,
+} from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
 
 interface Price {
@@ -155,12 +162,131 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
       },
     ];
   });
-  if (usageRows.length > 0) {
-    // No conflict target: a repeated event_id or request_id is skipped either way.
-    await trx
-      .insertInto('usage_events')
-      .values(usageRows)
-      .onConflict((oc) => oc.doNothing())
-      .execute();
+  // No conflict target: a repeated event_id or request_id is skipped either way. RETURNING lists
+  // only the rows inserted now, so a re-delivered event adds nothing to the spend below.
+  const inserted =
+    usageRows.length === 0
+      ? []
+      : await trx
+          .insertInto('usage_events')
+          .values(usageRows)
+          .onConflict((oc) => oc.doNothing())
+          .returning('request_id')
+          .execute();
+  const costs = new Map(usageRows.map((row) => [row.request_id, row.cost_micro_usd]));
+  await updateBudgetLedger(trx, events, costs, new Set(inserted.map((row) => row.request_id)));
+}
+
+interface PeriodDelta {
+  projectId: string;
+  period: BudgetPeriod;
+  spent: number;
+  limit: number | null;
+}
+
+/**
+ * Keeps each project's monthly spend in `budget_periods` (ADR 009), the total the gateway rebuilds
+ * its Redis budget from, and audits the reservation of each request that had a budget. Spend grows
+ * only by usage rows this transaction inserted, so it counts each request once.
+ */
+async function updateBudgetLedger(
+  trx: Db,
+  events: UsageEvent[],
+  costs: Map<string, number | null>,
+  inserted: Set<string>,
+): Promise<void> {
+  const deltas = new Map<string, PeriodDelta>();
+  const periodOf = (event: UsageEvent) => budgetPeriodAt(Date.parse(event.request.startedAt));
+  const touch = (event: UsageEvent, spent: number) => {
+    const period = periodOf(event);
+    const key = `${event.request.projectId}|${period.key}`;
+    const delta = deltas.get(key) ?? {
+      projectId: event.request.projectId,
+      period,
+      spent: 0,
+      limit: null,
+    };
+    delta.spent += spent;
+    if (event.budget) delta.limit = event.budget.limitMicroUsd;
+    deltas.set(key, delta);
+  };
+  // One event per request: the same event can arrive more than once in a batch.
+  const unique = [...new Map(events.map((e) => [e.request.id, e])).values()];
+  for (const event of unique) {
+    const cost = inserted.has(event.request.id) ? (costs.get(event.request.id) ?? 0) : 0;
+    if (cost > 0 || event.budget) touch(event, cost);
   }
+  if (deltas.size === 0) return;
+
+  // A fixed order, so concurrent workers lock the same rows in the same order (no deadlocks).
+  const rows = [...deltas.values()].sort(
+    (a, b) => a.projectId.localeCompare(b.projectId) || a.period.start - b.period.start,
+  );
+  const periods = await trx
+    .insertInto('budget_periods')
+    .values(
+      rows.map((d) => ({
+        id: uuidv7(),
+        project_id: d.projectId,
+        period_start: new Date(d.period.start),
+        period_end: new Date(d.period.end),
+        limit_micro_usd: d.limit,
+        spent_micro_usd: d.spent,
+      })),
+    )
+    .onConflict((oc) =>
+      oc.columns(['project_id', 'period_start']).doUpdateSet((eb) => ({
+        spent_micro_usd: eb(
+          'budget_periods.spent_micro_usd',
+          '+',
+          eb.ref('excluded.spent_micro_usd'),
+        ),
+        limit_micro_usd: eb.fn.coalesce(
+          'excluded.limit_micro_usd',
+          'budget_periods.limit_micro_usd',
+        ),
+        updated_at: new Date(),
+      })),
+    )
+    .returning(['id', 'project_id', 'period_start'])
+    .execute();
+  const periodIds = new Map(
+    periods.map((p) => [`${p.project_id}|${p.period_start.getTime()}`, p.id]),
+  );
+
+  const reservations = unique.flatMap((event) => {
+    if (!event.budget) return [];
+    const periodId = periodIds.get(`${event.request.projectId}|${periodOf(event).start}`);
+    if (!periodId) return [];
+    return [
+      {
+        id: uuidv7(Date.parse(event.request.startedAt)),
+        budget_period_id: periodId,
+        project_id: event.request.projectId,
+        request_id: event.request.id,
+        reserved_micro_usd: event.budget.reservedMicroUsd,
+        actual_micro_usd: costs.get(event.request.id) ?? null,
+        status: 'reconciled' as const,
+        created_at: event.request.startedAt,
+        settled_at: event.request.completedAt,
+      },
+    ];
+  });
+  if (reservations.length === 0) return;
+  // A reservation the gateway's sweeper already recorded as expired (the request outlived its
+  // lease) is reconciled now that its cost is known.
+  await trx
+    .insertInto('budget_reservations')
+    .values(reservations)
+    .onConflict((oc) =>
+      oc
+        .column('request_id')
+        .doUpdateSet((eb) => ({
+          status: 'reconciled',
+          actual_micro_usd: eb.ref('excluded.actual_micro_usd'),
+          settled_at: eb.ref('excluded.settled_at'),
+        }))
+        .where('budget_reservations.status', '=', 'expired'),
+    )
+    .execute();
 }

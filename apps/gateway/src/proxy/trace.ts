@@ -37,6 +37,7 @@ export class RequestTrace {
   #completionTokens = 0;
   #completionText = false;
   #errorCode: string | null = null;
+  #budget: UsageEvent['budget'];
   #finished = false;
   /** Set once the SSE body owns the response; the stream then finishes the trace itself. */
   streaming = false;
@@ -75,6 +76,11 @@ export class RequestTrace {
 
   setUsage(usage: Usage | null): void {
     this.#usage = usage;
+  }
+
+  /** Records the budget reservation made at admission, for the worker's audit. */
+  setBudget(budget: NonNullable<UsageEvent['budget']>): void {
+    this.#budget = budget;
   }
 
   setError(code: string): void {
@@ -123,6 +129,7 @@ export class RequestTrace {
       usage,
       usageSource,
       estimatedPromptTokens: this.estimatedPromptTokens,
+      ...(this.#budget ? { budget: this.#budget } : {}),
     };
   }
 

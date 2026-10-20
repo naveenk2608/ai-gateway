@@ -60,6 +60,11 @@ export const usageEventSchema = z.object({
   usageSource: usageSourceSchema,
   /** The gateway's prompt-token estimate, made before the call (M4); compare with reported usage. */
   estimatedPromptTokens: count.optional(),
+  /**
+   * Set when the project had a budget (ADR 009): the monthly limit and the worst-case cost
+   * reserved before the call. The worker audits it as a budget reservation.
+   */
+  budget: z.object({ limitMicroUsd: count, reservedMicroUsd: count }).optional(),
 });
 
 export type UsageEvent = z.output<typeof usageEventSchema>;

@@ -20,7 +20,7 @@ import type { GatewayConfig } from './config.js';
 import type { EventBus } from './events/bus.js';
 import { RedisStreamBus } from './events/redis-stream.js';
 import { AdmissionControl } from './limits/admission.js';
-import { databaseSpendLoader } from './limits/ledger.js';
+import { databaseSpendLoader, ReservationSweeper } from './limits/ledger.js';
 import { Limiter } from './limits/limiter.js';
 import { databasePriceLoader, PriceBook } from './limits/prices.js';
 import type { ModelsConfig } from './models-config.js';
@@ -43,6 +43,7 @@ export interface Gateway {
   events: EventBus;
   limiter: Limiter;
   prices: PriceBook;
+  sweeper: ReservationSweeper;
   /** The in-process usage consumer, when RUN_WORKER_IN_PROCESS is on. */
   consumer: UsageConsumer | undefined;
   /** Applies pending migrations (if enabled), then listens. */
@@ -108,6 +109,13 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     loadSpend: databaseSpendLoader(db),
     leaseTtlMs: config.LIMITS_LEASE_TTL_MS,
   });
+  const sweeper = new ReservationSweeper({
+    limiter,
+    db,
+    clock,
+    logger,
+    intervalMs: config.BUDGET_SWEEP_INTERVAL_MS,
+  });
   const admission = new AdmissionControl({
     limiter,
     prices,
@@ -149,6 +157,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     // Flush buffered usage events while Redis is still open, then let the consumer finish its
     // batch; whatever it leaves pending is claimed by the next worker.
     prices.stop();
+    await sweeper.stop();
     await events.close(Math.min(2_000, config.SHUTDOWN_TIMEOUT_MS));
     if (inProcess) {
       await inProcess.consumer.stop();
@@ -171,6 +180,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     events,
     limiter,
     prices,
+    sweeper,
     consumer: inProcess?.consumer,
     async start() {
       if (config.MIGRATE_ON_START) {
@@ -192,6 +202,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       );
       if (boot) logger.info(boot, 'bootstrap settings applied');
       await prices.start();
+      sweeper.start();
       invalidation.start();
       if (inProcess) {
         await inProcess.consumer.start();

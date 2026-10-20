@@ -20,6 +20,6 @@ export {
   type UsageEvent,
   type UsageSourceValue,
 } from './events.js';
-export { budgetPeriodAt, type BudgetPeriod } from './budget.js';
+export { budgetPeriodAt, budgetPeriodOf, type BudgetPeriod } from './budget.js';
 export { costMicroUsd, priceAt, type PriceVersion } from './pricing.js';
 export { estimatePromptTokens, estimateTextTokens, type EstimatedMessage } from './tokens.js';

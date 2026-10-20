@@ -135,12 +135,19 @@ export class AdmissionControl {
         policy,
         tokens,
         costMicroUsd: policy.monthlyBudgetMicroUsd === null ? 0 : costMicroUsd,
+        startedAt: trace.startedAt,
       });
       if (!result.admitted) {
         log.info({ ...result.rejection, tokens, costMicroUsd }, 'request rejected by limits');
         throw rejectionError(result.rejection, input, tokens);
       }
       ticket = result.ticket;
+      if (policy.monthlyBudgetMicroUsd !== null) {
+        trace.setBudget({
+          limitMicroUsd: policy.monthlyBudgetMicroUsd,
+          reservedMicroUsd: costMicroUsd,
+        });
+      }
     } catch (err) {
       if (err instanceof GatewayError) throw err;
       if (this.#o.failMode === 'closed') {
