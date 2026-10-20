@@ -12,6 +12,7 @@
     "test": "vitest run --project unit",
     "test:int": "vitest run --project integration",
     "lint": "eslint .",
+    "check:dashboard-data": "tsx scripts/check-dashboard-data.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --workspace-concurrency=1 typecheck",
     "format": "tsx scripts/format.ts --write",
     "format:check": "tsx scripts/format.ts --check",

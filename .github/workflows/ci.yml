@@ -26,6 +26,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
+      # No hard-coded numbers in dashboard chart data (M7).
+      - run: pnpm check:dashboard-data
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
