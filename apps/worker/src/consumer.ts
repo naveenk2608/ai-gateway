@@ -138,6 +138,8 @@ export class UsageConsumer {
   #nextClaimAt = 0;
   #nextTrimAt = 0;
   #nextPruneAt = 0;
+  /** A rollup prune in progress; it runs beside the loop so a slow delete never delays reads. */
+  #pruning: Promise<void> | undefined;
   readonly #stats: ConsumerStats = { processed: 0, deadLettered: 0, reclaimed: 0 };
 
   constructor(options: ConsumerOptions) {
@@ -162,6 +164,7 @@ export class UsageConsumer {
   async stop(): Promise<void> {
     this.#stop.abort();
     await this.#running;
+    await this.#pruning;
   }
 
   /** Resolves when the loop ends (after stop() or a simulated crash). */
@@ -214,9 +217,11 @@ export class UsageConsumer {
           await this.#trim();
           this.#nextTrimAt = now + this.#o.trimIntervalMs;
         }
-        if (this.#o.retention && now >= this.#nextPruneAt) {
+        if (this.#o.retention && now >= this.#nextPruneAt && !this.#pruning) {
           this.#nextPruneAt = now + this.#o.retention.intervalMs;
-          await this.#prune(this.#o.retention, now);
+          this.#pruning = this.#prune(this.#o.retention, now).finally(() => {
+            this.#pruning = undefined;
+          });
         }
         const entries = await this.#read();
         if (entries.length > 0) await this.#process(entries);
