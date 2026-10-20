@@ -18,7 +18,8 @@ const attemptTimeouts = {
   maxOutputTokens: z.number().int().positive().max(1_000_000).default(4_096),
 };
 
-const mockSettings = z
+/** The mock's timing and failure settings: a deployment's `mock` block, or `MOCK_SETTINGS`. */
+export const mockSettingsSchema = z
   .object({
     latencyMs: z.number().int().min(0).default(0),
     ttftMs: z.number().int().min(0).default(0),
@@ -37,7 +38,7 @@ const mockDeployment = z
   .object({
     provider: z.literal('mock'),
     model: z.string().min(1).default('mock'),
-    mock: mockSettings.prefault({}),
+    mock: mockSettingsSchema.prefault({}),
     ...attemptTimeouts,
   })
   .strict();

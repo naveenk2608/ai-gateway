@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:migrate": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/migrate.ts",
     "db:seed": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/seed.ts",
-    "key:generate": "tsx --conditions=development src/cli/generate-key.ts"
+    "key:generate": "tsx --conditions=development src/cli/generate-key.ts",
+    "mock:serve": "tsx --conditions=development --env-file-if-exists=../../.env src/mock-server/main.ts"
   },
   "dependencies": {
     "@ai-gateway/shared": "workspace:*",

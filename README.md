@@ -235,6 +235,14 @@ The default file has `mock-1` and a mock for every failure mode (`mock-slow`,
 `mock-balanced`), `llama3.2` on Ollama, and `gpt-4o-mini` (enabled only when `OPENAI_API_KEY`
 is set).
 
+The mock also runs as a standalone HTTP server speaking the OpenAI wire format
+(`POST /v1/chat/completions` with or without streaming, `GET /v1/models`, `GET /stats` for its
+counters), so a gateway reaches it through an `openai-compatible` deployment and a client can
+call it directly; the benchmarks use it as their upstream. `pnpm mock:serve` starts it on
+`MOCK_HOST:MOCK_PORT` (`127.0.0.1:8090`); `MOCK_SETTINGS` is a JSON object with the same fields
+as a deployment's `mock` block, e.g. `MOCK_SETTINGS='{"latencyMs":50,"completionTokens":32}'`.
+In a container image it is `node dist/mock-server/main.js`.
+
 ## Limits and budgets
 
 Limits are set per project (all its keys together) and per API key with the admin API, where
