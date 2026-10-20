@@ -112,7 +112,7 @@ export function Requests({ projectId }: { projectId: string }) {
     queryKey: ['requests', projectId, cursor ?? null],
     queryFn: ({ signal }) =>
       api<{ data: RequestSummary[]; nextCursor: string | null }>(
-        `/admin/projects/${projectId}/requests?limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+        `/admin/analytics/requests?projectId=${projectId}&range=30d&limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
         { signal },
       ),
     placeholderData: keepPreviousData,
@@ -140,7 +140,9 @@ export function Requests({ projectId }: { projectId: string }) {
         ) : page.isError ? (
           <ErrorState error={page.error} retry={() => void page.refetch()} />
         ) : page.data.data.length === 0 ? (
-          <Empty>No requests yet. They appear here once the worker has recorded them.</Empty>
+          <Empty>
+            No requests in the last 30 days. They appear here once the worker has recorded them.
+          </Empty>
         ) : (
           <>
             <div className="table-wrap">

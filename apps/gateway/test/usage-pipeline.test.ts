@@ -178,7 +178,7 @@ interface Summary {
 }
 
 async function page(query: string): Promise<{ data: Summary[]; nextCursor: string | null }> {
-  const res = await fetch(`${url}/admin/projects/${projectId}/requests${query}`, {
+  const res = await fetch(`${url}/admin/analytics/requests?projectId=${projectId}${query}`, {
     headers: { cookie },
   });
   expect(res.status).toBe(200);
@@ -191,15 +191,15 @@ describe('request list and overview for the dashboard', () => {
     for (let i = 0; i < 5; i++) ids.push(await chat('mock-priced'));
     await detail(ids.at(-1)!);
     await vi.waitFor(async () => {
-      const all = (await page('?limit=100')).data.map((r) => r.id);
+      const all = (await page('&limit=100')).data.map((r) => r.id);
       expect(all).toEqual(expect.arrayContaining(ids));
     });
 
-    const everything = (await page('?limit=100')).data;
+    const everything = (await page('&limit=100')).data;
     const seen: Summary[] = [];
     let cursor: string | null = '';
     while (cursor !== null) {
-      const next = await page(`?limit=2${cursor ? `&cursor=${cursor}` : ''}`);
+      const next = await page(`&limit=2${cursor ? `&cursor=${cursor}` : ''}`);
       expect(next.data.length).toBeLessThanOrEqual(2);
       seen.push(...next.data);
       cursor = next.nextCursor;
@@ -212,26 +212,30 @@ describe('request list and overview for the dashboard', () => {
   });
 
   it('rejects a forged cursor', async () => {
-    const res = await fetch(`${url}/admin/projects/${projectId}/requests?cursor=bm9wZQ`, {
+    const res = await fetch(`${url}/admin/analytics/requests?cursor=bm9wZQ`, {
       headers: { cookie },
     });
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: { code: 'invalid_cursor' } });
   });
 
-  it('sums the last 24 hours from the stored requests', async () => {
+  it('sums the last 24 hours from the rollups, matching the stored requests', async () => {
     await detail(await chat('mock-priced'));
-    const list = (await page('?limit=100')).data;
-    const res = await fetch(`${url}/admin/projects/${projectId}/overview`, { headers: { cookie } });
+    const list = (await page('&limit=100')).data;
+    const res = await fetch(`${url}/admin/analytics/overview?projectId=${projectId}&range=24h`, {
+      headers: { cookie },
+    });
     expect(res.status).toBe(200);
-    const overview = (await res.json()) as Record<string, unknown>;
-    expect(overview).toMatchObject({
+    const overview = (await res.json()) as {
+      totals: Record<string, unknown>;
+      month: { spentMicroUsd: number };
+    };
+    expect(overview.totals).toMatchObject({
       requests: list.length,
       succeeded: list.filter((r) => r.status === 'success').length,
       failed: list.filter((r) => r.status === 'error').length,
       costMicroUsd: list.reduce((sum, r) => sum + (r.costMicroUsd ?? 0), 0),
-      month: { budgetMicroUsd: null },
     });
-    expect((overview.month as { spentMicroUsd: number }).spentMicroUsd).toBe(overview.costMicroUsd);
+    expect(overview.month.spentMicroUsd).toBe(overview.totals.costMicroUsd);
   });
 });

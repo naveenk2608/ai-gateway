@@ -51,10 +51,34 @@ function GatewayStatusCard() {
   );
 }
 
+interface AnalyticsOverview {
+  window: { from: string; to: string };
+  totals: Omit<OverviewData, 'from' | 'to' | 'month'>;
+  month: { period: string; spentMicroUsd: number };
+}
+
+/** The last 24 hours from the analytics API, plus the project's budget. */
+async function fetchOverview(projectId: string, signal: AbortSignal): Promise<OverviewData> {
+  const [overview, project] = await Promise.all([
+    api<AnalyticsOverview>(`/admin/analytics/overview?projectId=${projectId}&range=24h`, {
+      signal,
+    }),
+    api<{ budget: { monthlyLimitMicroUsd: number | null } }>(`/admin/projects/${projectId}`, {
+      signal,
+    }),
+  ]);
+  return {
+    ...overview.totals,
+    from: overview.window.from,
+    to: overview.window.to,
+    month: { ...overview.month, budgetMicroUsd: project.budget.monthlyLimitMicroUsd },
+  };
+}
+
 export function Overview({ projectId }: { projectId: string }) {
   const overview = useQuery({
     queryKey: ['overview', projectId],
-    queryFn: ({ signal }) => api<OverviewData>(`/admin/projects/${projectId}/overview`, { signal }),
+    queryFn: ({ signal }) => fetchOverview(projectId, signal),
     refetchInterval: 30_000,
   });
 

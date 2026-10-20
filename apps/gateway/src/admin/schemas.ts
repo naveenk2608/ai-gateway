@@ -3,6 +3,7 @@ import type { Db } from '@ai-gateway/shared/node';
 import { z } from 'zod';
 import type { AuthInvalidation } from '../auth/invalidation.js';
 import type { LoginThrottle } from '../limits/login-throttle.js';
+import type { InfraProbe } from './infra.js';
 import { errorBodySchema } from '../proxy/schema.js';
 
 export interface AdminDeps {
@@ -14,6 +15,8 @@ export interface AdminDeps {
   secureCookie: boolean;
   rotationGraceSeconds: number;
   loginThrottle: Pick<LoginThrottle, 'check'>;
+  /** Pipeline, breaker and dependency state for the analytics API. */
+  infra: InfraProbe;
 }
 
 export const roleSchema = z.enum(['owner', 'admin', 'viewer']);

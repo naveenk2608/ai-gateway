@@ -1,13 +1,13 @@
 import cookie from '@fastify/cookie';
 import type { FastifyInstance } from 'fastify';
 import { requireSession } from './access.js';
+import { registerAnalyticsRoutes } from './analytics-routes.js';
 import { registerApiKeyRoutes } from './api-key-routes.js';
 import { registerAuditRoutes } from './audit-routes.js';
 import { registerAccountRoutes, registerLoginRoute } from './auth-routes.js';
 import { registerMemberRoutes } from './member-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { registerRequestRoutes } from './request-routes.js';
-import { registerUsageRoutes } from './usage-routes.js';
 import type { AdminDeps } from './schemas.js';
 
 export type { AdminDeps } from './schemas.js';
@@ -29,7 +29,7 @@ export async function registerAdminApi(app: FastifyInstance, deps: AdminDeps): P
     registerApiKeyRoutes(scoped, deps);
     registerAuditRoutes(scoped, deps);
     registerRequestRoutes(scoped, deps);
-    registerUsageRoutes(scoped, deps);
+    registerAnalyticsRoutes(scoped, deps);
     done();
   });
 }

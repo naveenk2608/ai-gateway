@@ -13,6 +13,7 @@ import {
   type Logger,
 } from '@ai-gateway/shared/node';
 import { registerAdminApi } from './admin/index.js';
+import { redisInfraProbe } from './admin/infra.js';
 import { ResponseCache } from './cache/response-cache.js';
 import { buildApp, type App } from './app.js';
 import { bootstrap } from './auth/bootstrap.js';
@@ -217,6 +218,15 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         perEmail: config.LOGIN_ATTEMPTS_PER_MINUTE,
         perIp: config.LOGIN_ATTEMPTS_PER_MINUTE_PER_IP,
         failMode: config.LIMITS_FAIL_MODE,
+      }),
+      infra: redisInfraProbe({
+        redis,
+        clock,
+        stream: config.EVENTS_STREAM,
+        dlqStream: config.EVENTS_DLQ_STREAM,
+        group: config.EVENTS_CONSUMER_GROUP,
+        deployments: deployments.map((d) => d.id),
+        checks: { postgres: () => pingPostgres(pool), redis: () => pingRedis(redis) },
       }),
     }),
   );

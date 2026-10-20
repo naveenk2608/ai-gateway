@@ -194,8 +194,6 @@ describe('project isolation', () => {
         {},
       ],
       ['GET /admin/projects/:projectId/audit-logs', `/admin/projects/${t.b}/audit-logs`],
-      ['GET /admin/projects/:projectId/requests', `/admin/projects/${t.b}/requests`],
-      ['GET /admin/projects/:projectId/overview', `/admin/projects/${t.b}/overview`],
     ];
 
     // The table covers every registered route that takes a project.
