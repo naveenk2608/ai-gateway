@@ -16,8 +16,9 @@ has enough detail to start work from the repository alone: read this file, then
 - CI (`.github/workflows/ci.yml`) has four jobs: `check` (format, lint, dashboard-data check,
   typecheck, unit tests, build), `integration` (Postgres + Redis services), `dashboard-e2e`
   (Chromium at 375 px) and `images` (all Compose images build).
-- M8 (observability) is built and verified (see its section); one deploy check waits on the owner
-  setting `METRICS_TOKEN` on Render. Tag `m8-done` once it passes.
+- M8 (observability) is done: every acceptance check passed, including Render `/metrics`
+  answering 401 without the token or with a wrong one once `METRICS_TOKEN` was set. The owner
+  tags `m8-done`.
 - Accepted decisions are ADR 001–018.
 
 ## How to work on a milestone
@@ -106,7 +107,7 @@ ID. Ops metrics stay separate from the business analytics of M6.
 - [x] The observability profile was started once, Prometheus showed both targets up and the
       dashboard rendered real series, then the profile was stopped.
 - [x] All four CI jobs green; Render live on the last commit with `/ready` 200.
-- [ ] After the owner sets `METRICS_TOKEN` in the Render dashboard (Generate), Render `/metrics`
+- [x] After the owner sets `METRICS_TOKEN` in the Render dashboard (Generate), Render `/metrics`
       returns 401 without it or with a wrong one, and 200 with it (404 until it is set).
 
 **ADR to write.** ADR 017 — observability: pino JSON logs with request and trace IDs,
