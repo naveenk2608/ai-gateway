@@ -34,6 +34,20 @@ export async function sleepsQueued(clock: ManualClock, count: number): Promise<v
   });
 }
 
+/** The `data:` payload of each event in an SSE body, in order. */
+export function sseData(body: string): string[] {
+  return body
+    .split('\n\n')
+    .filter((event) => event.trim() !== '')
+    .map((event) =>
+      event
+        .split('\n')
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => line.slice('data: '.length))
+        .join('\n'),
+    );
+}
+
 /** A promise plus its resolver, for holding a request open until the test releases it. */
 export function deferred<T = void>() {
   let resolve!: (value: T) => void;

@@ -1,6 +1,6 @@
 import { ManualClock } from '@ai-gateway/shared';
 import { describe, expect, it } from 'vitest';
-import { captureLogger, sleepsQueued } from '../../test/helpers.js';
+import { captureLogger, sleepsQueued, sseData } from '../../test/helpers.js';
 import { buildApp } from '../app.js';
 import { parseModelsConfig } from '../models-config.js';
 import type { MockProvider } from '../providers/mock.js';
@@ -12,6 +12,14 @@ const deployments = {
   slow: { provider: 'mock', timeoutMs: 1_000, mock: { latencyMs: 30_000 } },
   limited: { provider: 'mock', mock: { failWith: 429, retryAfterMs: 2_500 } },
   broken: { provider: 'mock', mock: { failWith: 500 } },
+  stream: { provider: 'mock', mock: { completionTokens: 3 } },
+  'stream-ttft': { provider: 'mock', timeoutMs: 1_000, mock: { ttftMs: 5_000 } },
+  'stream-idle': {
+    provider: 'mock',
+    streamIdleTimeoutMs: 500,
+    mock: { tokensPerSecond: 1, completionTokens: 3 },
+  },
+  'stream-drop': { provider: 'mock', mock: { completionTokens: 10, dropAfterTokens: 2 } },
 };
 
 function setup() {
@@ -25,6 +33,10 @@ function setup() {
         'mock-slow': { deployment: 'slow' },
         'mock-limited': { deployment: 'limited' },
         'mock-broken': { deployment: 'broken' },
+        'mock-stream': { deployment: 'stream' },
+        'mock-stream-ttft': { deployment: 'stream-ttft' },
+        'mock-stream-idle': { deployment: 'stream-idle' },
+        'mock-stream-drop': { deployment: 'stream-drop' },
       },
     },
     'test',
@@ -204,5 +216,130 @@ describe('POST /v1/chat/completions validation', () => {
     const res = await post(huge, { sleeps: 0 });
     expect(res.statusCode).toBe(413);
     expect(res.json()).toMatchObject({ error: { type: 'invalid_request_error' } });
+  });
+});
+
+interface Chunk {
+  id: string;
+  object: string;
+  created: number;
+  model: string;
+  choices: {
+    index: number;
+    delta: { role?: string; content?: string };
+    finish_reason: string | null;
+  }[];
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+}
+
+function chunksOf(body: string): { chunks: Chunk[]; tail: string | undefined } {
+  const events = sseData(body);
+  const tail = events.at(-1);
+  const chunks = (tail === '[DONE]' ? events.slice(0, -1) : events).map(
+    (e) => JSON.parse(e) as Chunk,
+  );
+  return { chunks, tail };
+}
+
+describe('POST /v1/chat/completions (streaming)', () => {
+  it('streams OpenAI chunks: role first, then content, then finish_reason, then [DONE]', async () => {
+    const { post } = setup();
+    const res = await post({ model: 'mock-stream', ...hello, stream: true });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('text/event-stream; charset=utf-8');
+    expect(res.headers['cache-control']).toBe('no-cache');
+
+    const { chunks, tail } = chunksOf(res.body);
+    expect(tail).toBe('[DONE]');
+    const id = `chatcmpl-${res.headers['x-request-id'] as string}`;
+    for (const chunk of chunks) {
+      expect(chunk).toMatchObject({ id, object: 'chat.completion.chunk', model: 'mock-stream' });
+      expect(chunk).not.toHaveProperty('usage');
+    }
+    expect(chunks[0]?.choices).toEqual([
+      { index: 0, delta: { role: 'assistant', content: '' }, logprobs: null, finish_reason: null },
+    ]);
+    const text = chunks
+      .slice(1, -1)
+      .map((c) => c.choices[0]?.delta.content)
+      .join('');
+    expect(text).toBe('This is a');
+    expect(chunks.at(-1)?.choices).toEqual([
+      { index: 0, delta: {}, logprobs: null, finish_reason: 'stop' },
+    ]);
+  });
+
+  it('adds a final usage chunk when stream_options.include_usage is set', async () => {
+    const { post } = setup();
+    const res = await post({
+      model: 'mock-stream',
+      ...hello,
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    const { chunks, tail } = chunksOf(res.body);
+    expect(tail).toBe('[DONE]');
+    const last = chunks.at(-1);
+    expect(last?.choices).toEqual([]);
+    expect(last?.usage).toEqual({ prompt_tokens: 3, completion_tokens: 3, total_tokens: 6 });
+    for (const chunk of chunks.slice(0, -1)) expect(chunk.usage).toBeNull();
+  });
+
+  it('returns a JSON 504, not a stream, when the first token misses the timeout', async () => {
+    const { post } = setup();
+    const res = await post(
+      { model: 'mock-stream-ttft', ...hello, stream: true },
+      { advance: 1_000 },
+    );
+    expect(res.statusCode).toBe(504);
+    expect(res.headers['content-type']).toMatch(/^application\/json/);
+    expect(res.json()).toMatchObject({ error: { code: 'upstream_timeout' } });
+  });
+
+  it('returns a JSON 429 when the upstream rate-limits before the first token', async () => {
+    const { post } = setup();
+    const res = await post({ model: 'mock-limited', ...hello, stream: true });
+    expect(res.statusCode).toBe(429);
+    expect(res.json()).toMatchObject({ error: { code: 'upstream_rate_limited' } });
+  });
+
+  it('ends a stream that goes quiet with an error event and no [DONE]', async () => {
+    const { app, clock, registry } = setup();
+    const pending = Promise.resolve(
+      app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        payload: { model: 'mock-stream-idle', ...hello, stream: true },
+      }),
+    );
+    await sleepsQueued(clock, 2);
+    await clock.advance(0); // first token
+    await sleepsQueued(clock, 2);
+    await clock.advance(500); // idle timeout fires before the next token at 1000 ms
+    const res = await pending;
+
+    expect(res.statusCode).toBe(200);
+    const { chunks, tail } = chunksOf(res.body);
+    expect(tail).not.toBe('[DONE]');
+    expect(chunks.at(-1)).toEqual({
+      error: {
+        message: 'The model provider did not respond in time.',
+        type: 'server_error',
+        param: null,
+        code: 'upstream_timeout',
+      },
+    });
+    const mock = registry.deployment('stream-idle')?.provider as MockProvider;
+    expect(mock.stats()).toMatchObject({ canceled: 1, active: 0 });
+  });
+
+  it('reports a mid-stream provider drop as an error event after the tokens already sent', async () => {
+    const { post } = setup();
+    const res = await post({ model: 'mock-stream-drop', ...hello, stream: true });
+    const { chunks, tail } = chunksOf(res.body);
+    expect(tail).not.toBe('[DONE]');
+    const content = chunks.slice(1, -1).map((c) => c.choices[0]?.delta.content);
+    expect(content).toEqual(['This', ' is']);
+    expect(chunks.at(-1)).toMatchObject({ error: { code: 'upstream_unavailable' } });
   });
 });
