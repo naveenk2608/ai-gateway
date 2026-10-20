@@ -9,7 +9,8 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: MVP (milestones M0-M5), the analytics API (M6) and the full dashboard (M7).**
+**Status: MVP (milestones M0-M5), the analytics API (M6), the full dashboard (M7) and
+observability (M8).**
 Architecture decisions are in [docs/adr/](docs/adr/).
 
 - `POST /v1/chat/completions` in OpenAI format, streaming and non-streaming; the official OpenAI
@@ -26,6 +27,9 @@ Architecture decisions are in [docs/adr/](docs/adr/).
 - A dashboard on that API: overview, requests with filters and routing history, cost and budgets,
   model comparison, reliability, security, infrastructure, and settings (project, limits and
   budget, members, API keys, deployments and routing). Usable on a phone.
+- Prometheus metrics from the gateway and the worker (token-protected `/metrics`), W3C trace IDs
+  on every log line from the request to the worker's insert, and a local Prometheus and Grafana
+  stack with a provisioned dashboard.
 
 ```mermaid
 flowchart LR
@@ -106,7 +110,8 @@ This adds the gateway (:8080), the worker and the dashboard (<http://127.0.0.1:3
 the API under `/api`). Compose reads `API_KEY_PEPPER` from `.env`. For a first admin and key,
 either set `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` and `BOOTSTRAP_API_KEY` (from
 `pnpm key:generate`) in `.env`, or run `pnpm db:seed` on the host, which reaches the same Postgres.
-In Compose the gateway reaches Ollama on the host at `host.docker.internal:11434`.
+In Compose the gateway reaches Ollama on the host at `host.docker.internal:11434`. Add
+`--profile observability` for Prometheus and Grafana ([Observability](#observability)).
 
 ### Tests
 
@@ -366,6 +371,71 @@ the mock provider.
 Migrations are plain SQL in [db/migrations](db/migrations) (ADR 003), applied at startup under a
 Postgres advisory lock (`MIGRATE_ON_START`), or by hand with `pnpm db:migrate`.
 
+## Observability
+
+Operational metrics are separate from the analytics above (ADR 017): Prometheus metrics from
+each process, and trace IDs in the JSON logs.
+
+**Local Prometheus and Grafana.** Both bind to 127.0.0.1. Run them only while you need them:
+
+```bash
+docker compose --profile full --profile observability up -d --build
+# Grafana: http://127.0.0.1:3001 (anonymous, read-only; opens the "AI Gateway" dashboard)
+# Prometheus: http://127.0.0.1:9090/targets (gateway and worker should be up)
+docker compose --profile full --profile observability stop prometheus grafana
+```
+
+Prometheus scrapes the gateway's and worker's private metrics ports on the Compose network,
+which are not published to the host, so no token is involved. Grafana's datasource and
+dashboard are provisioned from [infra/compose/observability/](infra/compose/observability/). The
+dashboard shows traffic, latency p50/p95, 5xx and failed attempts, rejections, retries and
+fallbacks, breakers, TTFT, stream lag and pending, the dead-letter stream, buffered and dropped
+events, cache hit ratio, estimate error, batch times and memory. History is kept for one day.
+
+**Scraping a gateway.** `GET /metrics` on the gateway's port exists only when `METRICS_TOKEN` is
+set (32+ characters), and needs `Authorization: Bearer <token>`. A missing or wrong token gets
+401; with no token set, the route is a 404. `METRICS_PORT` adds a separate listener on
+`METRICS_HOST` (default 127.0.0.1). The worker always serves its own on `WORKER_METRICS_PORT`
+(default 9465). Both need the token only if one is set.
+
+```bash
+curl -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:8080/metrics
+```
+
+| Metric | Labels | What it counts |
+| --- | --- | --- |
+| `gateway_http_request_duration_seconds` | method, route, status_code | HTTP requests until the response ended; `_count` is the request count |
+| `gateway_upstream_attempts_total` | provider, deployment, model, outcome | Provider attempts; outcome is `success` or the error kind |
+| `gateway_retries_total` / `gateway_fallbacks_total` | deployment / model | Retries on the same deployment; moves to another deployment |
+| `gateway_circuit_breaker_state` / `_transitions_total` | deployment, state / to | 1 for each breaker's current state on this instance; state changes |
+| `gateway_cache_lookups_total` | result | Response-cache hits and misses |
+| `gateway_admission_rejections_total` | reason | `rpm`, `tpm`, `concurrency`, `budget`, `request_too_large`, `limits_unavailable` |
+| `gateway_ttft_seconds` | deployment | Streams: arrival to first token sent |
+| `gateway_output_tokens_per_second` | deployment, stream | Reported completion tokens per second of generation |
+| `gateway_prompt_token_estimate_error_ratio` | deployment | (estimated − reported) / reported prompt tokens |
+| `gateway_usage_events_published_total`, `_dropped_total`, `_buffered` | — | Usage events written, lost to a full buffer, waiting |
+| `gateway_pg_pool_clients` | state | Postgres pool: total, idle, waiting |
+| `gateway_dependency_up`, `gateway_dependency_latency_seconds` | dependency | Postgres and Redis round trip at scrape time |
+| `worker_events_consumed_total`, `_dead_lettered_total`, `_reclaimed_total` | — | Usage events stored, moved to the DLQ, claimed from a dead consumer |
+| `worker_consumer_errors_total` | — | Consumer loop failures (it backs off and retries) |
+| `worker_batch_duration_seconds`, `worker_rollup_duration_seconds`, `worker_prune_duration_seconds` | — | Insert transaction, rollup statement, retention pass |
+| `worker_rollup_rows_pruned_total` | table | Expired rollup rows deleted |
+| `usage_stream_lag`, `_pending`, `_oldest_pending_age_seconds`, `_length`, `_consumers`, `usage_dlq_length`, `usage_stream_up` | — | Stream state read from Redis by both processes, so lag stays visible while the worker is down (take the `max`) |
+
+Every process also exports prom-client's default `process_*` and `nodejs_*` metrics. Labels
+never carry request, key or project IDs or anything a client sent; values outside the
+configuration are labelled `other`.
+
+**Following a request.** The gateway accepts a W3C `traceparent` header (or starts a trace),
+returns `traceparent` and `x-request-id`, and sends each provider attempt its own child span as
+`traceparent`. Each request log line has `requestId`, `traceId` and `spanId`, and attempt lines
+add `attemptSpanId`. The worker's `usage event stored` line has the same `traceId`, with the
+request's span as `parentSpanId`. Searching the logs for one `traceId` gives the whole path. There
+is no trace store or tracing SDK (ADR 017).
+
+The dashboard's Infrastructure page shows the pipeline state, dependency round trips and the
+answering gateway instance's own measurements, from the admin API. History is in Prometheus.
+
 ## Deploying (Render, or any host without a shell)
 
 The gateway image is the last Dockerfile stage, so a plain `docker build .` builds it. Everything
@@ -381,6 +451,7 @@ host with no background workers, run the usage consumer inside the gateway.
 | `BOOTSTRAP_API_KEY` | First API key | `pnpm key:generate` on your machine |
 | `RUN_WORKER_IN_PROCESS` | Run the usage consumer in the gateway | `true` |
 | `TRUST_PROXY` | Proxies in front, for the client IP in login limits | how many your host puts in front (0 trusts none) |
+| `METRICS_TOKEN` | Bearer token for `GET /metrics`; unset, the route does not exist | 32+ random characters, or the host's *Generate* |
 
 A Redis without persistence (Render's free plan) is fine: rate limits restart, budgets are
 rebuilt from Postgres, and the usage stream and consumer group are recreated. Events in the
@@ -400,11 +471,14 @@ message naming each problem. [.env.example](.env.example) lists them all with th
 apps/gateway     Fastify API: /v1 proxy, providers, routing, limits, cache, /admin API
 apps/worker      usage-event consumer (also runs inside the gateway with RUN_WORKER_IN_PROCESS)
 apps/dashboard   React + Vite + TanStack Query/Table + Recharts; e2e/ holds browser checks
-packages/shared  config, clock, logger, ids, token estimates, Postgres/Redis clients
+packages/shared  config, clock, logger, ids, trace context, token estimates, Postgres/Redis
+                 clients, metrics registry and listener
 db/migrations    numbered plain-SQL migrations
-infra/compose    Docker Compose stack (compose.yaml at the root includes it)
+infra/compose    Docker Compose stack (compose.yaml at the root includes it); observability/
+                 holds the Prometheus config and Grafana provisioning
 scripts          formatting and the demo
 docs/adr         architecture decision records
+docs/ROADMAP.md  remaining milestones, with scope and acceptance checks
 ```
 
 ## Known limitations
@@ -416,4 +490,6 @@ docs/adr         architecture decision records
 - No response-quality evaluation: routing weighs latency, cost and failures only.
 - Redis Cluster is not supported (one Redis primary is).
 - Analytics percentiles are approximate (histogram buckets), and days are UTC days.
+- Metrics are per process: Prometheus must scrape every gateway instance. Traces exist only as
+  IDs in the logs; there is no trace store.
 - More deferred work is listed in [docs/PLAN-NOTES.md](docs/PLAN-NOTES.md).

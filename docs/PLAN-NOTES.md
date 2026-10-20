@@ -4,8 +4,16 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-10-21 | M8 | Traces exist only as IDs in the logs (W3C trace context, no SDK): there is no trace store, so following a request means searching logs for its `traceId`. Exporting spans over OTLP and adding exemplars to histograms are the next steps when a collector is available (ADR 017). | open |
+| 2026-10-21 | M8 | `tracestate` is not forwarded to providers; only `traceparent` is sent. | open |
+| 2026-10-21 | M8 | A client may send any valid `traceparent`, so it can choose the `traceId` its requests log under. The trace is used only to correlate logs, never for authorization, and `requestId` stays server-generated. | by design |
+| 2026-10-21 | M8 | Responses carry the gateway's span as `traceparent`, not the draft `traceresponse` header. | by design |
+| 2026-10-21 | M8 | Metrics are per process: breaker state and the Infrastructure page's instance card describe the one instance that answered, and Prometheus must scrape every instance. The free Render service has no Prometheus; scraping it needs an external scraper holding `METRICS_TOKEN`. | by design |
+| 2026-10-21 | M8 | The instance card's CPU share and event-loop delay cover the time since the previous reading of that instance, so they are empty on the first reading and viewers polling at once share the window. | by design |
+| 2026-10-21 | M8 | Re-delivered usage events count again in `worker_events_consumed_total` and log `usage event stored` again (the insert changes nothing). | by design |
+| 2026-10-21 | M8 | The Grafana dashboard has no alert rules, and Prometheus keeps one day of history; alerts belong with the deployment (CloudWatch alarms in M10). | open |
 | 2026-10-21 | M7 | Deployments and routing policies are shown read-only in Settings: they come from `config/models.json`. Per-project routing policies (the unused `routing_policies` table) and editing them need router changes; not started. | open |
-| 2026-10-21 | M7 | The Infrastructure page shows only what the gateway measures now (stream lag, pending, dead letters, round trips). History and process metrics come with Prometheus in M8. | planned M8 |
+| 2026-10-21 | M7 | The Infrastructure page shows only what the gateway measures now (stream lag, pending, dead letters, round trips). History and process metrics come with Prometheus in M8. Done in M8: a card with the answering instance's measured process values; history is in Prometheus and Grafana, not on the page. | done |
 | 2026-10-21 | M7 | The dashboard bundle is one chunk over 500 kB minified (Recharts); pages could be loaded lazily. | open |
 | 2026-10-21 | M7 | jsdom is pinned to 29.1.1: jsdom 30 requires Node 22.22+, and the repo supports Node ^22.12. | open |
 | 2026-10-21 | M7 | The browser checks (Playwright) answer the admin API from fixtures; no browser test drives the dashboard against a running gateway. The API side is covered by the gateway's integration tests. | open |
@@ -29,7 +37,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 | 2026-10-20 | M4 | Budgets are per UTC calendar month only; daily or custom periods are not supported. A request is counted in the month it started. | open |
 | 2026-10-20 | M4 | Requests with unknown API key IDs are not rate-limited per client IP; each one costs a Postgres lookup (unknown keys are not cached). Add a per-IP bucket for failed lookups. | open |
 | 2026-10-20 | M4 | No `x-ratelimit-limit/remaining/reset` headers on successful responses; only rejections carry `retry-after`. | open |
-| 2026-10-20 | M4 | The prompt estimate is stored per request (`usage_events.estimated_prompt_tokens`) for comparison with reported counts; an estimate-error metric arrives with Prometheus in M8. | planned M8 |
+| 2026-10-20 | M4 | The prompt estimate is stored per request (`usage_events.estimated_prompt_tokens`) for comparison with reported counts; an estimate-error metric arrives with Prometheus in M8. Done in M8: `gateway_prompt_token_estimate_error_ratio`. | done |
 | 2026-10-20 | M4 | The "Redis stopped" acceptance test points a gateway at an unreachable Redis instead of stopping the Compose container that other test files share; from the gateway's side both are refused connections. | by design |
 | 2026-10-20 | M4 | `TRUST_PROXY` must match the proxies in front of the gateway; the right value for Render was not verified here. With 0, login limits per IP count all clients behind the proxy together. | open |
 | 2026-10-20 | M3 | Usage events can be lost if Redis is unreachable for longer than the in-memory buffer lasts (`EVENTS_BUFFER_MAX`), or if they are still buffered when the shutdown flush times out; both are logged with counts. A transactional outbox would close the gap (future work). | by design |
@@ -37,7 +45,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 | 2026-10-20 | M3 | No replay tool for the dead-letter stream; `failed_events.payload` keeps each original event for one. | open |
 | 2026-10-20 | M3 | The worker trims the stream only when it has a single consumer group; `MAXLEN ~ EVENTS_STREAM_MAXLEN` still caps it otherwise. | by design |
 | 2026-10-20 | M3 | Token estimates use about four characters per token; M4 replaces this with a tokenizer approximation and tracks the estimate error. Done: word/number/symbol pre-split approximation, estimate stored per request. | done |
-| 2026-10-20 | M3 | Event emission and consumer metrics (buffered, dropped, stream lag, DLQ size) are only in logs and in-process stats; they become Prometheus metrics in M8. | planned M8 |
+| 2026-10-20 | M3 | Event emission and consumer metrics (buffered, dropped, stream lag, DLQ size) are only in logs and in-process stats; they become Prometheus metrics in M8. Done in M8: `gateway_usage_events_*`, `worker_*` and `usage_stream_*` / `usage_dlq_length`. | done |
 | 2026-10-20 | M3 | Requests rejected before validation or authentication (400, 401, 413) are not recorded as request records; M4 records rejections (rate limits) as events. Limit and budget rejections are recorded since M4; 400/401/413 still are not. | open |
 | 2026-10-20 | M2 | Admin login and invalid API keys are not rate-limited; failed logins are only logged. Add per-IP/per-email login limits and invalid-key limits with the M4 Lua scripts. Logins limited per email and IP in M4; invalid keys still open (see M4 row). | done |
 | 2026-10-20 | M2 | `API_KEY_PEPPER` cannot be rotated without invalidating every key. Dual-pepper verification (try new, then old, rehash on use) would allow it. | open |
@@ -61,7 +69,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 | 2026-10-20 | M2 | Root script `db:migrate` is added with the first migrations (node-pg-migrate, ADR 003). Done, plus `db:seed` and `key:generate`. | done |
 | 2026-10-20 | M3 | Worker has no consumer yet; it holds the Postgres pool and Redis client the consumer will use. The pg pool's client-side query timeout defaults to 5 s; batch inserts may need a larger value. Done: the worker's pool allows 30 s. | done |
 | 2026-10-20 | M5 | Dashboard libraries from ADR 018 (TanStack Query/Table, Recharts) are added with the pages that need them. Query and Table added in M5 (Table pinned to v8, whose API is known; v9 exists); Recharts with the M7 charts. Recharts 3.10.1 added in M7. | done |
-| 2026-10-20 | M8 | ADR 017 file (observability) is written in M8; M0 provides pino JSON logs with `requestId` only. | planned M8 |
+| 2026-10-20 | M8 | ADR 017 file (observability) is written in M8; M0 provides pino JSON logs with `requestId` only. Written: [adr/017-observability.md](adr/017-observability.md). | done |
 | 2026-10-20 | M9 | Root script `bench` is added with the k6 scripts. | planned M9 |
 | 2026-10-20 | M10 | No pre-stop delay between SIGTERM and closing the listener. Behind an ALB, rely on target deregistration delay; revisit if the load balancer keeps routing to a draining instance. | planned M10 |
 | 2026-10-20 | M0 | Local Compose Postgres uses trust auth bound to 127.0.0.1 so no password is committed. Production must supply credentials in `DATABASE_URL` (Secrets Manager, M10). | by design |
