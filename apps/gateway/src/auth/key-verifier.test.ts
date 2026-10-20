@@ -1,6 +1,7 @@
 import { ManualClock } from '@ai-gateway/shared';
 import { describe, expect, it } from 'vitest';
 import { generateApiKey, hashSecret } from './api-keys.js';
+import { UNLIMITED } from '../limits/policy.js';
 import { KeyVerifier, type KeyRecord } from './key-verifier.js';
 
 const pepper = 'pepper-'.repeat(6);
@@ -36,6 +37,7 @@ function setup(ttlMs = TTL, maxEntries?: number) {
       expiresAt: null,
       revokedAt: null,
       allowedModels: null,
+      policy: UNLIMITED,
       ...overrides,
     });
     return key;
@@ -62,6 +64,7 @@ describe('KeyVerifier', () => {
         keyId: key.keyId,
         projectId: 'project-1',
         allowedModels: ['mock-1'],
+        policy: UNLIMITED,
       },
     });
   });
@@ -165,6 +168,7 @@ describe('KeyVerifier', () => {
       expiresAt: null,
       revokedAt: null,
       allowedModels: null,
+      policy: UNLIMITED,
     });
     expect((await t.verifier.verify(key.plaintext)).ok).toBe(true);
   });

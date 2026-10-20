@@ -12,6 +12,7 @@ import { createLogger, type Logger } from '@ai-gateway/shared/node';
 import { vi } from 'vitest';
 import { generateApiKey, hashSecret } from '../src/auth/api-keys.js';
 import { KeyVerifier } from '../src/auth/key-verifier.js';
+import { UNLIMITED } from '../src/limits/policy.js';
 import { gatewayConfigSchema, type GatewayConfig } from '../src/config.js';
 import type { EventBus } from '../src/events/bus.js';
 import { parseModelsConfig, type ModelsConfig } from '../src/models-config.js';
@@ -94,6 +95,7 @@ export function inMemoryVerifier(clock: Clock = systemClock) {
     expiresAt: null,
     revokedAt: null,
     allowedModels: null,
+    policy: UNLIMITED,
   };
   const verifier = new KeyVerifier({
     load: (keyId) => Promise.resolve(keyId === key.keyId ? record : null),

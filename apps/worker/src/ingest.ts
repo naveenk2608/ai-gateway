@@ -150,6 +150,7 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
         usage_source: event.usageSource,
         cost_micro_usd: cost,
         price_id: cost === null ? null : (price?.id ?? null),
+        estimated_prompt_tokens: event.estimatedPromptTokens ?? null,
         occurred_at: event.occurredAt,
       },
     ];

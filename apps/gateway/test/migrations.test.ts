@@ -24,6 +24,8 @@ const TABLES = [
   'users',
 ];
 
+const MIGRATIONS = ['0001_initial-schema', '0002_limits-and-budgets'];
+
 /** A throwaway database, so migrations run from scratch. */
 const dbName = `gw_migrate_${randomBytes(4).toString('hex')}`;
 const adminUrl = process.env.DATABASE_URL!;
@@ -62,7 +64,7 @@ describe('database migrations', () => {
     const [first, second] = await Promise.all([run(), run()]);
 
     // One instance waited on the advisory lock, then found nothing pending.
-    expect([...first, ...second]).toEqual(['0001_initial-schema']);
+    expect([...first, ...second]).toEqual(MIGRATIONS);
 
     await withClient(freshUrl, async (c) => {
       const tables = await c.query<{ table_name: string }>(
@@ -71,7 +73,7 @@ describe('database migrations', () => {
       );
       expect(tables.rows.map((r) => r.table_name)).toEqual(TABLES);
       const applied = await c.query('SELECT name FROM pgmigrations');
-      expect(applied.rowCount).toBe(1);
+      expect(applied.rowCount).toBe(MIGRATIONS.length);
     });
 
     // A later start is a no-op.

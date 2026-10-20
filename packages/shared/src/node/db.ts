@@ -37,6 +37,11 @@ export interface ProjectsTable {
   id: string;
   name: string;
   allowed_models: string[] | null;
+  rpm_limit: number | null;
+  tpm_limit: number | null;
+  concurrency_limit: number | null;
+  monthly_budget_micro_usd: number | null;
+  max_request_cost_micro_usd: number | null;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
@@ -59,6 +64,9 @@ export interface ApiKeysTable {
   expires_at: Timestamp | null;
   revoked_at: Timestamp | null;
   rotated_to: string | null;
+  rpm_limit: number | null;
+  tpm_limit: number | null;
+  concurrency_limit: number | null;
 }
 
 export interface ModelDeploymentsTable {
@@ -143,6 +151,7 @@ export interface UsageEventsTable {
   usage_source: UsageSource;
   cost_micro_usd: number | null;
   price_id: string | null;
+  estimated_prompt_tokens: number | null;
   occurred_at: Timestamp;
   ingested_at: CreatedAt;
 }
@@ -152,7 +161,7 @@ export interface BudgetPeriodsTable {
   project_id: string;
   period_start: Timestamp;
   period_end: Timestamp;
-  limit_micro_usd: number;
+  limit_micro_usd: number | null;
   spent_micro_usd: Generated<number>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;

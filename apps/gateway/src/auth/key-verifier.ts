@@ -1,5 +1,6 @@
 import type { Clock } from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
+import type { UsagePolicy } from '../limits/policy.js';
 import { parseApiKey, secretMatches } from './api-keys.js';
 
 /** The caller behind a verified API key. */
@@ -9,6 +10,8 @@ export interface AuthenticatedKey {
   projectId: string;
   /** Logical model names the project may call; null allows every configured model. */
   allowedModels: readonly string[] | null;
+  /** Rate, token and concurrency limits of the key and project, and the project's budget. */
+  policy: UsagePolicy;
 }
 
 export type RejectReason = 'malformed' | 'unknown' | 'secret_mismatch' | 'revoked' | 'expired';
@@ -25,6 +28,7 @@ export interface KeyRecord {
   expiresAt: number | null;
   revokedAt: number | null;
   allowedModels: readonly string[] | null;
+  policy: UsagePolicy;
 }
 
 export type KeyLoader = (keyId: string) => Promise<KeyRecord | null>;
@@ -85,6 +89,7 @@ export class KeyVerifier {
         keyId,
         projectId: record.projectId,
         allowedModels: record.allowedModels,
+        policy: record.policy,
       },
     };
   }
@@ -147,7 +152,7 @@ export class KeyVerifier {
   }
 }
 
-/** Looks a key up with its project's allow-list. */
+/** Looks a key up with its project's allow-list, limits and budget. */
 export function databaseKeyLoader(db: Db): KeyLoader {
   return async (keyId) => {
     const row = await db
@@ -159,7 +164,15 @@ export function databaseKeyLoader(db: Db): KeyLoader {
         'api_keys.secret_hash',
         'api_keys.expires_at',
         'api_keys.revoked_at',
+        'api_keys.rpm_limit',
+        'api_keys.tpm_limit',
+        'api_keys.concurrency_limit',
         'projects.allowed_models',
+        'projects.rpm_limit as project_rpm_limit',
+        'projects.tpm_limit as project_tpm_limit',
+        'projects.concurrency_limit as project_concurrency_limit',
+        'projects.monthly_budget_micro_usd',
+        'projects.max_request_cost_micro_usd',
       ])
       .where('api_keys.key_id', '=', keyId)
       .executeTakeFirst();
@@ -172,6 +185,16 @@ export function databaseKeyLoader(db: Db): KeyLoader {
       expiresAt: row.expires_at?.getTime() ?? null,
       revokedAt: row.revoked_at?.getTime() ?? null,
       allowedModels: row.allowed_models,
+      policy: {
+        key: { rpm: row.rpm_limit, tpm: row.tpm_limit, concurrency: row.concurrency_limit },
+        project: {
+          rpm: row.project_rpm_limit,
+          tpm: row.project_tpm_limit,
+          concurrency: row.project_concurrency_limit,
+        },
+        monthlyBudgetMicroUsd: row.monthly_budget_micro_usd,
+        maxRequestCostMicroUsd: row.max_request_cost_micro_usd,
+      },
     };
   };
 }
