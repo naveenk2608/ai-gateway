@@ -283,7 +283,8 @@ describe('a crashed request', () => {
         LOG_LEVEL: 'warn',
         API_KEY_PEPPER: TEST_PEPPER,
         MIGRATE_ON_START: 'false',
-        LIMITS_LEASE_TTL_MS: '1000',
+        // Renewed every second; it lapses 2-3 s after the last renewal.
+        LIMITS_LEASE_TTL_MS: '3000',
       },
       stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     });
@@ -303,11 +304,11 @@ describe('a crashed request', () => {
 
     expect((await chat(urlA, key, 'mock-quick')).code).toBe('concurrency_limit_exceeded');
     await vi.waitFor(async () => expect((await chat(urlA, key, 'mock-quick')).status).toBe(200), {
-      timeout: 5_000,
+      timeout: 10_000,
       interval: 100,
     });
-    // Freed by expiry (1 s TTL), not by a release.
-    expect(Date.now() - killedAt).toBeGreaterThanOrEqual(500);
+    // Freed by expiry (at least 2 s after the last renewal), not by a release.
+    expect(Date.now() - killedAt).toBeGreaterThanOrEqual(1_000);
   });
 });
 
