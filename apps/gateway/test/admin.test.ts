@@ -180,6 +180,11 @@ describe('project isolation', () => {
         { name: 'x' },
       ],
       [
+        'PATCH /admin/projects/:projectId/api-keys/:apiKeyId',
+        `/admin/projects/${t.b}/api-keys/${t.keyB.id}`,
+        { limits: { requestsPerMinute: 1 } },
+      ],
+      [
         'POST /admin/projects/:projectId/api-keys/:apiKeyId/revoke',
         `/admin/projects/${t.b}/api-keys/${t.keyB.id}/revoke`,
       ],
@@ -359,6 +364,12 @@ describe('audit log', () => {
       'DELETE /admin/projects/:projectId/members/:userId',
       `/admin/projects/${p}/members/${member.id}`,
       'member.remove',
+    );
+    await run(
+      'PATCH /admin/projects/:projectId/api-keys/:apiKeyId',
+      `/admin/projects/${p}/api-keys/${k1}`,
+      'api_key.update',
+      { limits: { requestsPerMinute: 60 } },
     );
     await run(
       'POST /admin/projects/:projectId/api-keys/:apiKeyId/rotate',
@@ -568,5 +579,109 @@ describe('API key lifecycle through the admin API', () => {
       timeout: 5_000,
       interval: 50,
     });
+  });
+});
+
+describe('limits and budgets through the admin API', () => {
+  interface Limits {
+    requestsPerMinute: number | null;
+    tokensPerMinute: number | null;
+    concurrentRequests: number | null;
+  }
+  const none: Limits = { requestsPerMinute: null, tokensPerMinute: null, concurrentRequests: null };
+
+  async function ownedProject() {
+    const owner = await createUser(db);
+    const cookie = await login(owner);
+    const p = (await api<{ id: string }>('POST', '/admin/projects', cookie, { name: 'limits' }))
+      .body.id;
+    return { owner, cookie, p };
+  }
+
+  it('sets, shows and removes project limits and budget; viewers cannot', async () => {
+    const { cookie, p } = await ownedProject();
+    expect((await api('GET', `/admin/projects/${p}`, cookie)).body).toMatchObject({
+      limits: none,
+      budget: { monthlyLimitMicroUsd: null, maxRequestCostMicroUsd: null },
+    });
+    const patched = await api('PATCH', `/admin/projects/${p}`, cookie, {
+      limits: { requestsPerMinute: 60, concurrentRequests: 5 },
+      budget: { monthlyLimitMicroUsd: 1_000_000, maxRequestCostMicroUsd: 50_000 },
+    });
+    expect(patched).toMatchObject({
+      status: 200,
+      body: {
+        limits: { requestsPerMinute: 60, tokensPerMinute: null, concurrentRequests: 5 },
+        budget: { monthlyLimitMicroUsd: 1_000_000, maxRequestCostMicroUsd: 50_000 },
+      },
+    });
+    // Fields left out stay; null removes.
+    const removed = await api('PATCH', `/admin/projects/${p}`, cookie, {
+      limits: { concurrentRequests: null },
+    });
+    expect(removed.body).toMatchObject({
+      limits: { requestsPerMinute: 60, concurrentRequests: null },
+      budget: { monthlyLimitMicroUsd: 1_000_000 },
+    });
+
+    const bad = await api('PATCH', `/admin/projects/${p}`, cookie, {
+      limits: { requestsPerMinute: 0 },
+    });
+    expect(bad.status).toBe(400);
+
+    const viewer = await createUser(db, [{ projectId: p, role: 'viewer' }]);
+    const denied = await api('PATCH', `/admin/projects/${p}`, await login(viewer), {
+      budget: { monthlyLimitMicroUsd: null },
+    });
+    expect(denied).toMatchObject({ status: 403, body: { error: { code: 'insufficient_role' } } });
+  });
+
+  it('gives keys their own limits, kept across a rotation', async () => {
+    const { cookie, p } = await ownedProject();
+    const created = await api<{ apiKey: { id: string; limits: Limits } }>(
+      'POST',
+      `/admin/projects/${p}/api-keys`,
+      cookie,
+      { name: 'k', limits: { requestsPerMinute: 30 } },
+    );
+    expect(created.body.apiKey.limits).toEqual({ ...none, requestsPerMinute: 30 });
+    const id = created.body.apiKey.id;
+    const patched = await api<{ limits: Limits; name: string }>(
+      'PATCH',
+      `/admin/projects/${p}/api-keys/${id}`,
+      cookie,
+      { name: 'renamed', limits: { tokensPerMinute: 10_000 } },
+    );
+    expect(patched.body).toMatchObject({
+      name: 'renamed',
+      limits: { requestsPerMinute: 30, tokensPerMinute: 10_000, concurrentRequests: null },
+    });
+    const rotated = await api<{ apiKey: { limits: Limits } }>(
+      'POST',
+      `/admin/projects/${p}/api-keys/${id}/rotate`,
+      cookie,
+      {},
+    );
+    expect(rotated.body.apiKey.limits).toEqual(patched.body.limits);
+  });
+
+  it('applies a new limit on every instance at once', async () => {
+    const { cookie, p } = await ownedProject();
+    const { key } = (
+      await api<{ key: string }>('POST', `/admin/projects/${p}/api-keys`, cookie, { name: 'k' })
+    ).body;
+    // The other instance caches the key (with no limits) for two minutes.
+    expect((await chat(otherUrl, key)).status).toBe(200);
+    await api('PATCH', `/admin/projects/${p}`, cookie, { limits: { requestsPerMinute: 1 } });
+    await vi.waitFor(
+      async () => {
+        const res = await chat(otherUrl, key);
+        expect(res.status).toBe(429);
+        expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+          'rpm_limit_exceeded',
+        );
+      },
+      { timeout: 5_000, interval: 50 },
+    );
   });
 });

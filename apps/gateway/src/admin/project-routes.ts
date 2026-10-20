@@ -6,18 +6,25 @@ import { z } from 'zod';
 import { currentUser, projectNotFound, requireProjectRole } from './access.js';
 import { writeAudit } from './audit.js';
 import {
+  budgetPatchSchema,
   errorResponses,
   iso,
+  limitsPatchSchema,
+  limitUpdates,
   modelListSchema,
   projectParams,
   projectSchema,
+  toLimits,
   type AdminDeps,
+  type LimitColumns,
 } from './schemas.js';
 
-interface ProjectRow {
+interface ProjectRow extends LimitColumns {
   id: string;
   name: string;
   allowed_models: string[] | null;
+  monthly_budget_micro_usd: number | null;
+  max_request_cost_micro_usd: number | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -27,13 +34,29 @@ function toProject(row: ProjectRow, role: Role) {
     id: row.id,
     name: row.name,
     allowedModels: row.allowed_models,
+    limits: toLimits(row),
+    budget: {
+      monthlyLimitMicroUsd: row.monthly_budget_micro_usd,
+      maxRequestCostMicroUsd: row.max_request_cost_micro_usd,
+    },
     role,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };
 }
 
-const projectColumns = ['id', 'name', 'allowed_models', 'created_at', 'updated_at'] as const;
+const projectColumns = [
+  'id',
+  'name',
+  'allowed_models',
+  'rpm_limit',
+  'tpm_limit',
+  'concurrency_limit',
+  'monthly_budget_micro_usd',
+  'max_request_cost_micro_usd',
+  'created_at',
+  'updated_at',
+] as const;
 const security = [{ session: [] }];
 
 export function registerProjectRoutes(app: FastifyInstance, deps: AdminDeps): void {
@@ -140,17 +163,23 @@ export function registerProjectRoutes(app: FastifyInstance, deps: AdminDeps): vo
     {
       schema: {
         tags: ['admin'],
-        summary: 'Rename a project or change its model allow-list (admin)',
-        description: '`allowedModels: null` allows every configured model.',
+        summary: 'Change a project: name, model allow-list, limits, budget (admin)',
+        description:
+          '`allowedModels: null` allows every configured model. `limits` apply to all of the ' +
+          "project's keys together; `budget` is in micro-dollars per UTC month. In both, `null` " +
+          'removes a limit and a field left out stays as it is. Changes reach every instance ' +
+          'at once through the key-cache invalidation.',
         security,
         params: projectParams,
         body: z
           .object({
             name: z.string().trim().min(1).max(100).optional(),
             allowedModels: modelListSchema.nullable().optional(),
+            limits: limitsPatchSchema.optional(),
+            budget: budgetPatchSchema.optional(),
           })
           .strict()
-          .refine((b) => b.name !== undefined || b.allowedModels !== undefined, {
+          .refine((b) => Object.values(b).some((v) => v !== undefined), {
             message: 'nothing to change',
           }),
         response: { 200: projectSchema, ...errorResponses },
@@ -160,13 +189,20 @@ export function registerProjectRoutes(app: FastifyInstance, deps: AdminDeps): vo
       const { projectId } = request.params;
       const user = currentUser(request);
       const role = await requireProjectRole(db, request, projectId, 'admin');
-      const { name, allowedModels } = request.body;
+      const { name, allowedModels, limits, budget } = request.body;
       const row = await db.transaction().execute(async (trx) => {
         const updated = await trx
           .updateTable('projects')
           .set({
             ...(name === undefined ? {} : { name }),
             ...(allowedModels === undefined ? {} : { allowed_models: allowedModels }),
+            ...(limits === undefined ? {} : limitUpdates(limits)),
+            ...(budget?.monthlyLimitMicroUsd === undefined
+              ? {}
+              : { monthly_budget_micro_usd: budget.monthlyLimitMicroUsd }),
+            ...(budget?.maxRequestCostMicroUsd === undefined
+              ? {}
+              : { max_request_cost_micro_usd: budget.maxRequestCostMicroUsd }),
             updated_at: new Date(),
           })
           .where('id', '=', projectId)
@@ -184,8 +220,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: AdminDeps): vo
         });
         return updated;
       });
-      // Keys cache the allow-list; drop them on every instance once the change is committed.
-      if (allowedModels !== undefined) {
+      // Keys cache the allow-list, limits and budget; drop them on every instance once the change
+      // is committed.
+      if (allowedModels !== undefined || limits !== undefined || budget !== undefined) {
         await deps.invalidation.publish({ kind: 'project', projectId });
       }
       return toProject(row, role);

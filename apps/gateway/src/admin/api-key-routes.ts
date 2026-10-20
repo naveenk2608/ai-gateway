@@ -12,8 +12,12 @@ import {
   errorResponses,
   iso,
   isoOrNull,
+  limitsPatchSchema,
+  limitUpdates,
   projectParams,
+  toLimits,
   type AdminDeps,
+  type LimitColumns,
 } from './schemas.js';
 
 const keyParams = projectParams.extend({ apiKeyId: z.uuid() });
@@ -26,9 +30,12 @@ const keyColumns = [
   'expires_at',
   'revoked_at',
   'rotated_to',
+  'rpm_limit',
+  'tpm_limit',
+  'concurrency_limit',
 ] as const;
 
-interface KeyRow {
+interface KeyRow extends LimitColumns {
   id: string;
   key_id: string;
   name: string;
@@ -51,6 +58,7 @@ function toApiKey(row: KeyRow, now: number) {
     name: row.name,
     maskedKey: maskedKey(row.key_id),
     status,
+    limits: toLimits(row),
     createdAt: iso(row.created_at),
     expiresAt: isoOrNull(row.expires_at),
     revokedAt: isoOrNull(row.revoked_at),
@@ -67,7 +75,14 @@ function conflict(code: string, message: string): GatewayError {
 }
 
 /** Inserts a fresh key; the plaintext leaves this function once and is never stored. */
-async function insertKey(trx: Db, projectId: string, name: string, userId: string, pepper: string) {
+async function insertKey(
+  trx: Db,
+  projectId: string,
+  name: string,
+  userId: string,
+  pepper: string,
+  limits: Partial<LimitColumns> = {},
+) {
   const key = generateApiKey();
   const row = await trx
     .insertInto('api_keys')
@@ -78,6 +93,7 @@ async function insertKey(trx: Db, projectId: string, name: string, userId: strin
       secret_hash: hashSecret(key.secret, pepper),
       name,
       created_by: userId,
+      ...limits,
     })
     .returning(keyColumns)
     .executeTakeFirstOrThrow();
@@ -134,7 +150,9 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
         summary: 'Create an API key (admin); the full key is returned only in this response',
         security,
         params: projectParams,
-        body: z.object({ name: z.string().trim().min(1).max(100) }).strict(),
+        body: z
+          .object({ name: z.string().trim().min(1).max(100), limits: limitsPatchSchema.optional() })
+          .strict(),
         response: {
           201: z.object({ apiKey: apiKeySchema, key: z.string() }),
           ...errorResponses,
@@ -146,14 +164,26 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
       const user = currentUser(request);
       await requireProjectRole(db, request, projectId, 'admin');
       const created = await db.transaction().execute(async (trx) => {
-        const result = await insertKey(trx, projectId, request.body.name, user.id, pepper);
+        const { name, limits } = request.body;
+        const result = await insertKey(
+          trx,
+          projectId,
+          name,
+          user.id,
+          pepper,
+          limitUpdates(limits ?? {}),
+        );
         await writeAudit(trx, {
           projectId,
           actor: { type: 'user', userId: user.id },
           action: 'api_key.create',
           targetType: 'api_key',
           targetId: result.row.id,
-          details: { keyId: result.row.key_id, name: result.row.name },
+          details: {
+            keyId: result.row.key_id,
+            name: result.row.name,
+            limits: toLimits(result.row),
+          },
           requestId: request.id,
         });
         return result;
@@ -162,6 +192,59 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
       return reply
         .code(201)
         .send({ apiKey: toApiKey(created.row, clock.now()), key: created.plaintext });
+    },
+  );
+
+  routes.patch(
+    '/admin/projects/:projectId/api-keys/:apiKeyId',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Rename an API key or change its limits (admin)',
+        description:
+          'Key limits apply on top of the project limits. `null` removes a limit; a field left ' +
+          'out stays as it is.',
+        security,
+        params: keyParams,
+        body: z
+          .object({
+            name: z.string().trim().min(1).max(100).optional(),
+            limits: limitsPatchSchema.optional(),
+          })
+          .strict()
+          .refine((b) => b.name !== undefined || b.limits !== undefined, {
+            message: 'nothing to change',
+          }),
+        response: { 200: apiKeySchema, ...errorResponses },
+      },
+    },
+    async (request) => {
+      const { projectId, apiKeyId } = request.params;
+      const user = currentUser(request);
+      await requireProjectRole(db, request, projectId, 'admin');
+      const { name, limits } = request.body;
+      const row = await db.transaction().execute(async (trx) => {
+        await lockKey(trx, projectId, apiKeyId);
+        const updated = await trx
+          .updateTable('api_keys')
+          .set({ ...(name === undefined ? {} : { name }), ...limitUpdates(limits ?? {}) })
+          .where('id', '=', apiKeyId)
+          .returning(keyColumns)
+          .executeTakeFirstOrThrow();
+        await writeAudit(trx, {
+          projectId,
+          actor: { type: 'user', userId: user.id },
+          action: 'api_key.update',
+          targetType: 'api_key',
+          targetId: apiKeyId,
+          details: { keyId: updated.key_id, changes: request.body },
+          requestId: request.id,
+        });
+        return updated;
+      });
+      // Cached copies of the key hold its old limits.
+      await deps.invalidation.publish({ kind: 'api_key', keyId: row.key_id });
+      return toApiKey(row, clock.now());
     },
   );
 
@@ -249,7 +332,12 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
         if (old.expires_at && old.expires_at.getTime() <= now) {
           throw conflict('api_key_expired', 'An expired key cannot be rotated.');
         }
-        const created = await insertKey(trx, projectId, old.name, user.id, pepper);
+        // The new key keeps the old one's name and limits.
+        const created = await insertKey(trx, projectId, old.name, user.id, pepper, {
+          rpm_limit: old.rpm_limit,
+          tpm_limit: old.tpm_limit,
+          concurrency_limit: old.concurrency_limit,
+        });
         const graceEnd = now + grace * 1000;
         const expiresAt = new Date(
           old.expires_at ? Math.min(old.expires_at.getTime(), graceEnd) : graceEnd,
