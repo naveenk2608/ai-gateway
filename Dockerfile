@@ -46,9 +46,12 @@ FROM ${NODE_IMAGE} AS gateway
 # own PORT at runtime (Render does) override it.
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=8080
+    PORT=8080 \
+    MIGRATIONS_DIR=/app/db/migrations
 WORKDIR /app
 COPY --from=build --chown=node:node /out/gateway ./
+# Applied at startup under an advisory lock (MIGRATE_ON_START).
+COPY --chown=node:node db/migrations ./db/migrations
 USER node
 EXPOSE 8080
 # node is PID 1 and handles SIGTERM itself (graceful drain).
