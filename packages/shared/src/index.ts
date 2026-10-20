@@ -3,6 +3,7 @@ export {
   commonConfigShape,
   describeIssue,
   logLevelSchema,
+  metricsConfigShape,
   parseConfig,
   type Env,
   type LogLevel,

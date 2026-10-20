@@ -24,6 +24,18 @@ export const commonConfigShape = {
   SHUTDOWN_TIMEOUT_MS: positiveIntMs.default(10_000),
 };
 
+/** Prometheus metrics settings (ADR 017) for both processes; each adds its own METRICS_PORT. */
+export const metricsConfigShape = {
+  /** Bearer token scrapes must send. The gateway serves /metrics on its main port only if set. */
+  METRICS_TOKEN: z
+    .string()
+    .min(32, 'must be at least 32 characters')
+    .regex(/^\S+$/, 'must not contain whitespace')
+    .optional(),
+  /** Bind address of the separate metrics listener; loopback keeps it off the network. */
+  METRICS_HOST: z.string().min(1).default('127.0.0.1'),
+};
+
 export class ConfigError extends Error {
   readonly problems: readonly string[];
 
