@@ -72,6 +72,28 @@ function upstreamCode(text: string): string | undefined {
     : undefined;
 }
 
+/**
+ * GETs a URL and discards the body: a health probe (ADR 012). Resolves on 2xx; otherwise throws
+ * the ProviderError for the status or network failure.
+ */
+export async function probeGet(
+  url: string,
+  { agent, headers, signal, clock }: PostOptions,
+): Promise<void> {
+  let response: Dispatcher.ResponseData;
+  try {
+    response = await request(url, { method: 'GET', dispatcher: agent, signal, headers });
+  } catch (err) {
+    throw networkError(err, signal);
+  }
+  await response.body.dump().catch(() => undefined);
+  if (response.statusCode >= 200 && response.statusCode < 300) return;
+  throw errorForStatus(
+    response.statusCode,
+    parseRetryAfter(response.headers['retry-after'], clock.now()),
+  );
+}
+
 export interface PostOptions {
   agent: Agent;
   headers: Record<string, string>;

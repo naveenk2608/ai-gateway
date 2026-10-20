@@ -85,6 +85,7 @@ describe('runChat', () => {
       chatStream: () => ({
         [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => undefined) }),
       }),
+      probe: () => Promise.resolve(),
       close: () => Promise.resolve(),
     };
     const pending = runChat(

@@ -6,6 +6,7 @@ import {
   noModels,
   RecordingBus,
   testAdmission,
+  testRouting,
 } from '../test/helpers.js';
 import { buildApp } from './app.js';
 import { createRegistry } from './providers/registry.js';
@@ -29,6 +30,7 @@ function gatewayApp() {
       verifier,
       events: new RecordingBus(),
       admission: testAdmission(systemClock, logger),
+      routing: testRouting(registry, systemClock),
     });
     done();
   });

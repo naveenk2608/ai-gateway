@@ -6,6 +6,7 @@ import {
   RecordingBus,
   sseData,
   testAdmission,
+  testRouting,
 } from '../../test/helpers.js';
 import { buildApp } from '../app.js';
 import { parseModelsConfig } from '../models-config.js';
@@ -92,7 +93,15 @@ function setup({ policy = keyRpm, admit, failMode = 'closed', noPrices }: SetupO
         failMode,
       })
     : testAdmission(systemClock, logger, { limiter, prices, failMode });
-  registerChatCompletions(app, { registry, clock: systemClock, verifier, events, admission });
+  const routing = testRouting(registry, systemClock);
+  registerChatCompletions(app, {
+    registry,
+    clock: systemClock,
+    verifier,
+    events,
+    admission,
+    routing,
+  });
   const post = (body: Record<string, unknown>) =>
     app.inject({
       method: 'POST',

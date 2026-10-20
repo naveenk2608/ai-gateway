@@ -61,6 +61,11 @@ export interface Provider {
   chat(req: ChatRequest, signal: AbortSignal): Promise<ChatResult>;
   /** Yields stream events. Throws a ProviderError; stops promptly when `signal` aborts. */
   chatStream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamEvent>;
+  /**
+   * A cheap health check that runs no model, so it costs nothing on paid APIs (ADR 012). Resolves
+   * when the upstream answers; rejects with a ProviderError.
+   */
+  probe(signal: AbortSignal): Promise<void>;
   /** Releases connections. Called once at shutdown. */
   close(): Promise<void>;
 }

@@ -59,8 +59,8 @@ export class RequestTrace {
     return this.attempts.length + 1;
   }
 
-  recordAttempt(record: Omit<AttemptRecord, 'routingPolicy' | 'routingReason'>): void {
-    this.attempts.push({ ...record, routingPolicy: null, routingReason: null });
+  recordAttempt(record: AttemptRecord): void {
+    this.attempts.push(record);
     this.#deployment = record.deployment;
   }
 

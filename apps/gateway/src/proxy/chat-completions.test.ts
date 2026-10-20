@@ -7,6 +7,7 @@ import {
   sleepsQueued,
   sseData,
   testAdmission,
+  testRouting,
 } from '../../test/helpers.js';
 import { buildApp } from '../app.js';
 import { parseModelsConfig } from '../models-config.js';
@@ -58,7 +59,8 @@ function setup() {
   const { verifier, authorization } = inMemoryVerifier(clock);
   const events = new RecordingBus();
   const admission = testAdmission(clock, logger);
-  registerChatCompletions(app, { registry, clock, verifier, events, admission });
+  const routing = testRouting(registry, clock);
+  registerChatCompletions(app, { registry, clock, verifier, events, admission, routing });
 
   /** Sends a request, then advances the manual clock once its sleeps are queued. */
   async function post(payload: unknown, { sleeps = 2, advance = 0 } = {}) {

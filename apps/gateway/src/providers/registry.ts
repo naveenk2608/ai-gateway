@@ -1,6 +1,11 @@
 import type { Clock, Env } from '@ai-gateway/shared';
 import type { Logger } from '@ai-gateway/shared/node';
-import type { DeploymentConfig, ModelsConfig } from '../models-config.js';
+import {
+  modelRoute,
+  type DeploymentConfig,
+  type ModelsConfig,
+  type RoutingPolicy,
+} from '../models-config.js';
 import { MockProvider } from './mock.js';
 import { OllamaProvider } from './ollama.js';
 import { OpenAICompatibleProvider } from './openai-compatible.js';
@@ -18,6 +23,13 @@ export interface Deployment {
   maxOutputTokens: number;
 }
 
+/** How a logical model is served: a policy over one or more available deployments. */
+export interface Route {
+  model: string;
+  policy: RoutingPolicy;
+  targets: { deployment: Deployment; weight: number }[];
+}
+
 export interface RegistryDeps {
   clock: Clock;
   logger: Logger;
@@ -29,20 +41,24 @@ export interface RegistryDeps {
 
 export class ProviderRegistry {
   readonly #deployments: Map<string, Deployment>;
-  readonly #models: Map<string, Deployment>;
+  readonly #models: Map<string, Route>;
 
-  constructor(deployments: Map<string, Deployment>, models: Map<string, Deployment>) {
+  constructor(deployments: Map<string, Deployment>, models: Map<string, Route>) {
     this.#deployments = deployments;
     this.#models = models;
   }
 
-  /** The deployment serving a logical model name, if the model is configured and available. */
-  resolve(model: string): Deployment | undefined {
+  /** How a logical model is routed, if it is configured and has an available deployment. */
+  route(model: string): Route | undefined {
     return this.#models.get(model);
   }
 
   deployment(id: string): Deployment | undefined {
     return this.#deployments.get(id);
+  }
+
+  deployments(): Deployment[] {
+    return [...this.#deployments.values()];
   }
 
   modelNames(): string[] {
@@ -100,11 +116,19 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
     });
   }
 
-  const models = new Map<string, Deployment>();
+  const models = new Map<string, Route>();
   for (const [name, model] of Object.entries(config.models)) {
-    const deployment = deployments.get(model.deployment);
-    if (deployment) models.set(name, deployment);
-    else deps.logger.warn({ model: name, deployment: model.deployment }, 'model unavailable');
+    const { policy, targets } = modelRoute(model);
+    const available = targets.flatMap((t) => {
+      const deployment = deployments.get(t.deployment);
+      return deployment ? [{ deployment, weight: t.weight }] : [];
+    });
+    if (available.length > 0) models.set(name, { model: name, policy, targets: available });
+    else
+      deps.logger.warn(
+        { model: name, reason: 'none of its deployments is enabled' },
+        'model unavailable',
+      );
   }
 
   deps.logger.info(

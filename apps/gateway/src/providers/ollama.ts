@@ -2,7 +2,14 @@ import type { Clock } from '@ai-gateway/shared';
 import { Agent } from 'undici';
 import { z } from 'zod';
 import { ProviderError } from './errors.js';
-import { MAX_RESPONSE_BYTES, networkError, parseJson, postJson, readText } from './http.js';
+import {
+  MAX_RESPONSE_BYTES,
+  networkError,
+  parseJson,
+  postJson,
+  probeGet,
+  readText,
+} from './http.js';
 import { splitLines } from './line-stream.js';
 import {
   messageText,
@@ -67,12 +74,15 @@ function toFinishReason(reason: string | null | undefined): FinishReason {
 export class OllamaProvider implements Provider {
   readonly kind = 'ollama' as const;
   readonly #url: string;
+  readonly #tagsUrl: string;
   readonly #clock: Clock;
   readonly #maxResponseBytes: number;
   readonly #agent = new Agent({ connect: { timeout: 10_000 } });
 
   constructor(options: OllamaOptions) {
-    this.#url = `${options.baseUrl.replace(/\/+$/, '')}/api/chat`;
+    const root = options.baseUrl.replace(/\/+$/, '');
+    this.#url = `${root}/api/chat`;
+    this.#tagsUrl = `${root}/api/tags`;
     this.#clock = options.clock;
     this.#maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
   }
@@ -119,6 +129,11 @@ export class OllamaProvider implements Provider {
       finishReason: toFinishReason(final.done_reason),
       usage: toUsage(final),
     };
+  }
+
+  /** Lists local models: the server is up and answering. */
+  probe(signal: AbortSignal): Promise<void> {
+    return probeGet(this.#tagsUrl, { agent: this.#agent, headers: {}, signal, clock: this.#clock });
   }
 
   async close(): Promise<void> {

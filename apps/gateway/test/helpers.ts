@@ -16,6 +16,10 @@ import { AdmissionControl } from '../src/limits/admission.js';
 import type { Limiter } from '../src/limits/limiter.js';
 import { UNLIMITED, type UsagePolicy } from '../src/limits/policy.js';
 import { PriceBook, type PriceRow } from '../src/limits/prices.js';
+import type { ProviderRegistry } from '../src/providers/registry.js';
+import { BreakerBoard } from '../src/routing/breaker.js';
+import type { RetrySettings, RoutingDeps } from '../src/routing/routed.js';
+import { LatencyTracker } from '../src/routing/router.js';
 import { gatewayConfigSchema, type GatewayConfig } from '../src/config.js';
 import type { EventBus } from '../src/events/bus.js';
 import { parseModelsConfig, type ModelsConfig } from '../src/models-config.js';
@@ -142,4 +146,38 @@ export function testAdmission(
   }: { limiter?: Pick<Limiter, 'admit'>; prices?: PriceRow[]; failMode?: 'closed' | 'open' } = {},
 ) {
   return new AdmissionControl({ limiter, prices: PriceBook.of(prices, clock, logger), failMode });
+}
+
+/**
+ * Routing for /v1 unit tests. One attempt per request by default, so tests of a single
+ * deployment see exactly one upstream call; routing tests pass their own retry settings.
+ */
+export function testRouting(
+  registry: ProviderRegistry,
+  clock: Clock,
+  {
+    retry = {},
+    failureThreshold = 1_000,
+    openMs = 30_000,
+    random = () => 0.5,
+  }: {
+    retry?: Partial<RetrySettings>;
+    failureThreshold?: number;
+    openMs?: number;
+    random?: () => number;
+  } = {},
+): RoutingDeps {
+  const { logger } = captureLogger();
+  return {
+    breakers: new BreakerBoard(
+      registry.deployments().map((d) => d.id),
+      { failureThreshold, openMs },
+      clock,
+      () => undefined,
+    ),
+    latency: new LatencyTracker(),
+    prices: PriceBook.of([], clock, logger),
+    random,
+    retry: { maxAttempts: 1, perDeployment: 1, baseDelayMs: 100, maxDelayMs: 2_000, ...retry },
+  };
 }

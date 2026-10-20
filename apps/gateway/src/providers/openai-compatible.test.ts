@@ -217,3 +217,17 @@ describe('OpenAICompatibleProvider.chatStream', () => {
     await vi.waitFor(() => expect(upstream.closedEarly).toBe(1));
   });
 });
+
+describe('OpenAICompatibleProvider.probe', () => {
+  it('lists models with the key, which runs no model', async () => {
+    const { upstream, provider } = await setup((_req, res) => sendJson(res, 200, { data: [] }));
+    await provider.probe(signal());
+    expect(upstream.requests[0]).toMatchObject({ method: 'GET', url: '/v1/models' });
+    expect(upstream.requests[0]?.headers.authorization).toBe('Bearer test-key-not-secret');
+  });
+
+  it('fails with the normalized error for the status', async () => {
+    const { provider } = await setup((_req, res) => sendJson(res, 503, { error: 'down' }));
+    await expect(provider.probe(signal())).rejects.toMatchObject({ kind: 'server_error' });
+  });
+});

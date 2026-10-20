@@ -176,3 +176,13 @@ describe('MockProvider.chatStream', () => {
     expect(provider.stats()).toMatchObject({ canceled: 1, completed: 0, active: 0 });
   });
 });
+
+describe('MockProvider health and runtime changes', () => {
+  it('probes unhealthy while every request is forced to fail, and heals on update', async () => {
+    const { provider } = mock({ failWith: 500 });
+    const signal = new AbortController().signal;
+    await expect(provider.probe(signal)).rejects.toMatchObject({ kind: 'server_error' });
+    provider.update({ failWith: undefined });
+    await expect(provider.probe(signal)).resolves.toBeUndefined();
+  });
+});

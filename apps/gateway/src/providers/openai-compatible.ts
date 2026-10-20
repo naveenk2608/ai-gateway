@@ -2,7 +2,14 @@ import type { Clock } from '@ai-gateway/shared';
 import { Agent } from 'undici';
 import { z } from 'zod';
 import { ProviderError } from './errors.js';
-import { MAX_RESPONSE_BYTES, networkError, parseJson, postJson, readText } from './http.js';
+import {
+  MAX_RESPONSE_BYTES,
+  networkError,
+  parseJson,
+  postJson,
+  probeGet,
+  readText,
+} from './http.js';
 import { parseSse } from './line-stream.js';
 import type {
   ChatRequest,
@@ -84,13 +91,16 @@ function validate<T>(schema: z.ZodType<T>, value: unknown): T {
 export class OpenAICompatibleProvider implements Provider {
   readonly kind = 'openai-compatible' as const;
   readonly #url: string;
+  readonly #modelsUrl: string;
   readonly #apiKey: string;
   readonly #clock: Clock;
   readonly #maxResponseBytes: number;
   readonly #agent = new Agent({ connect: { timeout: 10_000 } });
 
   constructor(options: OpenAICompatibleOptions) {
-    this.#url = `${options.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    const root = options.baseUrl.replace(/\/+$/, '');
+    this.#url = `${root}/chat/completions`;
+    this.#modelsUrl = `${root}/models`;
     this.#apiKey = options.apiKey;
     this.#clock = options.clock;
     this.#maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
@@ -141,6 +151,16 @@ export class OpenAICompatibleProvider implements Provider {
       throw new ProviderError('connection', 'upstream stream ended before a finish_reason');
     }
     yield { type: 'finish', finishReason, usage };
+  }
+
+  /** Lists models: the API is up and accepts the key, and no tokens are billed. */
+  probe(signal: AbortSignal): Promise<void> {
+    return probeGet(this.#modelsUrl, {
+      agent: this.#agent,
+      headers: { authorization: `Bearer ${this.#apiKey}` },
+      signal,
+      clock: this.#clock,
+    });
   }
 
   async close(): Promise<void> {

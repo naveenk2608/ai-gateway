@@ -71,7 +71,7 @@ function estimatePromptTokens(req: ChatRequest): number {
  */
 export class MockProvider implements Provider {
   readonly kind = 'mock' as const;
-  readonly #settings: MockSettings;
+  #settings: MockSettings;
   readonly #clock: Clock;
   readonly #random: () => number;
   readonly #stats: MockStats = {
@@ -91,6 +91,23 @@ export class MockProvider implements Provider {
 
   stats(): MockStats {
     return { ...this.#stats };
+  }
+
+  /** Changes settings at runtime, e.g. to make a deployment fail and then heal (tests, demos). */
+  update(settings: Partial<MockSettings>): void {
+    this.#settings = { ...this.#settings, ...settings };
+  }
+
+  /** Healthy unless every request is set to fail (a forced status or an error rate of 1). */
+  probe(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(new ProviderError('canceled', 'probe aborted'));
+    const { failWith, errorRate } = this.#settings;
+    if (failWith !== undefined || errorRate >= 1) {
+      return Promise.reject(
+        new ProviderError('server_error', 'mock is failing', { upstreamStatus: failWith ?? 500 }),
+      );
+    }
+    return Promise.resolve();
   }
 
   async chat(req: ChatRequest, signal: AbortSignal): Promise<ChatResult> {

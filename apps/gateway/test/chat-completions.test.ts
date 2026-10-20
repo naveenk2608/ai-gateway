@@ -101,13 +101,14 @@ describe('chat completions over HTTP against the mock (non-streaming)', () => {
     expect(await res.json()).toMatchObject({ error: { type: 'invalid_request_error' } });
   });
 
-  it('times out with 504 and cancels the upstream call', async () => {
+  it('times out with 504 and cancels each upstream call, including the retry', async () => {
     const started = Date.now();
     const res = await chat({ model: 'mock-stuck', ...hello });
     expect(res.status).toBe(504);
     expect(await res.json()).toMatchObject({ error: { code: 'upstream_timeout' } });
     expect(Date.now() - started).toBeLessThan(10_000);
-    expect(mockFor('stuck').stats()).toMatchObject({ canceled: 1, active: 0 });
+    // A timeout is retryable (ADR 011): one retry on the only deployment, both cancelled.
+    expect(mockFor('stuck').stats()).toMatchObject({ requests: 2, canceled: 2, active: 0 });
   });
 
   it('cancels the upstream call when the client disconnects before the response', async () => {

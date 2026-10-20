@@ -19,9 +19,10 @@ export interface AdmissionOptions {
 export interface AdmitInput {
   key: AuthenticatedKey;
   trace: RequestTrace;
-  deployment: Deployment;
-  /** The output cap sent upstream: the client's max_tokens or the deployment's default. */
-  maxTokens: number;
+  /** Every deployment the request may be routed to; the worst case is the costliest. */
+  deployments: readonly Deployment[];
+  /** The client's max_tokens; each deployment otherwise uses its own maxOutputTokens. */
+  clientMaxTokens: number | undefined;
   log: FastifyBaseLogger;
 }
 
@@ -103,15 +104,21 @@ export class AdmissionControl {
 
   /** Admits the request or throws the GatewayError the client should see. */
   async admit(input: AdmitInput): Promise<Settlement> {
-    const { key, trace, deployment, log } = input;
+    const { key, trace, deployments, clientMaxTokens, log } = input;
     const { policy } = key;
-    const tokens = trace.estimatedPromptTokens + input.maxTokens;
-    const costMicroUsd = this.#o.prices.cost(
-      deployment.provider.kind,
-      deployment.providerModel,
-      trace.startedAt,
-      trace.estimatedPromptTokens,
-      input.maxTokens,
+    const maxTokensOf = (d: Deployment) => clientMaxTokens ?? d.maxOutputTokens;
+    const tokens = trace.estimatedPromptTokens + Math.max(...deployments.map(maxTokensOf));
+    // Retries and fallbacks run one at a time, so the worst case is the costliest deployment.
+    const costMicroUsd = Math.max(
+      ...deployments.map((d) =>
+        this.#o.prices.cost(
+          d.provider.kind,
+          d.providerModel,
+          trace.startedAt,
+          trace.estimatedPromptTokens,
+          maxTokensOf(d),
+        ),
+      ),
     );
     const priced = policy.monthlyBudgetMicroUsd !== null || policy.maxRequestCostMicroUsd !== null;
     if (!hasLimits(policy) && !priced) return NOTHING_HELD;

@@ -185,3 +185,17 @@ describe('OllamaProvider.chatStream', () => {
     await vi.waitFor(() => expect(upstream.closedEarly).toBe(1));
   });
 });
+
+describe('OllamaProvider.probe', () => {
+  it('lists local models', async () => {
+    const { upstream, provider } = await setup((_req, res) => sendJson(res, 200, { models: [] }));
+    await provider.probe(signal());
+    expect(upstream.requests[0]).toMatchObject({ method: 'GET', url: '/api/tags' });
+  });
+
+  it('fails when the server cannot be reached', async () => {
+    const { upstream, provider } = await setup((_req, res) => sendJson(res, 200, {}));
+    await upstream.close();
+    await expect(provider.probe(signal())).rejects.toMatchObject({ kind: 'connection' });
+  });
+});

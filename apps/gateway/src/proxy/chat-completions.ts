@@ -10,8 +10,15 @@ import type { EventBus } from '../events/bus.js';
 import type { AdmissionControl } from '../limits/admission.js';
 import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
+import { runRouted, type RoutingDeps } from '../routing/routed.js';
 import type { ChatRequest, ChatResult, FinishReason, Usage } from '../providers/types.js';
-import { ClientClosedError, openStream, runChat, type OpenStream } from './attempt.js';
+import {
+  ClientClosedError,
+  openStream,
+  runChat,
+  type AttemptContext,
+  type OpenStream,
+} from './attempt.js';
 import {
   chatCompletionRequestSchema,
   chatCompletionSchema,
@@ -35,6 +42,7 @@ export interface ChatRouteOptions {
   verifier: KeyVerifier;
   events: EventBus;
   admission: AdmissionControl;
+  routing: RoutingDeps;
 }
 
 interface ResponseMeta {
@@ -190,7 +198,7 @@ function upstreamFailure(err: unknown): unknown {
 }
 
 export function registerChatCompletions(app: FastifyInstance, options: ChatRouteOptions): void {
-  const { registry, clock, verifier, events, admission } = options;
+  const { registry, clock, verifier, events, admission, routing } = options;
   app.decorateRequest('apiKey', null);
   app.decorateRequest('trace', null);
 
@@ -250,29 +258,43 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           { httpStatus: 403, param: 'model' },
         );
       }
-      const deployment = registry.resolve(body.model);
-      if (!deployment) {
+      const route = registry.route(body.model);
+      if (!route) {
         throw new GatewayError('model_not_found', `The model \`${body.model}\` does not exist.`, {
           httpStatus: 404,
           param: 'model',
         });
       }
 
-      const maxTokens = body.max_completion_tokens ?? body.max_tokens ?? deployment.maxOutputTokens;
+      const clientMaxTokens = body.max_completion_tokens ?? body.max_tokens ?? undefined;
+      const deployments = route.targets.map((t) => t.deployment);
       // Limits and budget (M4): throws the 429/503 the client sees, before any provider call.
       const settlement = await admission.admit({
         key: apiKey,
         trace,
-        deployment,
-        maxTokens,
+        deployments,
+        clientMaxTokens,
         log: request.log,
       });
       // From here the settlement is released exactly once: by the stream when it ends, or below.
       let streamOwnsSettlement = false;
       const disconnect = watchDisconnect(reply.raw);
       try {
-        const ctx = { deployment, clock, clientSignal: disconnect.signal, log: request.log, trace };
-        const providerRequest = toProviderRequest(body, deployment.providerModel, maxTokens);
+        const routed = {
+          route,
+          trace,
+          clock,
+          clientSignal: disconnect.signal,
+          log: request.log,
+          maxTokens: clientMaxTokens ?? Math.max(...deployments.map((d) => d.maxOutputTokens)),
+        };
+        // Each deployment gets its own model name and, unless the client set one, output cap.
+        const requestFor = (ctx: AttemptContext) =>
+          toProviderRequest(
+            body,
+            ctx.deployment.providerModel,
+            clientMaxTokens ?? ctx.deployment.maxOutputTokens,
+          );
         const meta: ResponseMeta = {
           id: `chatcmpl-${request.id}`,
           created: Math.floor(clock.now() / 1000),
@@ -281,7 +303,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
 
         if (body.stream !== true) {
           try {
-            const result = await runChat(ctx, providerRequest);
+            const result = await runRouted(routing, routed, (ctx) => runChat(ctx, requestFor(ctx)));
             trace.setUsage(result.usage);
             trace.addCompletionText(result.content);
             return toChatCompletion(meta, result);
@@ -292,7 +314,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
 
         let stream: OpenStream;
         try {
-          stream = await openStream(ctx, providerRequest);
+          stream = await runRouted(routing, routed, (ctx) => openStream(ctx, requestFor(ctx)));
         } catch (err) {
           throw upstreamFailure(err);
         }

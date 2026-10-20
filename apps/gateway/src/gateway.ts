@@ -1,5 +1,6 @@
+import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { systemClock, type Clock, type Env } from '@ai-gateway/shared';
+import { systemClock, uuidv7, type Clock, type Env } from '@ai-gateway/shared';
 import {
   closeRedis,
   createDb,
@@ -27,6 +28,10 @@ import { databasePriceLoader, PriceBook } from './limits/prices.js';
 import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
 import { registerChatCompletions } from './proxy/chat-completions.js';
+import { BreakerBoard } from './routing/breaker.js';
+import { HealthChecker, HealthReporter } from './routing/health.js';
+import type { RoutingDeps } from './routing/routed.js';
+import { LatencyTracker } from './routing/router.js';
 import { drainAndClose, type DrainOutcome } from './shutdown.js';
 import { createUsageConsumer, type UsageConsumer } from '@ai-gateway/worker';
 
@@ -45,6 +50,8 @@ export interface Gateway {
   limiter: Limiter;
   prices: PriceBook;
   sweeper: ReservationSweeper;
+  breakers: BreakerBoard;
+  healthChecker: HealthChecker;
   /** The in-process usage consumer, when RUN_WORKER_IN_PROCESS is on. */
   consumer: UsageConsumer | undefined;
   /** Applies pending migrations (if enabled), then listens. */
@@ -60,6 +67,8 @@ export interface GatewayDeps {
   env?: Env;
   /** Pub/sub channel for key invalidations; tests isolate instances with their own channel. */
   invalidationChannel?: string;
+  /** Randomness for weighted routing and retry jitter; tests make it repeatable. */
+  random?: () => number;
 }
 
 export function createGateway(config: GatewayConfig, logger: Logger, deps: GatewayDeps): Gateway {
@@ -123,6 +132,40 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     failMode: config.LIMITS_FAIL_MODE,
   });
 
+  const reporter = new HealthReporter({
+    redis,
+    db,
+    logger,
+    instanceId: `${hostname()}-${process.pid}-${uuidv7().slice(-8)}`,
+  });
+  const deployments = registry.deployments();
+  const breakers = new BreakerBoard(
+    deployments.map((d) => d.id),
+    { failureThreshold: config.BREAKER_FAILURE_THRESHOLD, openMs: config.BREAKER_OPEN_MS },
+    clock,
+    (t) => reporter.report(t),
+  );
+  const healthChecker = new HealthChecker({
+    breakers,
+    deployments,
+    clock,
+    logger,
+    intervalMs: config.HEALTH_CHECK_INTERVAL_MS,
+    timeoutMs: config.HEALTH_CHECK_TIMEOUT_MS,
+  });
+  const routing: RoutingDeps = {
+    breakers,
+    latency: new LatencyTracker(),
+    prices,
+    random: deps.random ?? Math.random,
+    retry: {
+      maxAttempts: config.RETRY_MAX_ATTEMPTS,
+      perDeployment: config.RETRY_PER_DEPLOYMENT,
+      baseDelayMs: config.RETRY_BASE_DELAY_MS,
+      maxDelayMs: config.RETRY_MAX_DELAY_MS,
+    },
+  };
+
   const inProcess = config.RUN_WORKER_IN_PROCESS
     ? createUsageConsumer({ settings: config, redisUrl: config.REDIS_URL, db, logger, clock })
     : undefined;
@@ -139,7 +182,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     },
   });
   void app.register((instance, _opts, done) => {
-    registerChatCompletions(instance, { registry, clock, verifier, events, admission });
+    registerChatCompletions(instance, { registry, clock, verifier, events, admission, routing });
     done();
   });
   void app.register((instance) =>
@@ -165,7 +208,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     // Flush buffered usage events while Redis is still open, then let the consumer finish its
     // batch; whatever it leaves pending is claimed by the next worker.
     prices.stop();
-    await sweeper.stop();
+    await Promise.all([sweeper.stop(), healthChecker.stop()]);
     await events.close(Math.min(2_000, config.SHUTDOWN_TIMEOUT_MS));
     if (inProcess) {
       await inProcess.consumer.stop();
@@ -189,6 +232,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     limiter,
     prices,
     sweeper,
+    breakers,
+    healthChecker,
     consumer: inProcess?.consumer,
     async start() {
       if (config.MIGRATE_ON_START) {
@@ -211,6 +256,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       if (boot) logger.info(boot, 'bootstrap settings applied');
       await prices.start();
       sweeper.start();
+      healthChecker.start();
       invalidation.start();
       if (inProcess) {
         await inProcess.consumer.start();

@@ -43,6 +43,17 @@ export interface AttemptContext {
   log: FastifyBaseLogger;
   /** Receives one record per attempt for the usage event. */
   trace?: RequestTrace;
+  /** The routing policy and why this deployment was tried (M5), stored on the attempt. */
+  routing?: { policy: string; reason: string };
+  /** Told how the attempt ended, once: feeds circuit breakers and latency tracking. */
+  onEnd?: (outcome: AttemptOutcome) => void;
+}
+
+export interface AttemptOutcome {
+  /** The failure, or undefined on success. */
+  error: unknown;
+  latencyMs: number;
+  ttftMs: number | null;
 }
 
 const noop = () => undefined;
@@ -122,6 +133,8 @@ class Attempt {
     const now = this.#ctx.clock.now();
     const outcome =
       error === undefined ? 'success' : error instanceof ProviderError ? error.kind : 'error';
+    const ttftMs = this.#firstEventAt === undefined ? null : this.#firstEventAt - this.#startedAt;
+    this.#ctx.onEnd?.({ error, latencyMs: Math.max(0, now - this.#startedAt), ttftMs });
     this.#ctx.trace?.recordAttempt({
       id: this.id,
       attemptNumber: this.#number,
@@ -133,10 +146,13 @@ class Attempt {
       startedAt: new Date(this.#startedAt).toISOString(),
       completedAt: new Date(now).toISOString(),
       latencyMs: Math.max(0, now - this.#startedAt),
-      ttftMs: this.#firstEventAt === undefined ? null : this.#firstEventAt - this.#startedAt,
+      ttftMs,
+      routingPolicy: this.#ctx.routing?.policy ?? null,
+      routingReason: this.#ctx.routing?.reason ?? null,
     });
     const fields = {
       provider: this.#ctx.deployment.provider.kind,
+      routing: this.#ctx.routing?.reason,
       stream: this.#stream,
       durationMs: now - this.#startedAt,
       ttftMs: this.#firstEventAt === undefined ? undefined : this.#firstEventAt - this.#startedAt,

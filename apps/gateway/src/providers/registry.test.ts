@@ -27,8 +27,8 @@ describe('createRegistry', () => {
     const { logger, lines } = captureLogger();
     const registry = createRegistry(config, { ...deps, logger, env: {} });
 
-    expect(registry.resolve('mock-1')?.provider.kind).toBe('mock');
-    expect(registry.resolve('gpt-x')).toBeUndefined();
+    expect(registry.route('mock-1')?.targets[0]?.deployment.provider.kind).toBe('mock');
+    expect(registry.route('gpt-x')).toBeUndefined();
     expect(lines.find((l) => l.msg === 'deployment disabled')).toMatchObject({
       deployment: 'hosted',
       reason: 'EXAMPLE_API_KEY is not set',
@@ -45,7 +45,7 @@ describe('createRegistry', () => {
       env: { EXAMPLE_API_KEY: 'sk-test-value-not-real' },
     });
 
-    const deployment = registry.resolve('gpt-x');
+    const deployment = registry.route('gpt-x')?.targets[0]?.deployment;
     expect(deployment?.provider.kind).toBe('openai-compatible');
     expect(deployment?.providerModel).toBe('gpt-x');
     expect(registry.modelNames()).toEqual(['mock-1', 'gpt-x']);
@@ -66,8 +66,8 @@ describe('createRegistry', () => {
       'test',
     );
     const registry = createRegistry(ollama, { ...deps, logger, env: {} });
-    expect(registry.resolve('a')?.provider.kind).toBe('ollama');
-    expect(registry.resolve('b')?.providerModel).toBe('qwen');
+    expect(registry.route('a')?.targets[0]?.deployment.provider.kind).toBe('ollama');
+    expect(registry.route('b')?.targets[0]?.deployment.providerModel).toBe('qwen');
     await registry.close();
   });
 
@@ -88,5 +88,60 @@ describe('createRegistry', () => {
         'test',
       ),
     ).toThrow(/environment variable name/);
+  });
+});
+
+describe('routes', () => {
+  it('keeps the enabled targets of a model, in order, with their policy and weights', () => {
+    const { logger } = captureLogger();
+    const routed = parseModelsConfig(
+      {
+        deployments: {
+          a: { provider: 'mock' },
+          b: { provider: 'mock' },
+          hosted: {
+            provider: 'openai-compatible',
+            model: 'x',
+            baseUrl: 'https://api.example.com/v1',
+            apiKeyEnv: 'MISSING_KEY',
+          },
+        },
+        models: {
+          spread: {
+            policy: 'weighted',
+            targets: [
+              { deployment: 'hosted', weight: 5 },
+              { deployment: 'b', weight: 3 },
+              { deployment: 'a' },
+            ],
+          },
+          'only-hosted': { deployment: 'hosted' },
+        },
+      },
+      'test',
+    );
+    const registry = createRegistry(routed, { ...deps, logger, env: {} });
+    const route = registry.route('spread');
+    expect(route?.policy).toBe('weighted');
+    expect(route?.targets.map((t) => [t.deployment.id, t.weight])).toEqual([
+      ['b', 3],
+      ['a', 1],
+    ]);
+    // Every target disabled: the model is unavailable.
+    expect(registry.route('only-hosted')).toBeUndefined();
+  });
+
+  it('rejects unknown and repeated targets', () => {
+    expect(() =>
+      parseModelsConfig(
+        {
+          deployments: { a: { provider: 'mock' } },
+          models: {
+            m: { targets: [{ deployment: 'a' }, { deployment: 'a' }, { deployment: 'z' }] },
+          },
+        },
+        'test',
+      ),
+    ).toThrow(/listed twice[\s\S]*unknown deployment "z"/);
   });
 });

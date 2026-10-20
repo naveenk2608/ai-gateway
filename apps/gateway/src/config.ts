@@ -49,6 +49,21 @@ export const gatewayConfigSchema = z
     /** How often model prices are reloaded from Postgres for budget reservations. */
     PRICES_REFRESH_INTERVAL_MS: z.coerce.number().int().min(1_000).default(60_000),
 
+    /**
+     * Retries and fallback (ADR 011): attempts per request across deployments, attempts on one
+     * deployment before falling back, and the full-jitter backoff between retries.
+     */
+    RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+    RETRY_PER_DEPLOYMENT: z.coerce.number().int().min(1).max(5).default(2),
+    RETRY_BASE_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(100),
+    RETRY_MAX_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(2_000),
+    /** Circuit breakers (ADR 012): consecutive failures that open one, and how long it stays open. */
+    BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).max(1_000).default(5),
+    BREAKER_OPEN_MS: z.coerce.number().int().min(100).max(3_600_000).default(30_000),
+    /** How often open breakers' deployments are health-checked, and each check's timeout. */
+    HEALTH_CHECK_INTERVAL_MS: z.coerce.number().int().min(100).default(5_000),
+    HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).default(5_000),
+
     /** Apply pending migrations at startup, under an advisory lock (safe with several instances). */
     MIGRATE_ON_START: flag.default(true),
     /** Defaults to db/migrations in the repository; the container image sets its own path. */
