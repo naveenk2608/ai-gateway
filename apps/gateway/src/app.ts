@@ -1,3 +1,5 @@
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { uuidv7 } from '@ai-gateway/shared';
 import type { Logger } from '@ai-gateway/shared/node';
 import Fastify, {
@@ -8,6 +10,7 @@ import Fastify, {
 } from 'fastify';
 import {
   hasZodFastifySchemaValidationErrors,
+  jsonSchemaTransform,
   serializerCompiler,
   validatorCompiler,
   type ZodFastifySchemaValidationError,
@@ -137,7 +140,26 @@ export function buildApp({ logger, readiness }: AppOptions) {
     return sendError(reply, internalError);
   });
 
-  registerHealthRoutes(app, readiness);
+  // OpenAPI is generated from the same Zod schemas that validate requests (ADR 002). Swagger is
+  // registered before any route plugin so it sees them all.
+  void app.register(swagger, {
+    openapi: {
+      openapi: '3.1.0',
+      info: {
+        title: 'AI Gateway',
+        version: '0.1.0',
+        description:
+          'OpenAI-compatible chat completions. Errors use the OpenAI error shape ' +
+          '`{"error": {"message", "type", "param", "code"}}`.',
+      },
+    },
+    transform: jsonSchemaTransform,
+  });
+  void app.register(swaggerUi, { routePrefix: '/docs' });
+  void app.register((instance, _opts, done) => {
+    registerHealthRoutes(instance, readiness);
+    done();
+  });
 
   return app;
 }

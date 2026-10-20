@@ -169,6 +169,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
     '/v1/chat/completions',
     {
       schema: {
+        tags: ['chat'],
         summary: 'Create a chat completion (OpenAI-compatible)',
         description:
           'With `stream: true` the response is `text/event-stream`: `chat.completion.chunk` ' +

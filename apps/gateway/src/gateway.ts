@@ -50,7 +50,10 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       timeoutMs: config.READY_CHECK_TIMEOUT_MS,
     },
   });
-  registerChatCompletions(app, { registry, clock });
+  void app.register((instance, _opts, done) => {
+    registerChatCompletions(instance, { registry, clock });
+    done();
+  });
 
   // onClose runs after in-flight requests finish, so nothing is still using the pools.
   app.addHook('onClose', async () => {

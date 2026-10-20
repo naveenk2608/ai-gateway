@@ -1,4 +1,6 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 
 export type ReadinessCheck = () => Promise<void>;
 
@@ -8,17 +10,20 @@ export interface ReadinessOptions {
   timeoutMs: number;
 }
 
-export interface CheckResult {
-  status: 'ok' | 'fail';
+const checkResultSchema = z.object({
+  status: z.enum(['ok', 'fail']),
   /** Present on failure. Details go to the log, not the response, as they can name internal hosts. */
-  reason?: 'timeout' | 'error';
-  latencyMs: number;
-}
+  reason: z.enum(['timeout', 'error']).optional(),
+  latencyMs: z.number(),
+});
 
-export interface ReadyBody {
-  status: 'ready' | 'not_ready';
-  checks: Record<string, CheckResult>;
-}
+const readyBodySchema = z.object({
+  status: z.enum(['ready', 'not_ready']),
+  checks: z.record(z.string(), checkResultSchema),
+});
+
+export type CheckResult = z.output<typeof checkResultSchema>;
+export type ReadyBody = z.output<typeof readyBodySchema>;
 
 class CheckTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -59,16 +64,38 @@ async function runCheck(
 
 /** `/health`: the process is up. `/ready`: every dependency answered within the timeout. */
 export function registerHealthRoutes(app: FastifyInstance, options: ReadinessOptions): void {
-  app.get('/health', () => ({ status: 'ok' }));
+  const routes = app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/ready', async (request, reply): Promise<ReadyBody> => {
-    const names = Object.keys(options.checks);
-    const results = await Promise.all(
-      names.map((name) => runCheck(name, options.checks[name]!, options.timeoutMs, request.log)),
-    );
-    const checks = Object.fromEntries(names.map((name, i) => [name, results[i]!]));
-    const ready = results.every((r) => r.status === 'ok');
-    void reply.code(ready ? 200 : 503);
-    return { status: ready ? 'ready' : 'not_ready', checks };
-  });
+  routes.get(
+    '/health',
+    {
+      schema: {
+        tags: ['operations'],
+        summary: 'Liveness: the process is up',
+        response: { 200: z.object({ status: z.literal('ok') }) },
+      },
+    },
+    () => ({ status: 'ok' as const }),
+  );
+
+  routes.get(
+    '/ready',
+    {
+      schema: {
+        tags: ['operations'],
+        summary: 'Readiness: Postgres and Redis answered within the timeout',
+        response: { 200: readyBodySchema, 503: readyBodySchema },
+      },
+    },
+    async (request, reply): Promise<ReadyBody> => {
+      const names = Object.keys(options.checks);
+      const results = await Promise.all(
+        names.map((name) => runCheck(name, options.checks[name]!, options.timeoutMs, request.log)),
+      );
+      const checks = Object.fromEntries(names.map((name, i) => [name, results[i]!]));
+      const ready = results.every((r) => r.status === 'ok');
+      void reply.code(ready ? 200 : 503);
+      return { status: ready ? 'ready' : 'not_ready', checks };
+    },
+  );
 }
