@@ -7,6 +7,7 @@ import {
 } from '@ai-gateway/shared';
 import type { Db, Logger, Redis } from '@ai-gateway/shared/node';
 import { ingestEvents } from './ingest.js';
+import type { WorkerMetrics } from './metrics.js';
 import { pruneRollups, type RollupRetention } from './retention.js';
 
 export interface ConsumerOptions {
@@ -27,6 +28,8 @@ export interface ConsumerOptions {
   trimIntervalMs: number;
   /** Rollup retention (ADR 015), applied every `intervalMs`; omitted, rollups are kept forever. */
   retention?: RollupRetention & { intervalMs: number };
+  /** Records consumption, batch and retention timings (ADR 017). */
+  metrics?: WorkerMetrics;
   /** Test-only fault injection: throw SimulatedCrash to stop the consumer as a kill would. */
   faults?: { crash?(point: 'before-commit' | 'after-commit'): void };
 }
@@ -235,6 +238,7 @@ export class UsageConsumer {
         if (err instanceof Error && NOGROUP.test(err.message) && (await this.#recreateGroup())) {
           continue;
         }
+        this.#o.metrics?.loopError();
         this.#o.logger.error({ err, retryInMs: backoffMs }, 'usage consumer error');
         await this.#sleep(backoffMs);
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
@@ -297,20 +301,25 @@ export class UsageConsumer {
   }
 
   async #insertAndAck(batch: Extract<Parsed, { ok: true }>[]): Promise<void> {
-    await this.#retryWhileDbDown(() =>
-      this.#o.db.transaction().execute(async (trx) => {
+    const metrics = this.#o.metrics;
+    await this.#retryWhileDbDown(async () => {
+      const started = performance.now();
+      await this.#o.db.transaction().execute(async (trx) => {
         await ingestEvents(
           trx,
           batch.map((p) => p.event),
+          metrics && ((seconds) => metrics.rollup(seconds)),
         );
         this.#o.faults?.crash?.('before-commit');
-      }),
-    );
+      });
+      metrics?.batch((performance.now() - started) / 1000);
+    });
     this.#o.faults?.crash?.('after-commit');
     const ids = batch.map((p) => p.entry.id);
     await this.#o.redis.call('XACK', this.#o.stream, this.#o.group, ...ids);
     for (const id of ids) this.#lastErrors.delete(id);
     this.#stats.processed += ids.length;
+    this.#o.metrics?.consumed(ids.length);
   }
 
   /** Retries `work` while Postgres is unreachable; other errors are thrown at once. */
@@ -352,6 +361,7 @@ export class UsageConsumer {
       }
       if (entries.length > 0) {
         this.#stats.reclaimed += entries.length;
+        this.#o.metrics?.reclaimed(entries.length);
         const deliveries = await this.#deliveryCounts(entries);
         const poison = entries.filter((e) => (deliveries.get(e.id) ?? 0) > this.#o.maxDeliveries);
         for (const entry of poison) await this.#deadLetter(entry, deliveries.get(entry.id) ?? 0);
@@ -413,6 +423,7 @@ export class UsageConsumer {
     await this.#o.redis.call('XACK', this.#o.stream, this.#o.group, entry.id);
     this.#lastErrors.delete(entry.id);
     this.#stats.deadLettered++;
+    this.#o.metrics?.deadLettered();
     this.#o.logger.error(
       { streamId: entry.id, deliveries, error },
       'usage event moved to the dead-letter stream',
@@ -422,7 +433,9 @@ export class UsageConsumer {
   /** Deletes expired rollup rows. A failure is logged and retried at the next interval. */
   async #prune(retention: RollupRetention, now: number): Promise<void> {
     try {
+      const started = performance.now();
       const deleted = await pruneRollups(this.#o.db, now, retention);
+      this.#o.metrics?.pruned((performance.now() - started) / 1000, deleted);
       if (deleted.minute + deleted.hour + deleted.day > 0) {
         this.#o.logger.info({ deleted }, 'expired rollup rows deleted');
       }

@@ -1,5 +1,6 @@
 import {
   commonConfigShape,
+  metricsConfigShape,
   USAGE_CONSUMER_GROUP,
   USAGE_DLQ_STREAM,
   USAGE_STREAM,
@@ -48,6 +49,12 @@ export const workerConfigSchema = z.object({
   /** Apply pending migrations at startup, under the same advisory lock as the gateway. */
   MIGRATE_ON_START: z.stringbool().default(true),
   MIGRATIONS_DIR: z.string().min(1).optional(),
+  /**
+   * Prometheus metrics (ADR 017) on WORKER_METRICS_PORT, bound to METRICS_HOST (loopback by
+   * default); scrapes need METRICS_TOKEN as a bearer token when it is set.
+   */
+  ...metricsConfigShape,
+  WORKER_METRICS_PORT: z.coerce.number().int().min(0).max(65_535).default(9465),
 });
 
 export type WorkerConfig = z.output<typeof workerConfigSchema>;

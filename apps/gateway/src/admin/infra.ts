@@ -1,11 +1,12 @@
 import type { Clock } from '@ai-gateway/shared';
 import type { Redis } from '@ai-gateway/shared/node';
+import { readPipelineState } from '@ai-gateway/worker';
 import { z } from 'zod';
 
 /**
  * Operational state read on demand for the analytics API: the usage event pipeline in Redis,
  * circuit-breaker states and dependency round trips. Values are measured when asked, never stored
- * or estimated; Prometheus metrics with history arrive in M8.
+ * or estimated. History is kept by Prometheus (ADR 017), not here.
  */
 
 export const pipelineSchema = z.object({
@@ -46,16 +47,6 @@ export interface InfraProbe {
   checks: Record<string, () => Promise<void>>;
 }
 
-/** `[k1, v1, k2, v2]` (RESP2) as a lookup. */
-function fields(reply: unknown): Map<string, unknown> {
-  const map = new Map<string, unknown>();
-  if (!Array.isArray(reply)) return map;
-  for (let i = 0; i + 1 < reply.length; i += 2) map.set(String(reply[i]), reply[i + 1]);
-  return map;
-}
-
-const NO_KEY = /no such key/i;
-
 export function redisInfraProbe(options: {
   redis: Redis;
   clock: Clock;
@@ -70,35 +61,7 @@ export function redisInfraProbe(options: {
   const { redis, clock, prefix = 'gw:' } = options;
   return {
     checks: options.checks,
-    async pipeline() {
-      const [streamLength, deadLetterLength] = await Promise.all([
-        redis.xlen(options.stream),
-        redis.xlen(options.dlqStream),
-      ]);
-      let groups: unknown[] = [];
-      try {
-        groups = (await redis.call('XINFO', 'GROUPS', options.stream)) as unknown[];
-      } catch (err) {
-        if (!(err instanceof Error && NO_KEY.test(err.message))) throw err;
-      }
-      const group = groups.map(fields).find((g) => g.get('name') === options.group);
-      const pendingEvents = Number(group?.get('pending') ?? 0);
-      const lag = group?.get('lag');
-      let oldestPendingAgeMs: number | null = null;
-      if (pendingEvents > 0) {
-        const summary = (await redis.call('XPENDING', options.stream, options.group)) as unknown[];
-        const oldest = typeof summary[1] === 'string' ? Number(summary[1].split('-')[0]) : NaN;
-        if (Number.isFinite(oldest)) oldestPendingAgeMs = Math.max(0, clock.now() - oldest);
-      }
-      return {
-        streamLength,
-        unreadEvents: group === undefined ? streamLength : lag == null ? null : Number(lag),
-        pendingEvents,
-        oldestPendingAgeMs,
-        consumers: Number(group?.get('consumers') ?? 0),
-        deadLetterLength,
-      };
-    },
+    pipeline: () => readPipelineState(redis, clock, options),
     async breakers() {
       return Promise.all(
         options.deployments.map(async (deployment) => {

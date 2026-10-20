@@ -77,7 +77,12 @@ async function loadPrices(trx: Db, events: UsageEvent[]): Promise<Map<string, Pr
  * (ADR 014). Cost uses the price version in effect when the request started (ADR 016), and is
  * stored with that version's id, so later price changes never alter it.
  */
-export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void> {
+export async function ingestEvents(
+  trx: Db,
+  events: UsageEvent[],
+  /** Told how long the rollup statement took, in seconds. */
+  onRollup?: (seconds: number) => void,
+): Promise<void> {
   if (events.length === 0) return;
   const prices = await loadPrices(trx, events);
 
@@ -206,7 +211,9 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
   // Per-minute, hourly and daily rollups (ADR 015), from the rows inserted above.
   if (insertedRequests.length > 0) {
     const ids = insertedRequests.map((row) => row.id);
+    const started = performance.now();
     await sql`SELECT rollup_requests(${ids}::uuid[])`.execute(trx);
+    onRollup?.((performance.now() - started) / 1000);
   }
 }
 

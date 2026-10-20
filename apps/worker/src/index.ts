@@ -13,4 +13,6 @@ export {
   type ConsumerStats,
 } from './consumer.js';
 export { ingestEvents } from './ingest.js';
+export { WorkerMetrics } from './metrics.js';
+export { readPipelineState, type PipelineNames, type PipelineState } from './pipeline.js';
 export { createUsageConsumer, createWorker, type UsageConsumerDeps } from './worker.js';

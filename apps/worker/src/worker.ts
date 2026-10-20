@@ -4,14 +4,21 @@ import { systemClock, uuidv7, type Clock } from '@ai-gateway/shared';
 import {
   closeRedis,
   createDb,
+  createMetricsRegistry,
   createPgPool,
   createRedis,
   migrateDatabase,
+  startMetricsServer,
   type Db,
   type Logger,
+  type MetricsServer,
+  type Redis,
+  type Registry,
 } from '@ai-gateway/shared/node';
 import type { ConsumerSettings, WorkerConfig } from './config.js';
 import { UsageConsumer, type ConsumerOptions } from './consumer.js';
+import { WorkerMetrics } from './metrics.js';
+import { readPipelineState } from './pipeline.js';
 
 /** src/ and dist/ both sit three levels below the repository root, where db/migrations lives. */
 export const DEFAULT_MIGRATIONS_DIR = fileURLToPath(
@@ -22,6 +29,8 @@ export type StopOutcome = 'stopped' | 'timeout';
 
 export interface Worker {
   consumer: UsageConsumer;
+  /** The metrics listener's port once started. */
+  metricsPort(): number | undefined;
   /** Applies migrations (if enabled), then starts consuming. */
   start(): Promise<void>;
   /** Stops consuming, then closes the Postgres pool and Redis client, within SHUTDOWN_TIMEOUT_MS. */
@@ -35,6 +44,11 @@ export interface UsageConsumerDeps {
   logger: Logger;
   clock?: Clock;
   faults?: ConsumerOptions['faults'];
+  /**
+   * Where the consumer's metrics go (ADR 017), and a connection to read the stream's state at
+   * scrape time: the consumer's own connection is held by its blocking read.
+   */
+  metrics?: { registry: Registry; redis: Redis };
 }
 
 /** A consumer on its own Redis connection, named uniquely for this process. */
@@ -43,12 +57,25 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
   close: () => Promise<void>;
 } {
   const { settings, logger } = deps;
+  const clock = deps.clock ?? systemClock;
   const redis = createRedis(deps.redisUrl, logger, { offlineQueue: true, role: 'usage-consumer' });
+  let metrics: WorkerMetrics | undefined;
+  if (deps.metrics) {
+    const { redis: stateRedis, registry } = deps.metrics;
+    metrics = new WorkerMetrics(registry);
+    metrics.watchPipeline(() =>
+      readPipelineState(stateRedis, clock, {
+        stream: settings.EVENTS_STREAM,
+        dlqStream: settings.EVENTS_DLQ_STREAM,
+        group: settings.EVENTS_CONSUMER_GROUP,
+      }),
+    );
+  }
   const consumer = new UsageConsumer({
     redis,
     db: deps.db,
     logger: logger.child({ component: 'usage-consumer' }),
-    clock: deps.clock ?? systemClock,
+    clock,
     stream: settings.EVENTS_STREAM,
     dlqStream: settings.EVENTS_DLQ_STREAM,
     group: settings.EVENTS_CONSUMER_GROUP,
@@ -64,6 +91,7 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
       dayDays: settings.ROLLUP_RETENTION_DAY_DAYS,
       intervalMs: settings.ROLLUP_RETENTION_INTERVAL_MS,
     },
+    metrics,
     faults: deps.faults,
   });
   return { consumer, close: () => closeRedis(redis) };
@@ -74,15 +102,20 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
   // Batch transactions can take longer than the default 5 s client-side query cap.
   const pool = createPgPool(config.DATABASE_URL, logger, { max: 5, queryTimeoutMs: 30_000 });
   const db = createDb(pool);
+  const registry = createMetricsRegistry();
+  const stateRedis = createRedis(config.REDIS_URL, logger, { role: 'metrics' });
   const { consumer, close } = createUsageConsumer({
     settings: config,
     redisUrl: config.REDIS_URL,
     db,
     logger,
+    metrics: { registry, redis: stateRedis },
   });
+  let metricsServer: MetricsServer | undefined;
 
   return {
     consumer,
+    metricsPort: () => metricsServer?.port,
     async start() {
       if (config.MIGRATE_ON_START) {
         await migrateDatabase({
@@ -92,6 +125,13 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
         });
       }
       await consumer.start();
+      metricsServer = await startMetricsServer({
+        registry,
+        host: config.METRICS_HOST,
+        port: config.WORKER_METRICS_PORT,
+        token: config.METRICS_TOKEN,
+        logger,
+      });
       logger.info('worker started');
     },
     async stop() {
@@ -102,12 +142,14 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
       const stopped = consumer
         .stop()
         .catch((err: unknown) => logger.error({ err }, 'usage consumer stop failed'))
-        .then(() => Promise.allSettled([pool.end(), close()]))
+        .then(() =>
+          Promise.allSettled([pool.end(), close(), closeRedis(stateRedis), metricsServer?.close()]),
+        )
         .then(() => 'stopped' as const);
       const outcome = await Promise.race([stopped, timedOut]);
       clearTimeout(timer);
       // Past the timeout, drop the connection so a blocked read cannot hold the process open.
-      if (outcome === 'timeout') await close();
+      if (outcome === 'timeout') await Promise.allSettled([close(), metricsServer?.close()]);
       logger.info({ outcome }, 'worker stopped');
       return outcome;
     },

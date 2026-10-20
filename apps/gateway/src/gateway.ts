@@ -203,7 +203,14 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
   metrics.watch({ breakers, events, pool, checks, timeoutMs: config.READY_CHECK_TIMEOUT_MS });
 
   const inProcess = config.RUN_WORKER_IN_PROCESS
-    ? createUsageConsumer({ settings: config, redisUrl: config.REDIS_URL, db, logger, clock })
+    ? createUsageConsumer({
+        settings: config,
+        redisUrl: config.REDIS_URL,
+        db,
+        logger,
+        clock,
+        metrics: { registry: metrics.registry, redis },
+      })
     : undefined;
 
   const app = buildApp({
