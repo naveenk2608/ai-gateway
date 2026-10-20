@@ -1,6 +1,12 @@
-import { ManualClock } from '@ai-gateway/shared';
-import { describe, expect, it } from 'vitest';
-import { captureLogger, inMemoryVerifier, sleepsQueued, sseData } from '../../test/helpers.js';
+import { ManualClock, usageEventSchema } from '@ai-gateway/shared';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  captureLogger,
+  inMemoryVerifier,
+  RecordingBus,
+  sleepsQueued,
+  sseData,
+} from '../../test/helpers.js';
 import { buildApp } from '../app.js';
 import { parseModelsConfig } from '../models-config.js';
 import type { MockProvider } from '../providers/mock.js';
@@ -49,7 +55,8 @@ function setup() {
   });
   const app = buildApp({ logger, readiness: { checks: {}, timeoutMs: 50 } });
   const { verifier, authorization } = inMemoryVerifier(clock);
-  registerChatCompletions(app, { registry, clock, verifier });
+  const events = new RecordingBus();
+  registerChatCompletions(app, { registry, clock, verifier, events });
 
   /** Sends a request, then advances the manual clock once its sleeps are queued. */
   async function post(payload: unknown, { sleeps = 2, advance = 0 } = {}) {
@@ -67,7 +74,7 @@ function setup() {
     }
     return pending;
   }
-  return { app, clock, registry, lines, post, authorization };
+  return { app, clock, registry, lines, post, authorization, events };
 }
 
 const hello = { messages: [{ role: 'user', content: 'Say hello' }] };
@@ -353,5 +360,105 @@ describe('POST /v1/chat/completions (streaming)', () => {
     const content = chunks.slice(1, -1).map((c) => c.choices[0]?.delta.content);
     expect(content).toEqual(['This', ' is']);
     expect(chunks.at(-1)).toMatchObject({ error: { code: 'upstream_unavailable' } });
+  });
+});
+
+describe('usage events', () => {
+  async function onlyEvent(events: RecordingBus) {
+    await vi.waitFor(() => expect(events.events).toHaveLength(1));
+    const event = events.events[0]!;
+    // Every emitted event satisfies the schema the worker validates against.
+    expect(usageEventSchema.parse(event)).toEqual(event);
+    return event;
+  }
+
+  it('records a completed request with reported usage and its one attempt', async () => {
+    const { post, events } = setup();
+    const res = await post({ model: 'mock-fast', ...hello }, { advance: 100 });
+    const event = await onlyEvent(events);
+    expect(event.request).toMatchObject({
+      id: res.headers['x-request-id'],
+      model: 'mock-fast',
+      deployment: 'fast',
+      stream: false,
+      status: 'success',
+      httpStatus: 200,
+      errorCode: null,
+      latencyMs: 100,
+      ttftMs: null,
+    });
+    expect(event.usageSource).toBe('reported');
+    expect(event.usage).toMatchObject({ completionTokens: 5 });
+    expect(event.attempts).toEqual([
+      expect.objectContaining({
+        attemptNumber: 1,
+        deployment: 'fast',
+        provider: 'mock',
+        providerModel: 'mock',
+        outcome: 'success',
+        latencyMs: 100,
+      }),
+    ]);
+  });
+
+  it('records a stream that completed, with its time to first token', async () => {
+    const { post, events } = setup();
+    await post({ model: 'mock-stream', ...hello, stream: true });
+    const event = await onlyEvent(events);
+    expect(event.request).toMatchObject({ stream: true, status: 'success', ttftMs: 0 });
+    expect(event).toMatchObject({
+      usageSource: 'reported',
+      usage: { promptTokens: 3, completionTokens: 3, totalTokens: 6 },
+    });
+  });
+
+  it('estimates usage for a stream the provider dropped', async () => {
+    const { post, events } = setup();
+    await post({ model: 'mock-stream-drop', ...hello, stream: true });
+    const event = await onlyEvent(events);
+    expect(event.request).toMatchObject({
+      status: 'error',
+      httpStatus: 200,
+      errorCode: 'upstream_unavailable',
+    });
+    expect(event.attempts[0]?.outcome).toBe('connection');
+    // "Say hello" is 9 characters, "This is" 7: about 3 and 2 tokens.
+    expect(event).toMatchObject({
+      usageSource: 'estimated',
+      usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 },
+    });
+  });
+
+  it('marks usage missing when the provider failed before producing anything', async () => {
+    const { post, events } = setup();
+    await post({ model: 'mock-broken', ...hello });
+    const event = await onlyEvent(events);
+    expect(event.request).toMatchObject({
+      status: 'error',
+      httpStatus: 502,
+      errorCode: 'upstream_error',
+    });
+    expect(event.attempts[0]?.outcome).toBe('server_error');
+    expect(event).toMatchObject({ usageSource: 'missing', usage: null });
+  });
+
+  it('records a request rejected before any attempt', async () => {
+    const { post, events } = setup();
+    await post({ model: 'gpt-unknown', ...hello }, { sleeps: 0 });
+    const event = await onlyEvent(events);
+    expect(event.request).toMatchObject({
+      status: 'rejected',
+      httpStatus: 404,
+      errorCode: 'model_not_found',
+      deployment: null,
+    });
+    expect(event.attempts).toEqual([]);
+  });
+
+  it('emits nothing for a request that failed validation', async () => {
+    const { post, events } = setup();
+    const res = await post({ model: 'mock-fast', messages: 'nope' }, { sleeps: 0 });
+    expect(res.statusCode).toBe(400);
+    expect(events.events).toEqual([]);
   });
 });

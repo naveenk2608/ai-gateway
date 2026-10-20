@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { ProviderError } from '../providers/errors.js';
 import type { Deployment } from '../providers/registry.js';
 import type { ChatRequest, ChatResult, StreamEvent } from '../providers/types.js';
+import type { RequestTrace } from './trace.js';
 
 /** Abort reason when the client disconnects before the response is complete. */
 export class ClientClosedError extends Error {
@@ -40,6 +41,8 @@ export interface AttemptContext {
   /** Aborts when the client goes away. */
   clientSignal: AbortSignal;
   log: FastifyBaseLogger;
+  /** Receives one record per attempt for the usage event. */
+  trace?: RequestTrace;
 }
 
 const noop = () => undefined;
@@ -55,6 +58,7 @@ class Attempt {
   readonly #stream: boolean;
   readonly #controller = new AbortController();
   readonly #startedAt: number;
+  readonly #number: number;
   #firstEventAt: number | undefined;
   #ended = false;
   readonly #onClientAbort = () => this.#controller.abort(new ClientClosedError());
@@ -64,6 +68,7 @@ class Attempt {
     this.#stream = stream;
     this.#startedAt = ctx.clock.now();
     this.id = uuidv7(this.#startedAt);
+    this.#number = ctx.trace?.nextAttemptNumber() ?? 1;
     this.log = ctx.log.child({ attemptId: this.id, deployment: ctx.deployment.id });
     if (ctx.clientSignal.aborted) this.#onClientAbort();
     else ctx.clientSignal.addEventListener('abort', this.#onClientAbort, { once: true });
@@ -115,12 +120,27 @@ class Attempt {
     this.#ended = true;
     this.#ctx.clientSignal.removeEventListener('abort', this.#onClientAbort);
     const now = this.#ctx.clock.now();
+    const outcome =
+      error === undefined ? 'success' : error instanceof ProviderError ? error.kind : 'error';
+    this.#ctx.trace?.recordAttempt({
+      id: this.id,
+      attemptNumber: this.#number,
+      deployment: this.#ctx.deployment.id,
+      provider: this.#ctx.deployment.provider.kind,
+      providerModel: this.#ctx.deployment.providerModel,
+      outcome,
+      upstreamStatus: error instanceof ProviderError ? (error.upstreamStatus ?? null) : null,
+      startedAt: new Date(this.#startedAt).toISOString(),
+      completedAt: new Date(now).toISOString(),
+      latencyMs: Math.max(0, now - this.#startedAt),
+      ttftMs: this.#firstEventAt === undefined ? null : this.#firstEventAt - this.#startedAt,
+    });
     const fields = {
       provider: this.#ctx.deployment.provider.kind,
       stream: this.#stream,
       durationMs: now - this.#startedAt,
       ttftMs: this.#firstEventAt === undefined ? undefined : this.#firstEventAt - this.#startedAt,
-      outcome: error === undefined ? 'ok' : error instanceof ProviderError ? error.kind : 'error',
+      outcome: outcome === 'success' ? 'ok' : outcome,
       upstreamStatus: error instanceof ProviderError ? error.upstreamStatus : undefined,
       upstreamCode: error instanceof ProviderError ? error.upstreamCode : undefined,
     };

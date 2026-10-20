@@ -6,6 +6,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { apiKeyAuth } from '../auth/api-key-auth.js';
 import type { KeyVerifier } from '../auth/key-verifier.js';
 import { GatewayError } from '../errors.js';
+import type { EventBus } from '../events/bus.js';
 import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ChatRequest, ChatResult, FinishReason, Usage } from '../providers/types.js';
@@ -17,12 +18,21 @@ import {
   type ChatCompletion,
   type ChatCompletionRequest,
 } from './schema.js';
+import { RequestTrace } from './trace.js';
 import { toGatewayError } from './upstream-errors.js';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** The request's lifecycle record on /v1 routes, emitted as a usage event at the end. */
+    trace: RequestTrace | null;
+  }
+}
 
 export interface ChatRouteOptions {
   registry: ProviderRegistry;
   clock: Clock;
   verifier: KeyVerifier;
+  events: EventBus;
 }
 
 interface ResponseMeta {
@@ -124,6 +134,7 @@ async function* sseBody(
   stream: OpenStream,
   write: ReturnType<typeof chunkWriter>,
   log: FastifyBaseLogger,
+  trace: RequestTrace,
   onEnd: () => void,
 ): AsyncGenerator<string> {
   let completed = false;
@@ -134,8 +145,10 @@ async function* sseBody(
     while (!next.done) {
       const event = next.value;
       if (event.type === 'content') {
+        trace.addCompletionText(event.text);
         if (event.text !== '') yield write.content(event.text);
       } else {
+        trace.setUsage(event.usage);
         yield write.finish(event.finishReason);
         if (write.includeUsage && event.usage) yield write.usage(event.usage);
         yield SSE_DONE;
@@ -149,13 +162,18 @@ async function* sseBody(
     failure = err;
     if (err instanceof ProviderError && err.kind === 'canceled') return;
     if (!(err instanceof ProviderError)) log.error({ err }, 'stream failed unexpectedly');
-    yield write.error(err instanceof ProviderError ? toGatewayError(err) : internalError);
+    const error = err instanceof ProviderError ? toGatewayError(err) : internalError;
+    trace.setError(error.code);
+    yield write.error(error);
   } finally {
     // Not completed and no failure means the client went away while we waited to write.
     const outcome =
       completed || failure !== undefined
         ? failure
         : new ProviderError('canceled', 'client closed the stream');
+    if (outcome instanceof ProviderError && outcome.kind === 'canceled') {
+      trace.setError(toGatewayError(outcome).code);
+    }
     stream.close(outcome);
     onEnd();
   }
@@ -166,14 +184,30 @@ function upstreamFailure(err: unknown): unknown {
 }
 
 export function registerChatCompletions(app: FastifyInstance, options: ChatRouteOptions): void {
-  const { registry, clock, verifier } = options;
+  const { registry, clock, verifier, events } = options;
   app.decorateRequest('apiKey', null);
+  app.decorateRequest('trace', null);
+
+  /** Hands the finished trace to the event bus; publish() never blocks the response. */
+  const emit = (trace: RequestTrace, httpStatus: number) => {
+    const event = trace.finish(httpStatus);
+    if (event) events.publish(event);
+  };
 
   app.withTypeProvider<ZodTypeProvider>().post(
     '/v1/chat/completions',
     {
       // Before body validation, so unauthenticated callers learn nothing about the payload.
       onRequest: apiKeyAuth(verifier),
+      onError: (request, _reply, err, done) => {
+        request.trace?.setError(err instanceof GatewayError ? err.code : 'internal_error');
+        done();
+      },
+      // Streams finish their own trace when the body ends; everything else finishes here.
+      onResponse: (request, reply, done) => {
+        if (request.trace && !request.trace.streaming) emit(request.trace, reply.statusCode);
+        done();
+      },
       schema: {
         tags: ['chat'],
         security: [{ apiKey: [] }],
@@ -187,7 +221,22 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
     },
     async (request, reply) => {
       const body = request.body;
-      const allowed = request.apiKey?.allowedModels;
+      const apiKey = request.apiKey;
+      if (!apiKey) throw internalError; // The onRequest hook guarantees it.
+      const trace = new RequestTrace(
+        {
+          requestId: request.id,
+          projectId: apiKey.projectId,
+          apiKeyId: apiKey.apiKeyId,
+          model: body.model,
+          stream: body.stream === true,
+          messages: body.messages,
+        },
+        clock,
+      );
+      request.trace = trace;
+
+      const allowed = apiKey.allowedModels;
       if (allowed && !allowed.includes(body.model)) {
         throw new GatewayError(
           'model_not_allowed',
@@ -204,7 +253,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
       }
 
       const disconnect = watchDisconnect(reply.raw);
-      const ctx = { deployment, clock, clientSignal: disconnect.signal, log: request.log };
+      const ctx = { deployment, clock, clientSignal: disconnect.signal, log: request.log, trace };
       const providerRequest = toProviderRequest(body, deployment.providerModel);
       const meta: ResponseMeta = {
         id: `chatcmpl-${request.id}`,
@@ -214,7 +263,10 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
 
       if (body.stream !== true) {
         try {
-          return toChatCompletion(meta, await runChat(ctx, providerRequest));
+          const result = await runChat(ctx, providerRequest);
+          trace.setUsage(result.usage);
+          trace.addCompletionText(result.content);
+          return toChatCompletion(meta, result);
         } catch (err) {
           throw upstreamFailure(err);
         } finally {
@@ -229,12 +281,18 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         disconnect.dispose();
         throw upstreamFailure(err);
       }
+      trace.markFirstToken();
       const write = chunkWriter(meta, body.stream_options?.include_usage === true);
       void reply
         .header('content-type', 'text/event-stream; charset=utf-8')
         .header('cache-control', 'no-cache')
         .header('x-accel-buffering', 'no');
-      const sse = Readable.from(sseBody(stream, write, request.log, disconnect.dispose), {
+      trace.streaming = true;
+      const onEnd = () => {
+        disconnect.dispose();
+        emit(trace, 200);
+      };
+      const sse = Readable.from(sseBody(stream, write, request.log, trace, onEnd), {
         objectMode: false,
       });
       // The typed reply expects the JSON schema's shape; Fastify pipes streams without serializing.

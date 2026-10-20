@@ -17,6 +17,8 @@ import { bootstrap } from './auth/bootstrap.js';
 import { AuthInvalidation } from './auth/invalidation.js';
 import { databaseKeyLoader, KeyVerifier } from './auth/key-verifier.js';
 import type { GatewayConfig } from './config.js';
+import type { EventBus } from './events/bus.js';
+import { RedisStreamBus } from './events/redis-stream.js';
 import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
 import { registerChatCompletions } from './proxy/chat-completions.js';
@@ -33,6 +35,7 @@ export interface Gateway {
   registry: ProviderRegistry;
   verifier: KeyVerifier;
   invalidation: AuthInvalidation;
+  events: EventBus;
   /** Applies pending migrations (if enabled), then listens. */
   start(): Promise<void>;
   /** Drains in-flight requests, then closes the Postgres pool and Redis client. */
@@ -74,6 +77,15 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     channel: deps.invalidationChannel,
   });
 
+  const events = new RedisStreamBus({
+    redis,
+    logger,
+    clock,
+    stream: config.EVENTS_STREAM,
+    bufferMax: config.EVENTS_BUFFER_MAX,
+    streamMaxLen: config.EVENTS_STREAM_MAXLEN,
+  });
+
   const app = buildApp({
     logger,
     readiness: {
@@ -85,7 +97,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     },
   });
   void app.register((instance, _opts, done) => {
-    registerChatCompletions(instance, { registry, clock, verifier });
+    registerChatCompletions(instance, { registry, clock, verifier, events });
     done();
   });
   void app.register((instance) =>
@@ -102,6 +114,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
 
   // onClose runs after in-flight requests finish, so nothing is still using the pools.
   app.addHook('onClose', async () => {
+    // Flush buffered usage events while Redis is still open.
+    await events.close(Math.min(2_000, config.SHUTDOWN_TIMEOUT_MS));
     await Promise.allSettled([
       pool.end(),
       closeRedis(redis),
@@ -116,6 +130,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     registry,
     verifier,
     invalidation,
+    events,
     async start() {
       if (config.MIGRATE_ON_START) {
         await migrateDatabase({

@@ -1,4 +1,4 @@
-import { commonConfigShape } from '@ai-gateway/shared';
+import { commonConfigShape, USAGE_STREAM } from '@ai-gateway/shared';
 import { z } from 'zod';
 import { API_KEY_PATTERN } from './auth/api-keys.js';
 
@@ -15,6 +15,13 @@ export const gatewayConfigSchema = z
     MODELS_CONFIG_PATH: z.string().min(1).optional(),
     /** Default server for Ollama deployments that do not set baseUrl. */
     OLLAMA_BASE_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:11434'),
+
+    /** Redis Stream that usage events are written to; the worker reads the same name. */
+    EVENTS_STREAM: z.string().min(1).default(USAGE_STREAM),
+    /** Usage events held in memory while Redis is unreachable; beyond it, events are dropped. */
+    EVENTS_BUFFER_MAX: z.coerce.number().int().positive().default(10_000),
+    /** Approximate cap on the usage stream's length, so Redis memory stays bounded. */
+    EVENTS_STREAM_MAXLEN: z.coerce.number().int().positive().default(100_000),
 
     /** Apply pending migrations at startup, under an advisory lock (safe with several instances). */
     MIGRATE_ON_START: flag.default(true),

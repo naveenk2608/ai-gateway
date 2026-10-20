@@ -1,11 +1,19 @@
 import { randomBytes } from 'node:crypto';
 import { Writable } from 'node:stream';
-import { parseConfig, systemClock, type Clock, type ManualClock } from '@ai-gateway/shared';
+import {
+  parseConfig,
+  systemClock,
+  uuidv7,
+  type Clock,
+  type ManualClock,
+  type UsageEvent,
+} from '@ai-gateway/shared';
 import { createLogger, type Logger } from '@ai-gateway/shared/node';
 import { vi } from 'vitest';
 import { generateApiKey, hashSecret } from '../src/auth/api-keys.js';
 import { KeyVerifier } from '../src/auth/key-verifier.js';
 import { gatewayConfigSchema, type GatewayConfig } from '../src/config.js';
+import type { EventBus } from '../src/events/bus.js';
 import { parseModelsConfig, type ModelsConfig } from '../src/models-config.js';
 
 /** One random pepper per test run: no secret is committed, and keys from other runs never match. */
@@ -79,9 +87,9 @@ export function deferred<T = void>() {
 export function inMemoryVerifier(clock: Clock = systemClock) {
   const key = generateApiKey();
   const record = {
-    apiKeyId: 'test-api-key',
+    apiKeyId: uuidv7(),
     keyId: key.keyId,
-    projectId: 'test-project',
+    projectId: uuidv7(),
     secretHash: hashSecret(key.secret, TEST_PEPPER),
     expiresAt: null,
     revokedAt: null,
@@ -93,5 +101,22 @@ export function inMemoryVerifier(clock: Clock = systemClock) {
     clock,
     ttlMs: 0,
   });
-  return { verifier, authorization: `Bearer ${key.plaintext}` };
+  return { verifier, authorization: `Bearer ${key.plaintext}`, record };
+}
+
+/** An EventBus that keeps published events in memory. */
+export class RecordingBus implements EventBus {
+  readonly events: UsageEvent[] = [];
+
+  publish(event: UsageEvent): void {
+    this.events.push(event);
+  }
+
+  stats() {
+    return { buffered: 0, published: this.events.length, dropped: 0 };
+  }
+
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
 }
