@@ -4,7 +4,7 @@
  * admin (and the password) and adds a new key.
  */
 import { randomBytes } from 'node:crypto';
-import { commonConfigShape } from '@ai-gateway/shared';
+import { commonConfigShape, uuidv7 } from '@ai-gateway/shared';
 import {
   createDb,
   createLogger,
@@ -50,12 +50,34 @@ try {
     logger,
   );
   if (!result) throw new Error('nothing to seed');
+  // Demo prices for the mock provider, so local requests show a cost. Illustrative values, not
+  // any real provider's prices; added only if the mock has no price yet.
+  const mockPrice = await db
+    .selectFrom('model_prices')
+    .select('id')
+    .where('provider', '=', 'mock')
+    .where('model', '=', 'mock')
+    .executeTakeFirst();
+  if (!mockPrice) {
+    await db
+      .insertInto('model_prices')
+      .values({
+        id: uuidv7(),
+        provider: 'mock',
+        model: 'mock',
+        input_micro_usd_per_mtok: 1_000_000,
+        output_micro_usd_per_mtok: 2_000_000,
+        effective_from: new Date(0),
+      })
+      .execute();
+  }
   const lines = [
     `Project:  Demo project (${result.projectId})`,
     result.adminCreated
       ? `Admin:    ${config.SEED_ADMIN_EMAIL} / ${password}`
       : `Admin:    ${config.SEED_ADMIN_EMAIL} already exists; password unchanged`,
     `API key:  ${key.plaintext}`,
+    'Prices:   demo prices for the mock provider ($1 / $2 per million tokens)',
     '',
     'The password and key are shown only now. Use the key as `Authorization: Bearer <key>`.',
   ];

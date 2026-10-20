@@ -3,10 +3,12 @@
 A self-hostable, OpenAI-compatible AI gateway: auth, limits and budgets, routing with failover,
 and per-request accounting. Architecture decisions are recorded in [docs/adr/](docs/adr/).
 
-**Status: M2 (data model and auth).** `POST /v1/chat/completions` works in OpenAI format,
+**Status: M3 (usage accounting).** `POST /v1/chat/completions` works in OpenAI format,
 streaming and non-streaming, in front of a deterministic mock provider, Ollama, or any
 OpenAI-compatible API. Callers authenticate with per-project API keys; an admin API (session
-login, roles, key management, audit log) manages projects and keys.
+login, roles, key management, audit log) manages projects and keys. Every request is recorded,
+with its upstream attempts, tokens and cost, through a Redis Stream that the worker writes to
+Postgres exactly once in effect.
 
 ## Requirements
 
@@ -149,9 +151,33 @@ project: `viewer` reads, `admin` also manages keys and settings, `owner` also ma
 | `GET /admin/projects/:projectId/api-keys` | viewer |
 | `POST /admin/projects/:projectId/api-keys`, `.../:apiKeyId/revoke`, `.../:apiKeyId/rotate` | admin |
 | `GET /admin/projects/:projectId/audit-logs` | admin |
+| `GET /admin/requests/:requestId` (the `x-request-id` header): request, usage, attempts | viewer |
 
 A project the caller does not belong to answers 404, exactly like one that does not exist. Every
 change writes an `audit_logs` row in the same transaction, tagged with the request ID.
+
+## Usage accounting
+
+Each `/v1` request that passes authentication and validation becomes one `request.completed`
+event: the request (status, timings, error code), one record per upstream attempt (its
+`attemptId`, deployment, outcome) and its tokens. The gateway hands the event to a bounded
+in-memory buffer and returns; a background loop writes it to the Redis Stream `EVENTS_STREAM`.
+If Redis is down, events wait in the buffer (`EVENTS_BUFFER_MAX`) and are retried; past that they
+are dropped and counted in the logs. Events carry counts and timings, never prompts or output.
+
+The worker (ADR 014) reads the stream in a consumer group, writes each batch (request record,
+attempts, usage row) in one transaction with `ON CONFLICT DO NOTHING`, and acknowledges only
+after the commit. So a crash re-delivers instead of losing, and a re-delivery changes nothing.
+Entries a dead worker left behind are claimed after `WORKER_CLAIM_IDLE_MS`; an entry delivered
+more than `WORKER_MAX_DELIVERIES` times goes to `EVENTS_DLQ_STREAM` and the `failed_events`
+table without holding up the others. While Postgres is unreachable the worker retries in place.
+
+`usage_source` says where the tokens came from: `reported` by the provider, `estimated` by the
+gateway (about four characters per token) when a stream was cut off or the provider sent no
+counts, or `missing` when nothing was produced. Cost, in integer micro-dollars, uses the
+`model_prices` version in effect when the request started (ADR 016); price rows cannot be edited,
+so a price change is a new row and past costs never move. `pnpm db:seed` adds demo prices for
+the mock provider.
 
 ### Database
 
@@ -171,6 +197,7 @@ and an API key if they are missing (existing users, passwords and keys are never
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | First owner, to log in to `/admin` | your email; a password of 12+ characters |
 | `BOOTSTRAP_API_KEY` | First API key, to call `/v1` | `pnpm key:generate` on your machine |
 | `BOOTSTRAP_PROJECT_NAME` | Name of that project (optional) | default `Default project` |
+| `RUN_WORKER_IN_PROCESS` | Run the usage consumer inside the gateway (no worker service) | `true` |
 
 Then open `/docs`, click **Authorize**, paste the key, and call `POST /v1/chat/completions`.
 
@@ -196,7 +223,7 @@ problem.
 ```text
 apps/gateway     Fastify API: /v1 proxy, providers, auth, /admin API, health
 db/migrations    numbered plain-SQL migrations
-apps/worker      background process (usage consumer from M3)
+apps/worker      usage-event consumer (also runs inside the gateway with RUN_WORKER_IN_PROCESS)
 apps/dashboard   React + Vite
 packages/shared  config, clock, logger, ids, Postgres/Redis clients
 infra/compose    Docker Compose stack (compose.yaml at the root includes it)

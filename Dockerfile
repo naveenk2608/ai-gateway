@@ -31,9 +31,12 @@ RUN pnpm deploy --legacy --filter=@ai-gateway/gateway --prod /out/gateway \
  && pnpm deploy --legacy --filter=@ai-gateway/worker --prod /out/worker
 
 FROM ${NODE_IMAGE} AS worker
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    MIGRATIONS_DIR=/app/db/migrations
 WORKDIR /app
 COPY --from=build --chown=node:node /out/worker ./
+# The worker migrates at startup too (same advisory lock), so it can start before the gateway.
+COPY --chown=node:node db/migrations ./db/migrations
 USER node
 CMD ["node", "dist/main.js"]
 
