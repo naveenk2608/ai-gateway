@@ -80,6 +80,30 @@
     },
     "gpt-4o-mini": {
       "deployment": "openai-gpt-4o-mini"
+    },
+    "mock-failover": {
+      "policy": "priority",
+      "targets": [
+        {
+          "deployment": "mock-error"
+        },
+        {
+          "deployment": "mock"
+        }
+      ]
+    },
+    "mock-balanced": {
+      "policy": "weighted",
+      "targets": [
+        {
+          "deployment": "mock",
+          "weight": 3
+        },
+        {
+          "deployment": "mock-flaky",
+          "weight": 1
+        }
+      ]
     }
   }
 }

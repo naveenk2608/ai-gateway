@@ -17,7 +17,8 @@
     "format:check": "tsx scripts/format.ts --check",
     "db:migrate": "pnpm --filter @ai-gateway/gateway db:migrate",
     "db:seed": "pnpm --filter @ai-gateway/gateway db:seed",
-    "key:generate": "pnpm --silent --filter @ai-gateway/gateway key:generate"
+    "key:generate": "pnpm --silent --filter @ai-gateway/gateway key:generate",
+    "demo": "tsx scripts/demo.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -73,5 +73,6 @@ describe('models config', () => {
     const path = fileURLToPath(new URL('../config/models.json', import.meta.url));
     const config = readModelsConfig(path);
     expect(Object.keys(config.models)).toContain('mock-1');
+    expect(config.models['mock-failover']).toMatchObject({ policy: 'priority' });
   });
 });
