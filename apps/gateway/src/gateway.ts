@@ -5,12 +5,15 @@ import {
   closeRedis,
   createDb,
   createPgPool,
+  createMetricsRegistry,
   createRedis,
   migrateDatabase,
   pingPostgres,
   pingRedis,
+  startMetricsServer,
   type Db,
   type Logger,
+  type MetricsServer,
 } from '@ai-gateway/shared/node';
 import { registerAdminApi } from './admin/index.js';
 import { redisInfraProbe } from './admin/infra.js';
@@ -27,6 +30,7 @@ import { AdmissionControl } from './limits/admission.js';
 import { databaseSpendLoader, ReservationSweeper } from './limits/ledger.js';
 import { Limiter } from './limits/limiter.js';
 import { LoginThrottle } from './limits/login-throttle.js';
+import { GatewayMetrics } from './metrics.js';
 import { databasePriceLoader, PriceBook } from './limits/prices.js';
 import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
@@ -55,6 +59,10 @@ export interface Gateway {
   sweeper: ReservationSweeper;
   breakers: BreakerBoard;
   healthChecker: HealthChecker;
+  /** This process's Prometheus metrics. */
+  metrics: GatewayMetrics;
+  /** The private metrics listener's port once started, when METRICS_PORT is set. */
+  metricsPort(): number | undefined;
   /** The in-process usage consumer, when RUN_WORKER_IN_PROCESS is on. */
   consumer: UsageConsumer | undefined;
   /** Applies pending migrations (if enabled), then listens. */
@@ -76,6 +84,9 @@ export interface GatewayDeps {
 
 export function createGateway(config: GatewayConfig, logger: Logger, deps: GatewayDeps): Gateway {
   const clock = deps.clock ?? systemClock;
+  // One registry per process (ADR 017); tests build several gateways, each with its own.
+  const metrics = new GatewayMetrics(createMetricsRegistry());
+  let metricsServer: MetricsServer | undefined;
   const pool = createPgPool(config.DATABASE_URL, logger);
   const db = createDb(pool);
   const redis = createRedis(config.REDIS_URL, logger);
@@ -185,6 +196,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
   const app = buildApp({
     logger,
     trustProxy: config.TRUST_PROXY,
+    metrics,
+    metricsToken: config.METRICS_TOKEN,
     readiness: {
       checks: {
         postgres: () => pingPostgres(pool),
@@ -249,6 +262,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       closeRedis(redis),
       invalidation.close(),
       registry.close(),
+      metricsServer?.close(),
     ]);
   });
 
@@ -264,6 +278,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     sweeper,
     breakers,
     healthChecker,
+    metrics,
+    metricsPort: () => metricsServer?.port,
     consumer: inProcess?.consumer,
     async start() {
       if (config.MIGRATE_ON_START) {
@@ -293,6 +309,17 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         logger.info('usage consumer running in the gateway process');
       }
       await app.listen({ host: config.HOST, port: config.PORT });
+      if (config.METRICS_PORT !== undefined) {
+        metricsServer = await startMetricsServer({
+          registry: metrics.registry,
+          host: config.METRICS_HOST,
+          port: config.METRICS_PORT,
+          token: config.METRICS_TOKEN,
+          logger,
+        });
+      } else if (config.METRICS_TOKEN === undefined) {
+        logger.info('metrics are off: set METRICS_TOKEN or METRICS_PORT to serve /metrics');
+      }
     },
     async shutdown() {
       const outcome = await drainAndClose(app, config.SHUTDOWN_TIMEOUT_MS);

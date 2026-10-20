@@ -51,6 +51,19 @@ describe('gatewayConfigSchema', () => {
     expect(short.join()).not.toContain('short-secret-value');
   });
 
+  it('leaves metrics off by default, with any listener on loopback', () => {
+    const config = parseConfig(gatewayConfigSchema, required);
+    expect(config.METRICS_TOKEN).toBeUndefined();
+    expect(config.METRICS_PORT).toBeUndefined();
+    expect(config.METRICS_HOST).toBe('127.0.0.1');
+  });
+
+  it('requires a metrics token of at least 32 characters, without echoing it', () => {
+    const found = problems({ ...required, METRICS_TOKEN: 'short-token' });
+    expect(found).toEqual(['METRICS_TOKEN: must be at least 32 characters']);
+    expect(found.join('')).not.toContain('short-token');
+  });
+
   it('migrates on start and leaves bootstrap off by default', () => {
     const config = parseConfig(gatewayConfigSchema, required);
     expect(config).toMatchObject({ MIGRATE_ON_START: true, API_KEY_CACHE_TTL_MS: 30_000 });

@@ -1,7 +1,7 @@
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { uuidv7 } from '@ai-gateway/shared';
-import type { Logger } from '@ai-gateway/shared/node';
+import { bearerMatches, type Logger } from '@ai-gateway/shared/node';
 import Fastify, {
   LogController,
   type FastifyBaseLogger,
@@ -17,12 +17,17 @@ import {
 } from 'fastify-type-provider-zod';
 import { GatewayError } from './errors.js';
 import { registerHealthRoutes, type ReadinessOptions } from './health.js';
+import type { GatewayMetrics } from './metrics.js';
 
 export interface AppOptions {
   logger: Logger;
   readiness: ReadinessOptions;
   /** Trusted proxy hops for X-Forwarded-For (request.ip); 0 trusts none. */
   trustProxy?: number;
+  /** Records every response; `GET /metrics` serves its registry when `metricsToken` is set. */
+  metrics?: GatewayMetrics;
+  /** Bearer token for `GET /metrics` on this port. Unset, the route does not exist (404). */
+  metricsToken?: string;
 }
 
 const shuttingDown = new GatewayError('shutting_down', 'Server is shutting down, retry shortly', {
@@ -33,6 +38,12 @@ const shuttingDown = new GatewayError('shutting_down', 'Server is shutting down,
 const internalError = new GatewayError('internal_error', 'Internal server error', {
   httpStatus: 500,
 });
+
+const metricsUnauthorized = new GatewayError(
+  'invalid_metrics_token',
+  'Scraping /metrics needs `Authorization: Bearer <METRICS_TOKEN>`.',
+  { httpStatus: 401 },
+);
 
 /** Request bodies above 1 MiB are rejected with 413 before parsing. */
 export const BODY_LIMIT_BYTES = 1024 * 1024;
@@ -75,7 +86,7 @@ function sendError(reply: FastifyReply, error: GatewayError) {
   return reply.code(error.httpStatus).send(error.toBody());
 }
 
-export function buildApp({ logger, readiness, trustProxy = 0 }: AppOptions) {
+export function buildApp({ logger, readiness, trustProxy = 0, metrics, metricsToken }: AppOptions) {
   // Typed as Fastify's base logger so routes and plugins use the standard instance type.
   const loggerInstance: FastifyBaseLogger = logger;
   const app = Fastify({
@@ -111,10 +122,16 @@ export function buildApp({ logger, readiness, trustProxy = 0 }: AppOptions) {
     if (closing) void reply.header('connection', 'close');
   });
 
-  app.addHook('onResponse', (request, _reply, done) => {
+  app.addHook('onResponse', (request, reply, done) => {
     // A stream whose headers went out before the drain began has no `Connection: close`, so close
     // its socket once it finishes rather than wait for the keep-alive timeout.
     if (closing) request.raw.socket?.destroySoon();
+    metrics?.httpRequest(
+      request.method,
+      request.routeOptions.url,
+      reply.statusCode,
+      reply.elapsedTime / 1000,
+    );
     done();
   });
 
@@ -176,6 +193,21 @@ export function buildApp({ logger, readiness, trustProxy = 0 }: AppOptions) {
     // The bare host has no page of its own; send visitors to the API docs.
     instance.get('/', { schema: { hide: true } }, (_request, reply) => reply.redirect('/docs'));
     registerHealthRoutes(instance, readiness);
+    if (metrics && metricsToken !== undefined) {
+      // Prometheus scrapes every few seconds; keep its requests out of the info log.
+      instance.get(
+        '/metrics',
+        { schema: { hide: true }, logLevel: 'warn' },
+        async (request, reply) => {
+          if (!bearerMatches(request.headers.authorization, metricsToken)) {
+            void reply.header('www-authenticate', 'Bearer realm="metrics"');
+            return sendError(reply, metricsUnauthorized);
+          }
+          const body = await metrics.registry.metrics();
+          return reply.header('content-type', metrics.registry.contentType).send(body);
+        },
+      );
+    }
     done();
   });
 

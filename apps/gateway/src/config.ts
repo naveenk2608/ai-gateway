@@ -1,4 +1,4 @@
-import { commonConfigShape } from '@ai-gateway/shared';
+import { commonConfigShape, metricsConfigShape } from '@ai-gateway/shared';
 import { consumerSettingsShape } from '@ai-gateway/worker';
 import { z } from 'zod';
 import { API_KEY_PATTERN } from './auth/api-keys.js';
@@ -12,6 +12,13 @@ export const gatewayConfigSchema = z
     HOST: z.string().min(1).default('127.0.0.1'),
     PORT: z.coerce.number().int().min(0).max(65_535).default(8080),
     READY_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(2_000),
+    /**
+     * Prometheus metrics (ADR 017). With METRICS_TOKEN set, `GET /metrics` on PORT needs it as a
+     * bearer token. METRICS_PORT adds a separate listener on METRICS_HOST (loopback by default)
+     * that needs the token only if one is set.
+     */
+    ...metricsConfigShape,
+    METRICS_PORT: z.coerce.number().int().min(0).max(65_535).optional(),
     /**
      * Proxies in front of the gateway whose X-Forwarded-For entries are trusted, counted from the
      * right; the client IP is the entry before them. 0 uses the TCP peer address.

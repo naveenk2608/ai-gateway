@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { captureLogger } from '../test/helpers.js';
+import { createMetricsRegistry } from '@ai-gateway/shared/node';
 import { buildApp } from './app.js';
 import { GatewayError } from './errors.js';
+import { GatewayMetrics } from './metrics.js';
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -138,5 +140,73 @@ describe('client IP behind proxies (TRUST_PROXY)', () => {
   it('takes the entry the trusted proxy added, not one the client wrote', async () => {
     expect(await ip(1, '198.51.100.1, 203.0.113.9')).toBe('203.0.113.9');
     expect(await ip(2, '198.51.100.1, 203.0.113.9, 10.0.0.2')).toBe('203.0.113.9');
+  });
+});
+
+describe('GET /metrics', () => {
+  const TOKEN = 'm'.repeat(40);
+
+  function metricsApp(metricsToken?: string) {
+    const { logger } = captureLogger();
+    const metrics = new GatewayMetrics(createMetricsRegistry());
+    const app = buildApp({
+      logger,
+      readiness: { checks: {}, timeoutMs: 50 },
+      metrics,
+      metricsToken,
+    });
+    return { app, metrics };
+  }
+
+  it('does not exist when no METRICS_TOKEN is set', async () => {
+    const { app } = metricsApp();
+    const res = await app.inject('/metrics');
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: { code: 'not_found' } });
+  });
+
+  it('rejects a missing or wrong token with 401 and reveals no metrics', async () => {
+    const { app } = metricsApp(TOKEN);
+    for (const authorization of [undefined, `Bearer ${'x'.repeat(40)}`, TOKEN, `Basic ${TOKEN}`]) {
+      const res = await app.inject({
+        url: '/metrics',
+        headers: authorization ? { authorization } : {},
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['www-authenticate']).toMatch(/^Bearer/);
+      expect(res.json()).toMatchObject({ error: { code: 'invalid_metrics_token' } });
+      expect(res.body).not.toContain('gateway_');
+    }
+  });
+
+  it('serves the registry in the Prometheus text format with the token', async () => {
+    const { app } = metricsApp(TOKEN);
+    await app.inject('/health');
+    const res = await app.inject({
+      url: '/metrics',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^text\/plain; version=0\.0\.4/);
+    expect(res.body).toContain(
+      'gateway_http_request_duration_seconds_count{method="GET",route="/health",status_code="200"} 1',
+    );
+    expect(res.body).toContain('process_resident_memory_bytes');
+  });
+
+  it('labels requests by route pattern, never by the raw URL', async () => {
+    const { app, metrics } = metricsApp(TOKEN);
+    app.get('/things/:id', () => ({ ok: true }));
+    await app.inject('/things/0193b2c4-0000-7000-8000-000000000001');
+    await app.inject('/things/another-id');
+    await app.inject('/no/such/page?q=secret');
+    const text = await metrics.registry.metrics();
+    expect(text).toContain(
+      'gateway_http_request_duration_seconds_count{method="GET",route="/things/:id",status_code="200"} 2',
+    );
+    expect(text).toContain(
+      'gateway_http_request_duration_seconds_count{method="GET",route="unmatched",status_code="404"} 1',
+    );
+    expect(text).not.toMatch(/another-id|0193b2c4|secret|no\/such/);
   });
 });
