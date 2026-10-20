@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # One build stage installs and builds the whole workspace; each target copies only what its
-# process needs. Build with `docker compose --profile full build`.
+# process needs. Compose builds every target with `docker compose --profile full build`.
+# The gateway is the LAST stage on purpose: a plain `docker build .` (as hosts like Render run,
+# with no way to pick a target) builds the gateway. Keep it last.
 ARG NODE_IMAGE=node:22.23.3-alpine3.24
 
 FROM ${NODE_IMAGE} AS base
@@ -28,17 +30,6 @@ RUN pnpm build
 RUN pnpm deploy --legacy --filter=@ai-gateway/gateway --prod /out/gateway \
  && pnpm deploy --legacy --filter=@ai-gateway/worker --prod /out/worker
 
-FROM ${NODE_IMAGE} AS gateway
-ENV NODE_ENV=production \
-    HOST=0.0.0.0 \
-    PORT=8080
-WORKDIR /app
-COPY --from=build --chown=node:node /out/gateway ./
-USER node
-EXPOSE 8080
-# node is PID 1 and handles SIGTERM itself (graceful drain).
-CMD ["node", "dist/main.js"]
-
 FROM ${NODE_IMAGE} AS worker
 ENV NODE_ENV=production
 WORKDIR /app
@@ -49,3 +40,16 @@ CMD ["node", "dist/main.js"]
 FROM nginx:1.31.7-alpine3.24 AS dashboard
 COPY apps/dashboard/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /repo/apps/dashboard/dist /usr/share/nginx/html
+
+FROM ${NODE_IMAGE} AS gateway
+# Listen on all interfaces inside the container. PORT is a default: platforms that inject their
+# own PORT at runtime (Render does) override it.
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=8080
+WORKDIR /app
+COPY --from=build --chown=node:node /out/gateway ./
+USER node
+EXPOSE 8080
+# node is PID 1 and handles SIGTERM itself (graceful drain).
+CMD ["node", "dist/main.js"]

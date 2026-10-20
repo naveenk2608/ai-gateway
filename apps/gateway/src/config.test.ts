@@ -18,6 +18,15 @@ describe('gatewayConfigSchema', () => {
     });
   });
 
+  it('takes HOST and PORT from the environment, as hosting platforms set them', () => {
+    const config = parseConfig(gatewayConfigSchema, {
+      ...required,
+      HOST: '0.0.0.0',
+      PORT: '10000',
+    });
+    expect(config).toMatchObject({ HOST: '0.0.0.0', PORT: 10_000 });
+  });
+
   it('rejects an out-of-range port', () => {
     expect(() => parseConfig(gatewayConfigSchema, { ...required, PORT: '70000' })).toThrow(
       ConfigError,
