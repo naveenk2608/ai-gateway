@@ -11,6 +11,7 @@ type Timestamp = ColumnType<Date, Date | string, Date | string>;
 type CreatedAt = ColumnType<Date, Date | string | undefined, never>;
 type UpdatedAt = ColumnType<Date, Date | string | undefined, Date | string>;
 type Json = ColumnType<unknown, string, string>;
+type JsonWithDefault = ColumnType<unknown, string | undefined, string>;
 
 export type Role = 'owner' | 'admin' | 'viewer';
 export type UsageSource = 'reported' | 'estimated' | 'missing';
@@ -66,7 +67,7 @@ export interface ModelDeploymentsTable {
   provider: 'mock' | 'ollama' | 'openai-compatible';
   provider_model: string;
   base_url: string | null;
-  settings: Generated<Json>;
+  settings: JsonWithDefault;
   enabled: Generated<boolean>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
@@ -187,7 +188,7 @@ export interface AuditLogsTable {
   action: string;
   target_type: string;
   target_id: string | null;
-  details: Generated<Json>;
+  details: JsonWithDefault;
   request_id: string | null;
   created_at: CreatedAt;
 }

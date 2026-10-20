@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createGateway, type Gateway } from '../src/gateway.js';
 import { parseModelsConfig } from '../src/models-config.js';
 import type { MockProvider } from '../src/providers/mock.js';
+import { createApiKey, createProject } from './db-fixtures.js';
 import { captureLogger, sseData, testConfig } from './helpers.js';
 
 /** Real timings, kept small; timeout cases use wide margins so they cannot flake. */
@@ -33,12 +34,15 @@ const models = parseModelsConfig(
 );
 
 let gateway: Gateway;
+let authorization: string;
 let baseUrl: string;
 
 beforeAll(async () => {
   const config = testConfig();
   gateway = createGateway(config, captureLogger().logger, { models });
   await gateway.start();
+  const key = await createApiKey(gateway.db, await createProject(gateway.db));
+  authorization = `Bearer ${key.plaintext}`;
   const { port } = gateway.app.server.address() as AddressInfo;
   baseUrl = `http://127.0.0.1:${port}`;
 });
@@ -54,7 +58,7 @@ function mockFor(deployment: string): MockProvider {
 function chat(body: unknown) {
   return fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', authorization },
     body: JSON.stringify(body),
   });
 }
@@ -90,7 +94,7 @@ describe('chat completions over HTTP against the mock (non-streaming)', () => {
   it('rejects malformed JSON with 400', async () => {
     const res = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization },
       body: '{"model":',
     });
     expect(res.status).toBe(400);
@@ -110,7 +114,7 @@ describe('chat completions over HTTP against the mock (non-streaming)', () => {
     const mock = mockFor('hanging');
     const req = httpRequest(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization },
     });
     req.on('error', () => undefined);
     req.end(JSON.stringify({ model: 'mock-hanging', ...hello }));
@@ -147,7 +151,7 @@ describe('chat completions over HTTP against the mock (streaming)', () => {
     await new Promise<void>((resolve, reject) => {
       const req = httpRequest(
         `${baseUrl}/v1/chat/completions`,
-        { method: 'POST', headers: { 'content-type': 'application/json' } },
+        { method: 'POST', headers: { 'content-type': 'application/json', authorization } },
         (res) => {
           // Hang up as soon as the first bytes of the stream arrive.
           res.once('data', () => {
@@ -178,7 +182,7 @@ describe('chat completions over HTTP against the mock (streaming)', () => {
 
     const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization },
       body: JSON.stringify({ model: 'mock-steady', ...hello, stream: true }),
     });
     const reader = (res.body as ReadableStream<Uint8Array>).getReader();

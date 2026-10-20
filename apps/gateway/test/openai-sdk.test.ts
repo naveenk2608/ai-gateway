@@ -3,6 +3,7 @@ import OpenAI, { APIError, NotFoundError, RateLimitError } from 'openai';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createGateway, type Gateway } from '../src/gateway.js';
 import { parseModelsConfig } from '../src/models-config.js';
+import { createApiKey, createProject } from './db-fixtures.js';
 import { captureLogger, testConfig } from './helpers.js';
 
 /** Contract test: the official OpenAI Node SDK, unmodified, pointed at the gateway. */
@@ -33,10 +34,10 @@ beforeAll(async () => {
   gateway = createGateway(config, captureLogger().logger, { models });
   await gateway.start();
   const { port } = gateway.app.server.address() as AddressInfo;
-  // The gateway does not check keys until M2; the SDK requires one to be set.
+  const key = await createApiKey(gateway.db, await createProject(gateway.db));
   client = new OpenAI({
     baseURL: `http://127.0.0.1:${port}/v1`,
-    apiKey: 'placeholder',
+    apiKey: key.plaintext,
     maxRetries: 0,
   });
 });

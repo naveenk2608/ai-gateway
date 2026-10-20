@@ -12,6 +12,9 @@ import {
   type Logger,
 } from '@ai-gateway/shared/node';
 import { buildApp, type App } from './app.js';
+import { bootstrap } from './auth/bootstrap.js';
+import { AuthInvalidation } from './auth/invalidation.js';
+import { databaseKeyLoader, KeyVerifier } from './auth/key-verifier.js';
 import type { GatewayConfig } from './config.js';
 import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
@@ -27,6 +30,8 @@ export interface Gateway {
   app: App;
   db: Db;
   registry: ProviderRegistry;
+  verifier: KeyVerifier;
+  invalidation: AuthInvalidation;
   /** Applies pending migrations (if enabled), then listens. */
   start(): Promise<void>;
   /** Drains in-flight requests, then closes the Postgres pool and Redis client. */
@@ -38,6 +43,8 @@ export interface GatewayDeps {
   clock?: Clock;
   /** Source of provider API keys; defaults to process.env. */
   env?: Env;
+  /** Pub/sub channel for key invalidations; tests isolate instances with their own channel. */
+  invalidationChannel?: string;
 }
 
 export function createGateway(config: GatewayConfig, logger: Logger, deps: GatewayDeps): Gateway {
@@ -52,6 +59,20 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     ollamaBaseUrl: config.OLLAMA_BASE_URL,
   });
 
+  const verifier = new KeyVerifier({
+    load: databaseKeyLoader(db),
+    pepper: config.API_KEY_PEPPER,
+    clock,
+    ttlMs: config.API_KEY_CACHE_TTL_MS,
+  });
+  const invalidation = new AuthInvalidation({
+    verifier,
+    redis,
+    redisUrl: config.REDIS_URL,
+    logger,
+    channel: deps.invalidationChannel,
+  });
+
   const app = buildApp({
     logger,
     readiness: {
@@ -63,19 +84,26 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     },
   });
   void app.register((instance, _opts, done) => {
-    registerChatCompletions(instance, { registry, clock });
+    registerChatCompletions(instance, { registry, clock, verifier });
     done();
   });
 
   // onClose runs after in-flight requests finish, so nothing is still using the pools.
   app.addHook('onClose', async () => {
-    await Promise.allSettled([pool.end(), closeRedis(redis), registry.close()]);
+    await Promise.allSettled([
+      pool.end(),
+      closeRedis(redis),
+      invalidation.close(),
+      registry.close(),
+    ]);
   });
 
   return {
     app,
     db,
     registry,
+    verifier,
+    invalidation,
     async start() {
       if (config.MIGRATE_ON_START) {
         await migrateDatabase({
@@ -84,6 +112,18 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
           logger,
         });
       }
+      const admin =
+        config.BOOTSTRAP_ADMIN_EMAIL && config.BOOTSTRAP_ADMIN_PASSWORD
+          ? { email: config.BOOTSTRAP_ADMIN_EMAIL, password: config.BOOTSTRAP_ADMIN_PASSWORD }
+          : undefined;
+      const boot = await bootstrap(
+        db,
+        { projectName: config.BOOTSTRAP_PROJECT_NAME, admin, apiKey: config.BOOTSTRAP_API_KEY },
+        config.API_KEY_PEPPER,
+        logger,
+      );
+      if (boot) logger.info(boot, 'bootstrap settings applied');
+      invalidation.start();
       await app.listen({ host: config.HOST, port: config.PORT });
     },
     async shutdown() {

@@ -1,8 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { Writable } from 'node:stream';
-import { parseConfig, type ManualClock } from '@ai-gateway/shared';
+import { parseConfig, systemClock, type Clock, type ManualClock } from '@ai-gateway/shared';
 import { createLogger, type Logger } from '@ai-gateway/shared/node';
 import { vi } from 'vitest';
+import { generateApiKey, hashSecret } from '../src/auth/api-keys.js';
+import { KeyVerifier } from '../src/auth/key-verifier.js';
 import { gatewayConfigSchema, type GatewayConfig } from '../src/config.js';
 import { parseModelsConfig, type ModelsConfig } from '../src/models-config.js';
 
@@ -71,4 +73,25 @@ export function deferred<T = void>() {
     resolve = r;
   });
   return { promise, resolve };
+}
+
+/** A verifier that knows one key, with no database, for tests of the /v1 routes. */
+export function inMemoryVerifier(clock: Clock = systemClock) {
+  const key = generateApiKey();
+  const record = {
+    apiKeyId: 'test-api-key',
+    keyId: key.keyId,
+    projectId: 'test-project',
+    secretHash: hashSecret(key.secret, TEST_PEPPER),
+    expiresAt: null,
+    revokedAt: null,
+    allowedModels: null,
+  };
+  const verifier = new KeyVerifier({
+    load: (keyId) => Promise.resolve(keyId === key.keyId ? record : null),
+    pepper: TEST_PEPPER,
+    clock,
+    ttlMs: 0,
+  });
+  return { verifier, authorization: `Bearer ${key.plaintext}` };
 }

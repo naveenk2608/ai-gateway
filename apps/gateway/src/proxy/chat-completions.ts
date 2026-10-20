@@ -3,6 +3,8 @@ import { Readable } from 'node:stream';
 import type { Clock } from '@ai-gateway/shared';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { apiKeyAuth } from '../auth/api-key-auth.js';
+import type { KeyVerifier } from '../auth/key-verifier.js';
 import { GatewayError } from '../errors.js';
 import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
@@ -20,6 +22,7 @@ import { toGatewayError } from './upstream-errors.js';
 export interface ChatRouteOptions {
   registry: ProviderRegistry;
   clock: Clock;
+  verifier: KeyVerifier;
 }
 
 interface ResponseMeta {
@@ -163,13 +166,17 @@ function upstreamFailure(err: unknown): unknown {
 }
 
 export function registerChatCompletions(app: FastifyInstance, options: ChatRouteOptions): void {
-  const { registry, clock } = options;
+  const { registry, clock, verifier } = options;
+  app.decorateRequest('apiKey', null);
 
   app.withTypeProvider<ZodTypeProvider>().post(
     '/v1/chat/completions',
     {
+      // Before body validation, so unauthenticated callers learn nothing about the payload.
+      onRequest: apiKeyAuth(verifier),
       schema: {
         tags: ['chat'],
+        security: [{ apiKey: [] }],
         summary: 'Create a chat completion (OpenAI-compatible)',
         description:
           'With `stream: true` the response is `text/event-stream`: `chat.completion.chunk` ' +
@@ -180,6 +187,14 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
     },
     async (request, reply) => {
       const body = request.body;
+      const allowed = request.apiKey?.allowedModels;
+      if (allowed && !allowed.includes(body.model)) {
+        throw new GatewayError(
+          'model_not_allowed',
+          `This project is not allowed to use the model \`${body.model}\`.`,
+          { httpStatus: 403, param: 'model' },
+        );
+      }
       const deployment = registry.resolve(body.model);
       if (!deployment) {
         throw new GatewayError('model_not_found', `The model \`${body.model}\` does not exist.`, {

@@ -1,6 +1,6 @@
 import { ManualClock } from '@ai-gateway/shared';
 import { describe, expect, it } from 'vitest';
-import { captureLogger, sleepsQueued, sseData } from '../../test/helpers.js';
+import { captureLogger, inMemoryVerifier, sleepsQueued, sseData } from '../../test/helpers.js';
 import { buildApp } from '../app.js';
 import { parseModelsConfig } from '../models-config.js';
 import type { MockProvider } from '../providers/mock.js';
@@ -48,12 +48,18 @@ function setup() {
     ollamaBaseUrl: 'http://127.0.0.1:1',
   });
   const app = buildApp({ logger, readiness: { checks: {}, timeoutMs: 50 } });
-  registerChatCompletions(app, { registry, clock });
+  const { verifier, authorization } = inMemoryVerifier(clock);
+  registerChatCompletions(app, { registry, clock, verifier });
 
   /** Sends a request, then advances the manual clock once its sleeps are queued. */
   async function post(payload: unknown, { sleeps = 2, advance = 0 } = {}) {
     const pending = Promise.resolve(
-      app.inject({ method: 'POST', url: '/v1/chat/completions', payload: payload as object }),
+      app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization },
+        payload: payload as object,
+      }),
     );
     if (sleeps > 0) {
       await sleepsQueued(clock, sleeps);
@@ -61,7 +67,7 @@ function setup() {
     }
     return pending;
   }
-  return { app, clock, registry, lines, post };
+  return { app, clock, registry, lines, post, authorization };
 }
 
 const hello = { messages: [{ role: 'user', content: 'Say hello' }] };
@@ -309,11 +315,12 @@ describe('POST /v1/chat/completions (streaming)', () => {
   });
 
   it('ends a stream that goes quiet with an error event and no [DONE]', async () => {
-    const { app, clock, registry } = setup();
+    const { app, clock, registry, authorization } = setup();
     const pending = Promise.resolve(
       app.inject({
         method: 'POST',
         url: '/v1/chat/completions',
+        headers: { authorization },
         payload: { model: 'mock-stream-idle', ...hello, stream: true },
       }),
     );

@@ -150,7 +150,19 @@ export function buildApp({ logger, readiness }: AppOptions) {
         version: '0.1.0',
         description:
           'OpenAI-compatible chat completions. Errors use the OpenAI error shape ' +
-          '`{"error": {"message", "type", "param", "code"}}`.',
+          '`{"error": {"message", "type", "param", "code"}}`.\n\n' +
+          'To try `/v1` here, click **Authorize** and paste an API key (`gw_...`). Admin routes ' +
+          'use the session cookie set by `POST /admin/auth/login`.',
+      },
+      components: {
+        securitySchemes: {
+          apiKey: {
+            type: 'http',
+            scheme: 'bearer',
+            description: 'A project API key, `gw_<keyId>_<secret>`.',
+          },
+          session: { type: 'apiKey', in: 'cookie', name: 'gw_session' },
+        },
       },
     },
     transform: jsonSchemaTransform,

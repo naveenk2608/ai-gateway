@@ -4,11 +4,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createGateway, type Gateway } from '../src/gateway.js';
 import { parseModelsConfig } from '../src/models-config.js';
 import { openAIStream, sendJson, startFakeUpstream, type FakeUpstream } from './fake-upstream.js';
+import { createApiKey, createProject } from './db-fixtures.js';
 import { captureLogger, sseData, testConfig } from './helpers.js';
 
 /** The gateway calling an OpenAI-compatible upstream over real HTTP (undici, ADR 004). */
 let upstream: FakeUpstream;
 let gateway: Gateway;
+let authorization: string;
 let baseUrl: string;
 let behaviour: 'normal' | 'trickle' | 'unauthorized' | 'silent' = 'normal';
 
@@ -61,6 +63,8 @@ beforeAll(async () => {
     env: { TEST_UPSTREAM_KEY: 'test-key-not-secret' },
   });
   await gateway.start();
+  const key = await createApiKey(gateway.db, await createProject(gateway.db));
+  authorization = `Bearer ${key.plaintext}`;
   const { port } = gateway.app.server.address() as AddressInfo;
   baseUrl = `http://127.0.0.1:${port}`;
 });
@@ -73,7 +77,7 @@ afterAll(async () => {
 function chat(body: Record<string, unknown>) {
   return fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', authorization },
     body: JSON.stringify({
       model: 'hosted-model',
       messages: [{ role: 'user', content: 'Hi' }],
@@ -123,7 +127,7 @@ describe('gateway with an OpenAI-compatible upstream', () => {
     await new Promise<void>((resolve) => {
       const req = httpRequest(
         `${baseUrl}/v1/chat/completions`,
-        { method: 'POST', headers: { 'content-type': 'application/json' } },
+        { method: 'POST', headers: { 'content-type': 'application/json', authorization } },
         (res) => {
           res.once('data', () => {
             req.destroy();

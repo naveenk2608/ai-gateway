@@ -1,6 +1,6 @@
 import { systemClock } from '@ai-gateway/shared';
 import { describe, expect, it } from 'vitest';
-import { captureLogger, noModels } from '../test/helpers.js';
+import { captureLogger, inMemoryVerifier, noModels } from '../test/helpers.js';
 import { buildApp } from './app.js';
 import { createRegistry } from './providers/registry.js';
 import { registerChatCompletions } from './proxy/chat-completions.js';
@@ -16,7 +16,8 @@ function gatewayApp() {
     ollamaBaseUrl: 'http://127.0.0.1:1',
   });
   void app.register((instance, _opts, done) => {
-    registerChatCompletions(instance, { registry, clock: systemClock });
+    const { verifier } = inMemoryVerifier();
+    registerChatCompletions(instance, { registry, clock: systemClock, verifier });
     done();
   });
   return app;
@@ -65,5 +66,14 @@ describe('OpenAPI docs', () => {
       expect.arrayContaining(['200', '4XX', '5XX']),
     );
     expect(Object.keys(doc.paths['/ready']?.get?.responses ?? {})).toEqual(['200', '503']);
+  });
+
+  it('lets the docs page send an API key to /v1', async () => {
+    const doc = (await gatewayApp().inject('/docs/json')).json<{
+      components: { securitySchemes: Record<string, { type: string; scheme?: string }> };
+      paths: Record<string, Record<string, { security?: unknown }>>;
+    }>();
+    expect(doc.components.securitySchemes.apiKey).toMatchObject({ type: 'http', scheme: 'bearer' });
+    expect(doc.paths['/v1/chat/completions']?.post?.security).toEqual([{ apiKey: [] }]);
   });
 });
