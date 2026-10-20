@@ -1,6 +1,12 @@
 import { systemClock } from '@ai-gateway/shared';
 import { describe, expect, it } from 'vitest';
-import { captureLogger, inMemoryVerifier, RecordingBus, noModels } from '../test/helpers.js';
+import {
+  captureLogger,
+  inMemoryVerifier,
+  noModels,
+  RecordingBus,
+  testAdmission,
+} from '../test/helpers.js';
 import { buildApp } from './app.js';
 import { createRegistry } from './providers/registry.js';
 import { registerChatCompletions } from './proxy/chat-completions.js';
@@ -22,6 +28,7 @@ function gatewayApp() {
       clock: systemClock,
       verifier,
       events: new RecordingBus(),
+      admission: testAdmission(systemClock, logger),
     });
     done();
   });

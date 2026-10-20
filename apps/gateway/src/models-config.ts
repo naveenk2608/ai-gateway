@@ -11,6 +11,11 @@ const attemptTimeouts = {
   timeoutMs: z.number().int().positive().max(600_000).default(60_000),
   /** Streaming: the longest allowed gap between events after the first. */
   streamIdleTimeoutMs: z.number().int().positive().max(600_000).default(30_000),
+  /**
+   * Output cap sent upstream when the client sets no max_tokens. It is the worst case that limits
+   * and budgets reserve (ADR 008, ADR 009), so it must be a real bound.
+   */
+  maxOutputTokens: z.number().int().positive().max(1_000_000).default(4_096),
 };
 
 const mockSettings = z
@@ -19,6 +24,7 @@ const mockSettings = z
     ttftMs: z.number().int().min(0).default(0),
     tokensPerSecond: z.number().positive().optional(),
     completionTokens: z.number().int().min(0).max(100_000).default(16),
+    promptTokens: z.number().int().min(0).optional(),
     errorRate: z.number().min(0).max(1).default(0),
     seed: z.number().int().default(1),
     failWith: z.union([z.literal(429), z.literal(500)]).optional(),

@@ -7,6 +7,7 @@ import { apiKeyAuth } from '../auth/api-key-auth.js';
 import type { KeyVerifier } from '../auth/key-verifier.js';
 import { GatewayError } from '../errors.js';
 import type { EventBus } from '../events/bus.js';
+import type { AdmissionControl } from '../limits/admission.js';
 import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ChatRequest, ChatResult, FinishReason, Usage } from '../providers/types.js';
@@ -33,6 +34,7 @@ export interface ChatRouteOptions {
   clock: Clock;
   verifier: KeyVerifier;
   events: EventBus;
+  admission: AdmissionControl;
 }
 
 interface ResponseMeta {
@@ -55,12 +57,16 @@ function watchDisconnect(res: ServerResponse) {
   return { signal: controller.signal, dispose: () => res.off('close', onClose) };
 }
 
-function toProviderRequest(body: ChatCompletionRequest, model: string): ChatRequest {
+function toProviderRequest(
+  body: ChatCompletionRequest,
+  model: string,
+  maxTokens: number,
+): ChatRequest {
   const stop = body.stop ?? undefined;
   return {
     model,
     messages: body.messages,
-    maxTokens: body.max_completion_tokens ?? body.max_tokens ?? undefined,
+    maxTokens,
     temperature: body.temperature ?? undefined,
     topP: body.top_p ?? undefined,
     stop: typeof stop === 'string' ? [stop] : stop,
@@ -184,7 +190,7 @@ function upstreamFailure(err: unknown): unknown {
 }
 
 export function registerChatCompletions(app: FastifyInstance, options: ChatRouteOptions): void {
-  const { registry, clock, verifier, events } = options;
+  const { registry, clock, verifier, events, admission } = options;
   app.decorateRequest('apiKey', null);
   app.decorateRequest('trace', null);
 
@@ -252,51 +258,82 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         });
       }
 
+      const maxTokens = body.max_completion_tokens ?? body.max_tokens ?? deployment.maxOutputTokens;
+      // Limits and budget (M4): throws the 429/503 the client sees, before any provider call.
+      const settlement = await admission.admit({
+        key: apiKey,
+        trace,
+        deployment,
+        maxTokens,
+        log: request.log,
+      });
+      // From here the settlement is released exactly once: by the stream when it ends, or below.
+      let streamOwnsSettlement = false;
       const disconnect = watchDisconnect(reply.raw);
-      const ctx = { deployment, clock, clientSignal: disconnect.signal, log: request.log, trace };
-      const providerRequest = toProviderRequest(body, deployment.providerModel);
-      const meta: ResponseMeta = {
-        id: `chatcmpl-${request.id}`,
-        created: Math.floor(clock.now() / 1000),
-        model: body.model,
-      };
+      try {
+        const ctx = { deployment, clock, clientSignal: disconnect.signal, log: request.log, trace };
+        const providerRequest = toProviderRequest(body, deployment.providerModel, maxTokens);
+        const meta: ResponseMeta = {
+          id: `chatcmpl-${request.id}`,
+          created: Math.floor(clock.now() / 1000),
+          model: body.model,
+        };
 
-      if (body.stream !== true) {
+        if (body.stream !== true) {
+          try {
+            const result = await runChat(ctx, providerRequest);
+            trace.setUsage(result.usage);
+            trace.addCompletionText(result.content);
+            return toChatCompletion(meta, result);
+          } catch (err) {
+            throw upstreamFailure(err);
+          }
+        }
+
+        let stream: OpenStream;
         try {
-          const result = await runChat(ctx, providerRequest);
-          trace.setUsage(result.usage);
-          trace.addCompletionText(result.content);
-          return toChatCompletion(meta, result);
+          stream = await openStream(ctx, providerRequest);
         } catch (err) {
           throw upstreamFailure(err);
-        } finally {
+        }
+        trace.markFirstToken();
+        const write = chunkWriter(meta, body.stream_options?.include_usage === true);
+        void reply
+          .header('content-type', 'text/event-stream; charset=utf-8')
+          .header('cache-control', 'no-cache')
+          .header('x-accel-buffering', 'no');
+        trace.streaming = true;
+        let ended = false;
+        const onEnd = () => {
+          if (ended) return;
+          ended = true;
           disconnect.dispose();
+          settlement.release();
+          emit(trace, 200);
+        };
+        const sse = Readable.from(sseBody(stream, write, request.log, trace, onEnd), {
+          objectMode: false,
+        });
+        streamOwnsSettlement = true;
+        reply.raw.once('close', () => {
+          // A body generator that never started never runs its cleanup (a client that left
+          // before the first chunk), so end the stream here; give a started one a tick first.
+          setImmediate(() => {
+            if (ended) return;
+            const canceled = new ProviderError('canceled', 'client closed the stream');
+            trace.setError(toGatewayError(canceled).code);
+            stream.close(canceled);
+            onEnd();
+          });
+        });
+        // The typed reply expects the JSON schema's shape; Fastify pipes streams without serializing.
+        return reply.send(sse as never);
+      } finally {
+        if (!streamOwnsSettlement) {
+          disconnect.dispose();
+          settlement.release();
         }
       }
-
-      let stream: OpenStream;
-      try {
-        stream = await openStream(ctx, providerRequest);
-      } catch (err) {
-        disconnect.dispose();
-        throw upstreamFailure(err);
-      }
-      trace.markFirstToken();
-      const write = chunkWriter(meta, body.stream_options?.include_usage === true);
-      void reply
-        .header('content-type', 'text/event-stream; charset=utf-8')
-        .header('cache-control', 'no-cache')
-        .header('x-accel-buffering', 'no');
-      trace.streaming = true;
-      const onEnd = () => {
-        disconnect.dispose();
-        emit(trace, 200);
-      };
-      const sse = Readable.from(sseBody(stream, write, request.log, trace, onEnd), {
-        objectMode: false,
-      });
-      // The typed reply expects the JSON schema's shape; Fastify pipes streams without serializing.
-      return reply.send(sse as never);
     },
   );
 }

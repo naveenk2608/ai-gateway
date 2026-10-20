@@ -12,7 +12,10 @@ import { createLogger, type Logger } from '@ai-gateway/shared/node';
 import { vi } from 'vitest';
 import { generateApiKey, hashSecret } from '../src/auth/api-keys.js';
 import { KeyVerifier } from '../src/auth/key-verifier.js';
-import { UNLIMITED } from '../src/limits/policy.js';
+import { AdmissionControl } from '../src/limits/admission.js';
+import type { Limiter } from '../src/limits/limiter.js';
+import { UNLIMITED, type UsagePolicy } from '../src/limits/policy.js';
+import { PriceBook, type PriceRow } from '../src/limits/prices.js';
 import { gatewayConfigSchema, type GatewayConfig } from '../src/config.js';
 import type { EventBus } from '../src/events/bus.js';
 import { parseModelsConfig, type ModelsConfig } from '../src/models-config.js';
@@ -85,7 +88,7 @@ export function deferred<T = void>() {
 }
 
 /** A verifier that knows one key, with no database, for tests of the /v1 routes. */
-export function inMemoryVerifier(clock: Clock = systemClock) {
+export function inMemoryVerifier(clock: Clock = systemClock, policy: UsagePolicy = UNLIMITED) {
   const key = generateApiKey();
   const record = {
     apiKeyId: uuidv7(),
@@ -95,7 +98,7 @@ export function inMemoryVerifier(clock: Clock = systemClock) {
     expiresAt: null,
     revokedAt: null,
     allowedModels: null,
-    policy: UNLIMITED,
+    policy,
   };
   const verifier = new KeyVerifier({
     load: (keyId) => Promise.resolve(keyId === key.keyId ? record : null),
@@ -121,4 +124,20 @@ export class RecordingBus implements EventBus {
   close(): Promise<void> {
     return Promise.resolve();
   }
+}
+
+/**
+ * Admission with fixed prices and a limiter the test controls. With the default (unlimited)
+ * policy the limiter is never called.
+ */
+export function testAdmission(
+  clock: Clock,
+  logger: Logger,
+  {
+    limiter = { admit: () => Promise.reject(new Error('no limiter in this test')) },
+    prices = [],
+    failMode = 'closed',
+  }: { limiter?: Pick<Limiter, 'admit'>; prices?: PriceRow[]; failMode?: 'closed' | 'open' } = {},
+) {
+  return new AdmissionControl({ limiter, prices: PriceBook.of(prices, clock, logger), failMode });
 }

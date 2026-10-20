@@ -19,6 +19,8 @@ export interface MockSettings {
   tokensPerSecond?: number | undefined;
   /** Tokens to generate when `max_tokens` does not cut it shorter. */
   completionTokens: number;
+  /** Prompt tokens to report instead of the mock's own estimate (e.g. more than the gateway's). */
+  promptTokens?: number | undefined;
   /** Probability (0..1) that a request fails with a 500, drawn from a seeded RNG. */
   errorRate: number;
   seed: number;
@@ -148,7 +150,7 @@ export class MockProvider implements Provider {
       { length: count },
       (_, i) => (i === 0 ? '' : ' ') + WORDS[i % WORDS.length]!,
     );
-    const promptTokens = estimatePromptTokens(req);
+    const promptTokens = this.#settings.promptTokens ?? estimatePromptTokens(req);
     const drop = this.#settings.dropAfterTokens;
     return {
       tokens,

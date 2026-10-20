@@ -29,6 +29,21 @@ export const gatewayConfigSchema = z
     /** Approximate cap on the usage stream's length, so Redis memory stays bounded. */
     EVENTS_STREAM_MAXLEN: z.coerce.number().int().positive().default(100_000),
 
+    /**
+     * When Redis cannot be reached: `closed` rejects requests that have limits or a budget with a
+     * 503 (ADR 010); `open` admits them unchecked and logs it.
+     */
+    LIMITS_FAIL_MODE: z.enum(['closed', 'open']).default('closed'),
+    /**
+     * How long a concurrency lease or budget reservation lives without renewal: how soon a crashed
+     * request's slot and reservation are freed. Running requests renew every third of it.
+     */
+    LIMITS_LEASE_TTL_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
+    /** How often expired budget reservations are released and recorded as expired. */
+    BUDGET_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(15_000),
+    /** How often model prices are reloaded from Postgres for budget reservations. */
+    PRICES_REFRESH_INTERVAL_MS: z.coerce.number().int().min(1_000).default(60_000),
+
     /** Apply pending migrations at startup, under an advisory lock (safe with several instances). */
     MIGRATE_ON_START: flag.default(true),
     /** Defaults to db/migrations in the repository; the container image sets its own path. */

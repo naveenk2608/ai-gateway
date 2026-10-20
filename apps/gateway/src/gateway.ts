@@ -19,6 +19,10 @@ import { databaseKeyLoader, KeyVerifier } from './auth/key-verifier.js';
 import type { GatewayConfig } from './config.js';
 import type { EventBus } from './events/bus.js';
 import { RedisStreamBus } from './events/redis-stream.js';
+import { AdmissionControl } from './limits/admission.js';
+import { databaseSpendLoader } from './limits/ledger.js';
+import { Limiter } from './limits/limiter.js';
+import { databasePriceLoader, PriceBook } from './limits/prices.js';
 import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
 import { registerChatCompletions } from './proxy/chat-completions.js';
@@ -37,6 +41,8 @@ export interface Gateway {
   verifier: KeyVerifier;
   invalidation: AuthInvalidation;
   events: EventBus;
+  limiter: Limiter;
+  prices: PriceBook;
   /** The in-process usage consumer, when RUN_WORKER_IN_PROCESS is on. */
   consumer: UsageConsumer | undefined;
   /** Applies pending migrations (if enabled), then listens. */
@@ -89,6 +95,25 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     streamMaxLen: config.EVENTS_STREAM_MAXLEN,
   });
 
+  const prices = new PriceBook({
+    load: databasePriceLoader(db),
+    clock,
+    logger,
+    refreshMs: config.PRICES_REFRESH_INTERVAL_MS,
+  });
+  const limiter = new Limiter({
+    redis,
+    clock,
+    logger,
+    loadSpend: databaseSpendLoader(db),
+    leaseTtlMs: config.LIMITS_LEASE_TTL_MS,
+  });
+  const admission = new AdmissionControl({
+    limiter,
+    prices,
+    failMode: config.LIMITS_FAIL_MODE,
+  });
+
   const inProcess = config.RUN_WORKER_IN_PROCESS
     ? createUsageConsumer({ settings: config, redisUrl: config.REDIS_URL, db, logger, clock })
     : undefined;
@@ -104,7 +129,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     },
   });
   void app.register((instance, _opts, done) => {
-    registerChatCompletions(instance, { registry, clock, verifier, events });
+    registerChatCompletions(instance, { registry, clock, verifier, events, admission });
     done();
   });
   void app.register((instance) =>
@@ -123,6 +148,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
   app.addHook('onClose', async () => {
     // Flush buffered usage events while Redis is still open, then let the consumer finish its
     // batch; whatever it leaves pending is claimed by the next worker.
+    prices.stop();
     await events.close(Math.min(2_000, config.SHUTDOWN_TIMEOUT_MS));
     if (inProcess) {
       await inProcess.consumer.stop();
@@ -143,6 +169,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     verifier,
     invalidation,
     events,
+    limiter,
+    prices,
     consumer: inProcess?.consumer,
     async start() {
       if (config.MIGRATE_ON_START) {
@@ -163,6 +191,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         logger,
       );
       if (boot) logger.info(boot, 'bootstrap settings applied');
+      await prices.start();
       invalidation.start();
       if (inProcess) {
         await inProcess.consumer.start();

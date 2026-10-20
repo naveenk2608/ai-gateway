@@ -31,6 +31,7 @@ function setup(settings: Partial<MockSettings> = {}, timeouts = { timeoutMs: 1_0
     providerModel: 'mock',
     timeoutMs: timeouts.timeoutMs,
     streamIdleTimeoutMs: timeouts.idle,
+    maxOutputTokens: 4_096,
   };
   const ctx: AttemptContext = { deployment, clock, clientSignal: client.signal, log: logger };
   return { clock, mock, client, ctx, lines };

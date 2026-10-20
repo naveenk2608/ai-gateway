@@ -50,6 +50,10 @@ export class RequestTrace {
     );
   }
 
+  get requestId(): string {
+    return this.#start.requestId;
+  }
+
   nextAttemptNumber(): number {
     return this.attempts.length + 1;
   }
@@ -91,7 +95,7 @@ export class RequestTrace {
           : this.attempts.length === 0
             ? 'rejected'
             : 'error';
-    const { usage, usageSource } = this.#usageFor();
+    const { usage, usageSource } = this.usage();
     return {
       v: 1,
       type: 'request.completed',
@@ -126,7 +130,7 @@ export class RequestTrace {
    * `reported` when the provider sent counts; `estimated` when it did not but text was produced
    * (an interrupted stream, a provider that omits usage); otherwise `missing`.
    */
-  #usageFor(): Pick<UsageEvent, 'usage' | 'usageSource'> {
+  usage(): Pick<UsageEvent, 'usage' | 'usageSource'> {
     if (this.#usage) {
       return {
         usage: {

@@ -24,6 +24,7 @@ describe('models config', () => {
       model: 'mock',
       timeoutMs: 60_000,
       streamIdleTimeoutMs: 30_000,
+      maxOutputTokens: 4_096,
       mock: {
         latencyMs: 0,
         ttftMs: 0,

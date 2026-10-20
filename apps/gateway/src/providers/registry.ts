@@ -14,6 +14,8 @@ export interface Deployment {
   providerModel: string;
   timeoutMs: number;
   streamIdleTimeoutMs: number;
+  /** Output cap when the client sets none; the worst case limits and budgets reserve. */
+  maxOutputTokens: number;
 }
 
 export interface RegistryDeps {
@@ -94,6 +96,7 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
       providerModel: deployment.model,
       timeoutMs: deployment.timeoutMs,
       streamIdleTimeoutMs: deployment.streamIdleTimeoutMs,
+      maxOutputTokens: deployment.maxOutputTokens,
     });
   }
 
