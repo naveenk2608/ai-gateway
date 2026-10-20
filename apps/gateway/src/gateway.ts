@@ -11,6 +11,7 @@ import {
   type Db,
   type Logger,
 } from '@ai-gateway/shared/node';
+import { registerAdminApi } from './admin/index.js';
 import { buildApp, type App } from './app.js';
 import { bootstrap } from './auth/bootstrap.js';
 import { AuthInvalidation } from './auth/invalidation.js';
@@ -87,6 +88,17 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     registerChatCompletions(instance, { registry, clock, verifier });
     done();
   });
+  void app.register((instance) =>
+    registerAdminApi(instance, {
+      db,
+      clock,
+      invalidation,
+      pepper: config.API_KEY_PEPPER,
+      sessionTtlSeconds: config.SESSION_TTL_SECONDS,
+      secureCookie: config.SESSION_COOKIE_SECURE ?? config.NODE_ENV === 'production',
+      rotationGraceSeconds: config.API_KEY_ROTATION_GRACE_SECONDS,
+    }),
+  );
 
   // onClose runs after in-flight requests finish, so nothing is still using the pools.
   app.addHook('onClose', async () => {
