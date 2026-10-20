@@ -1,6 +1,13 @@
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
-import { uuidv7 } from '@ai-gateway/shared';
+import type { IncomingMessage } from 'node:http';
+import {
+  startSpan,
+  traceLogFields,
+  formatTraceparent,
+  uuidv7,
+  type TraceContext,
+} from '@ai-gateway/shared';
 import { bearerMatches, type Logger } from '@ai-gateway/shared/node';
 import Fastify, {
   LogController,
@@ -18,6 +25,13 @@ import {
 import { GatewayError } from './errors.js';
 import { registerHealthRoutes, type ReadinessOptions } from './health.js';
 import type { GatewayMetrics } from './metrics.js';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** This request's span (ADR 017): continues the caller's `traceparent`, or starts a trace. */
+    traceContext: TraceContext;
+  }
+}
 
 export interface AppOptions {
   logger: Logger;
@@ -89,8 +103,16 @@ function sendError(reply: FastifyReply, error: GatewayError) {
 export function buildApp({ logger, readiness, trustProxy = 0, metrics, metricsToken }: AppOptions) {
   // Typed as Fastify's base logger so routes and plugins use the standard instance type.
   const loggerInstance: FastifyBaseLogger = logger;
+  // Spans are made with each request's logger, so its first log line already carries them.
+  const spans = new WeakMap<IncomingMessage, TraceContext>();
   const app = Fastify({
     loggerInstance,
+    childLoggerFactory(parent, bindings, options, rawRequest) {
+      const header = rawRequest.headers.traceparent;
+      const span = startSpan(typeof header === 'string' ? header : undefined);
+      spans.set(rawRequest, span);
+      return parent.child({ ...bindings, ...traceLogFields(span) }, options);
+    },
     // Every request gets a server-generated ID; client-sent IDs are never trusted.
     genReqId: () => uuidv7(),
     requestIdHeader: false,
@@ -110,8 +132,11 @@ export function buildApp({ logger, readiness, trustProxy = 0, metrics, metricsTo
     closing = true;
   });
 
+  app.decorateRequest('traceContext', null as unknown as TraceContext);
   app.addHook('onRequest', async (request, reply) => {
+    request.traceContext = spans.get(request.raw) ?? startSpan(undefined);
     void reply.header('x-request-id', request.id);
+    void reply.header('traceparent', formatTraceparent(request.traceContext));
     // Requests on kept-alive sockets can still arrive during the drain; turn them away.
     if (closing) return sendError(reply, shuttingDown);
   });

@@ -97,6 +97,21 @@ describe('OllamaProvider.chat', () => {
     });
   });
 
+  it('sends the attempt traceparent as a header, never in the body', async () => {
+    const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+    const { upstream, provider } = await setup((_req, res) =>
+      sendJson(res, 200, {
+        model: 'llama3',
+        message: { role: 'assistant', content: 'ok' },
+        done: true,
+        done_reason: 'stop',
+      }),
+    );
+    await provider.chat({ ...request, traceparent }, signal());
+    expect(upstream.requests[0]!.headers.traceparent).toBe(traceparent);
+    expect(upstream.requests[0]!.body).not.toContain('traceparent');
+  });
+
   it('maps done_reason "length" and reports missing counts as no usage', async () => {
     const { provider } = await setup((_req, res) =>
       sendJson(res, 200, {

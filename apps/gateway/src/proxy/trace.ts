@@ -4,6 +4,7 @@ import {
   uuidv7,
   type AttemptRecord,
   type Clock,
+  type TraceContext,
   type UsageEvent,
 } from '@ai-gateway/shared';
 import { messageText, type ChatMessage, type Usage } from '../providers/types.js';
@@ -15,6 +16,8 @@ export interface TraceStart {
   model: string;
   stream: boolean;
   messages: readonly ChatMessage[];
+  /** The request's span (ADR 017): attempts become its children, the event carries it. */
+  traceContext?: TraceContext;
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -55,6 +58,10 @@ export class RequestTrace {
 
   get requestId(): string {
     return this.#start.requestId;
+  }
+
+  get traceContext(): TraceContext | undefined {
+    return this.#start.traceContext;
   }
 
   nextAttemptNumber(): number {
@@ -133,6 +140,14 @@ export class RequestTrace {
       estimatedPromptTokens: this.estimatedPromptTokens,
       ...(this.#budget ? { budget: this.#budget } : {}),
       ...(this.cacheHit ? { cacheHit: true } : {}),
+      ...(this.#start.traceContext
+        ? {
+            trace: {
+              traceId: this.#start.traceContext.traceId,
+              spanId: this.#start.traceContext.spanId,
+            },
+          }
+        : {}),
     };
   }
 

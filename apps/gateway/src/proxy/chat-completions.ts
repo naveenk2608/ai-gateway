@@ -262,6 +262,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           model: body.model,
           stream: body.stream === true,
           messages: body.messages,
+          traceContext: request.traceContext,
         },
         clock,
       );

@@ -1,4 +1,4 @@
-import { abortReason, uuidv7, type Clock } from '@ai-gateway/shared';
+import { abortReason, childSpan, formatTraceparent, uuidv7, type Clock } from '@ai-gateway/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import { ProviderError } from '../providers/errors.js';
 import type { Deployment } from '../providers/registry.js';
@@ -65,6 +65,8 @@ const noop = () => undefined;
 class Attempt {
   readonly id: string;
   readonly log: FastifyBaseLogger;
+  /** The `traceparent` for the upstream call: a child span of the request's (ADR 017). */
+  readonly traceparent: string | undefined;
   readonly #ctx: AttemptContext;
   readonly #stream: boolean;
   readonly #controller = new AbortController();
@@ -80,7 +82,15 @@ class Attempt {
     this.#startedAt = ctx.clock.now();
     this.id = uuidv7(this.#startedAt);
     this.#number = ctx.trace?.nextAttemptNumber() ?? 1;
-    this.log = ctx.log.child({ attemptId: this.id, deployment: ctx.deployment.id });
+    const parent = ctx.trace?.traceContext;
+    const span = parent ? childSpan(parent) : undefined;
+    this.traceparent = span ? formatTraceparent(span) : undefined;
+    // The request's logger already has traceId and its own spanId.
+    this.log = ctx.log.child({
+      attemptId: this.id,
+      deployment: ctx.deployment.id,
+      ...(span ? { attemptSpanId: span.spanId } : {}),
+    });
     if (ctx.clientSignal.aborted) this.#onClientAbort();
     else ctx.clientSignal.addEventListener('abort', this.#onClientAbort, { once: true });
   }
@@ -182,12 +192,16 @@ class Attempt {
   }
 }
 
+function withTrace(req: ChatRequest, attempt: Attempt): ChatRequest {
+  return attempt.traceparent === undefined ? req : { ...req, traceparent: attempt.traceparent };
+}
+
 /** Runs one non-streaming attempt within the deployment's timeout. */
 export async function runChat(ctx: AttemptContext, req: ChatRequest): Promise<ChatResult> {
   const attempt = new Attempt(ctx, false);
   try {
     const result = await attempt.within(
-      ctx.deployment.provider.chat(req, attempt.signal),
+      ctx.deployment.provider.chat(withTrace(req, attempt), attempt.signal),
       ctx.deployment.timeoutMs,
       'response',
     );
@@ -214,7 +228,9 @@ export interface OpenStream {
  */
 export async function openStream(ctx: AttemptContext, req: ChatRequest): Promise<OpenStream> {
   const attempt = new Attempt(ctx, true);
-  const iterator = ctx.deployment.provider.chatStream(req, attempt.signal)[Symbol.asyncIterator]();
+  const iterator = ctx.deployment.provider
+    .chatStream(withTrace(req, attempt), attempt.signal)
+    [Symbol.asyncIterator]();
   const close = (error?: unknown) => {
     attempt.end(error);
     attempt.abort(new StreamClosedError());

@@ -67,6 +67,16 @@ export const usageEventSchema = z.object({
   budget: z.object({ limitMicroUsd: count, reservedMicroUsd: count }).optional(),
   /** Answered from the response cache (ADR 013): no attempts, and the usage costs nothing. */
   cacheHit: z.boolean().optional(),
+  /**
+   * The gateway request's W3C trace and span IDs (ADR 017), so the worker's log line for this
+   * event joins the same trace. Older events have none.
+   */
+  trace: z
+    .object({
+      traceId: z.string().regex(/^[0-9a-f]{32}$/),
+      spanId: z.string().regex(/^[0-9a-f]{16}$/),
+    })
+    .optional(),
 });
 
 export type UsageEvent = z.output<typeof usageEventSchema>;

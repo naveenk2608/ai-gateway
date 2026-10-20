@@ -1,5 +1,6 @@
 import {
   describeIssue,
+  newSpanId,
   usageEventSchema,
   uuidv7,
   type Clock,
@@ -320,6 +321,20 @@ export class UsageConsumer {
     for (const id of ids) this.#lastErrors.delete(id);
     this.#stats.processed += ids.length;
     this.#o.metrics?.consumed(ids.length);
+    // One line per event, in the request's trace (ADR 017): the batch insert is a child span of
+    // each request that emitted an event.
+    const spanId = newSpanId();
+    for (const { event } of batch) {
+      this.#o.logger.info(
+        {
+          requestId: event.request.id,
+          ...(event.trace
+            ? { traceId: event.trace.traceId, spanId, parentSpanId: event.trace.spanId }
+            : {}),
+        },
+        'usage event stored',
+      );
+    }
   }
 
   /** Retries `work` while Postgres is unreachable; other errors are thrown at once. */

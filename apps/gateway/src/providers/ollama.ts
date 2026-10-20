@@ -161,7 +161,10 @@ export class OllamaProvider implements Provider {
     };
     return postJson(this.#url, body, {
       agent: this.#agent,
-      headers: { accept: stream ? 'application/x-ndjson' : 'application/json' },
+      headers: {
+        accept: stream ? 'application/x-ndjson' : 'application/json',
+        ...(req.traceparent ? { traceparent: req.traceparent } : {}),
+      },
       signal,
       clock: this.#clock,
     });

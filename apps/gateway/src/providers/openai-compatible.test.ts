@@ -102,6 +102,15 @@ describe('OpenAICompatibleProvider.chat', () => {
     expect(String(error)).not.toContain('Secret prompt text');
   });
 
+  it('sends the attempt traceparent as a header, never in the body', async () => {
+    const { upstream, provider } = await setup((_req, res) => sendJson(res, 200, completion));
+    const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+    await provider.chat({ ...request, traceparent }, signal());
+    const sent = upstream.requests[0]!;
+    expect(sent.headers.traceparent).toBe(traceparent);
+    expect(sent.body).not.toContain('traceparent');
+  });
+
   it('reads Retry-After on a 429', async () => {
     const { provider } = await setup((_req, res) =>
       sendJson(res, 429, { error: { type: 'requests' } }, { 'retry-after': '7' }),

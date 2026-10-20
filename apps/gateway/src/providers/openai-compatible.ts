@@ -187,6 +187,7 @@ export class OpenAICompatibleProvider implements Provider {
       headers: {
         authorization: `Bearer ${this.#apiKey}`,
         accept: stream ? 'text/event-stream' : 'application/json',
+        ...(req.traceparent ? { traceparent: req.traceparent } : {}),
       },
       signal,
       clock: this.#clock,

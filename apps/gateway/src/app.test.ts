@@ -49,6 +49,55 @@ describe('request IDs', () => {
   });
 });
 
+describe('trace context', () => {
+  const TRACE = '4bf92f3577b34da6a3ce929d0e0e4736';
+  const CALLER = '00f067aa0ba902b7';
+  const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-0[01]$/;
+
+  it('starts a trace and returns its traceparent; every log line carries the IDs', async () => {
+    const { app, lines } = testApp();
+    app.get('/logs', (request) => {
+      request.log.info('inside handler');
+      return { ok: true };
+    });
+    const res = await app.inject('/logs');
+    const [, traceId, spanId] = TRACEPARENT.exec(String(res.headers.traceparent)) ?? [];
+    expect(traceId).toBeDefined();
+    const requestLines = lines.filter((l) => l.requestId === res.headers['x-request-id']);
+    expect(requestLines).toHaveLength(3);
+    for (const line of requestLines) {
+      expect(line).toMatchObject({ traceId, spanId });
+      expect(line).not.toHaveProperty('parentSpanId');
+    }
+  });
+
+  it('continues a valid incoming traceparent with a span of its own', async () => {
+    const { app, lines } = testApp();
+    const res = await app.inject({
+      url: '/health',
+      headers: { traceparent: `00-${TRACE}-${CALLER}-01` },
+    });
+    const [, traceId, spanId] = TRACEPARENT.exec(String(res.headers.traceparent)) ?? [];
+    expect(traceId).toBe(TRACE);
+    expect(spanId).not.toBe(CALLER);
+    expect(String(res.headers.traceparent)).toMatch(/-01$/);
+    const line = lines.find((l) => l.requestId === res.headers['x-request-id']);
+    expect(line).toMatchObject({ traceId: TRACE, spanId, parentSpanId: CALLER });
+  });
+
+  it('starts a new trace for an invalid traceparent, keeping the server request ID', async () => {
+    const { app } = testApp();
+    const res = await app.inject({
+      url: '/health',
+      headers: { traceparent: `00-${'0'.repeat(32)}-${CALLER}-01`, 'x-request-id': 'mine' },
+    });
+    const [, traceId] = TRACEPARENT.exec(String(res.headers.traceparent)) ?? [];
+    expect(traceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(traceId).not.toBe('0'.repeat(32));
+    expect(res.headers['x-request-id']).toMatch(UUID_V7);
+  });
+});
+
 describe('error responses', () => {
   it('answers unknown routes with an OpenAI-style 404', async () => {
     const { app } = testApp();

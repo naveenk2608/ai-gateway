@@ -28,6 +28,11 @@ export interface ChatRequest {
   frequencyPenalty?: number;
   seed?: number;
   user?: string;
+  /**
+   * W3C `traceparent` naming this attempt's span (ADR 017). HTTP adapters send it as a header,
+   * never in the body.
+   */
+  traceparent?: string;
 }
 
 export type FinishReason = 'stop' | 'length' | 'content_filter';

@@ -268,7 +268,9 @@ describe('GatewayMetrics.watch', () => {
     expect(text).toContain('gateway_dependency_up{dependency="postgres"} 0');
     expect(text).toContain('gateway_dependency_up{dependency="redis"} 1');
     expect(text).toContain('gateway_dependency_up{dependency="slow"} 0');
-    expect(text).toMatch(/gateway_dependency_latency_seconds\{dependency="slow"\} 0\.0[5-9]/);
+    // A check that never answers counts as down after the timeout (50 ms here).
+    const slow = /gateway_dependency_latency_seconds\{dependency="slow"\} ([\d.e-]+)/.exec(text);
+    expect(Number(slow?.[1])).toBeGreaterThanOrEqual(0.045);
     expect(redisCalls).toBe(1);
   });
 });

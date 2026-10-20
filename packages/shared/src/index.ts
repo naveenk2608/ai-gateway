@@ -38,3 +38,12 @@ export {
 export { budgetPeriodAt, budgetPeriodOf, type BudgetPeriod } from './budget.js';
 export { costMicroUsd, priceAt, type PriceVersion } from './pricing.js';
 export { estimatePromptTokens, estimateTextTokens, type EstimatedMessage } from './tokens.js';
+export {
+  childSpan,
+  formatTraceparent,
+  newSpanId,
+  parseTraceparent,
+  startSpan,
+  traceLogFields,
+  type TraceContext,
+} from './trace-context.js';
