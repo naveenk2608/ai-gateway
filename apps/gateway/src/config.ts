@@ -66,9 +66,10 @@ export const gatewayConfigSchema = z
 
     /**
      * Exact-match response cache (ADR 013): for temperature-0 requests and those sent with
-     * `x-gateway-cache: on`. Entries live CACHE_TTL_SECONDS; larger responses are not stored.
+     * `x-gateway-cache: on`. Off by default, because it keeps completions in Redis (prompts only
+     * as a hash). Entries live CACHE_TTL_SECONDS; larger responses are not stored.
      */
-    CACHE_ENABLED: flag.default(true),
+    CACHE_ENABLED: flag.default(false),
     CACHE_TTL_SECONDS: z.coerce
       .number()
       .int()

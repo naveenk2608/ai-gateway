@@ -4,6 +4,13 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-10-20 | M5 | Routing policies come from `config/models.json` only; the `routing_policies` table (per-project overrides) is still unused. The settings pages (M7) bring per-project policies and editing. | planned M7 |
+| 2026-10-20 | M5 | Breaker state is visible fleet-wide in Redis (`gw:health:<deployment>`) and as `provider_health_events` rows, but no admin endpoint shows it yet; the Reliability page (M6/M7) will. | planned M6/M7 |
+| 2026-10-20 | M5 | Failed attempts are not charged: their usage is unknown. A provider that bills a timed-out request is undercounted. | by design |
+| 2026-10-20 | M5 | `GET /admin/projects/:id/overview` aggregates the last 24 h of `request_records` directly; M6 replaces it with rollups and time ranges. The request list has no filters yet (M6/M7). | planned M6 |
+| 2026-10-20 | M5 | The response cache is off by default (`CACHE_ENABLED`): it keeps completions in Redis, and storing completions by default is a non-goal. Prompts only appear hashed. | by design |
+| 2026-10-20 | M5 | The dashboard is checked by typecheck, lint, build, unit tests of its API client and formatters, and an API smoke test through the nginx container; it was not rendered in a browser here and has no component tests. M7 adds page tests with its acceptance checks. | open |
+| 2026-10-20 | M5 | Latency EWMA and breakers are per instance and start empty after a restart; `lowest_latency` sends the first requests to unmeasured deployments to measure them. | by design |
 | 2026-10-20 | M4 | Limit keys are not hash-tagged, and the reservation sweeper reads keys named inside its script: Redis Cluster is not supported, a single primary is. | by design |
 | 2026-10-20 | M4 | After Redis loses its data, budget totals are rebuilt from `budget_periods`; usage still in transit at that moment (not yet ingested) is not counted. Normally under a second of traffic; an outbox (future work) would close it. | by design |
 | 2026-10-20 | M4 | Requests whose model has no `model_prices` row cost nothing and are not limited by budgets. Add prices (SQL or seed) for every paid model. | by design |
@@ -29,7 +36,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 | 2026-10-20 | M2 | CSRF protection for the admin API is `SameSite=Strict` cookies plus JSON bodies; add a CSRF token if the dashboard is ever served from a different site than the API. | by design |
 | 2026-10-20 | M1 | `POST /v1/chat/completions` is unauthenticated until API keys arrive in M2; the gateway binds to 127.0.0.1 by default. Resolved: API keys required on /v1 (M2). | done |
 | 2026-10-20 | M1 | The Ollama and OpenAI-compatible adapters are verified only against local fake servers that follow each documented wire format. No real Ollama (not installed on the dev machine) or paid API was called. Next: a smoke test against a real Ollama. | open |
-| 2026-10-20 | M1 | The mock provider runs in-process, so its settings and counters are per gateway instance. M5 ("mock heals" at runtime) and M9 (direct-to-mock benchmark) need a control or HTTP surface for it. | planned M5/M9 |
+| 2026-10-20 | M1 | The mock provider runs in-process, so its settings and counters are per gateway instance. M5 ("mock heals" at runtime) and M9 (direct-to-mock benchmark) need a control or HTTP surface for it. M5 added `MockProvider.update()` for in-process tests; an HTTP surface for M9 is still open. | planned M9 |
 | 2026-10-20 | M1 | Unsupported OpenAI parameters are rejected with a 400 naming the field: tools/function calling, `response_format`, `logprobs`, image content, `n > 1`. `GET /v1/models` is not implemented. Add when a client needs them. | open |
 | 2026-10-20 | M1 | Upstream 400s reach clients as a generic `upstream_rejected_request`. Known upstream codes (e.g. context length exceeded) could map to specific safe messages. | open |
 | 2026-10-20 | M1 | Usage is null when a provider omits counts (Ollama with a cached prompt) or a stream is interrupted; M3 records these as `estimated` or `missing`. Done in M3. | done |
@@ -41,7 +48,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 | 2026-10-20 | M1 | ADR 002 (Fastify + Zod + OpenAPI) file is written in M1 with the OpenAPI work; M0 already uses Fastify. Written, with ADR 004 (undici, abort per attempt). | done |
 | 2026-10-20 | M2 | Root script `db:migrate` is added with the first migrations (node-pg-migrate, ADR 003). Done, plus `db:seed` and `key:generate`. | done |
 | 2026-10-20 | M3 | Worker has no consumer yet; it holds the Postgres pool and Redis client the consumer will use. The pg pool's client-side query timeout defaults to 5 s; batch inserts may need a larger value. Done: the worker's pool allows 30 s. | done |
-| 2026-10-20 | M5 | Dashboard libraries from ADR 018 (TanStack Query/Table, Recharts) are added with the pages that need them. | planned M5/M7 |
+| 2026-10-20 | M5 | Dashboard libraries from ADR 018 (TanStack Query/Table, Recharts) are added with the pages that need them. Query and Table added in M5 (Table pinned to v8, whose API is known; v9 exists); Recharts with the M7 charts. | planned M7 |
 | 2026-10-20 | M8 | ADR 017 file (observability) is written in M8; M0 provides pino JSON logs with `requestId` only. | planned M8 |
 | 2026-10-20 | M9 | Root script `bench` is added with the k6 scripts. | planned M9 |
 | 2026-10-20 | M10 | No pre-stop delay between SIGTERM and closing the listener. Behind an ALB, rely on target deregistration delay; revisit if the load balancer keeps routing to a draining instance. | planned M10 |

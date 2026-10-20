@@ -29,6 +29,7 @@ beforeAll(async () => {
   gateway = createGateway(
     testConfig({
       RUN_WORKER_IN_PROCESS: 'true',
+      CACHE_ENABLED: 'true',
       EVENTS_STREAM: `test:cache:${tag}`,
       EVENTS_DLQ_STREAM: `test:cache:${tag}:dlq`,
       EVENTS_CONSUMER_GROUP: `cache-${tag}`,
