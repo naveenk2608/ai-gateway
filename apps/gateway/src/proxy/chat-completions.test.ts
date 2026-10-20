@@ -41,7 +41,7 @@ function setup() {
     },
     'test',
   );
-  const registry = createRegistry(models, { clock, logger });
+  const registry = createRegistry(models, { clock, logger, env: {} });
   const app = buildApp({ logger, readiness: { checks: {}, timeoutMs: 50 } });
   registerChatCompletions(app, { registry, clock });
 

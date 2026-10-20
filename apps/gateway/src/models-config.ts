@@ -36,7 +36,21 @@ const mockDeployment = z
   })
   .strict();
 
-const deployment = z.discriminatedUnion('provider', [mockDeployment]);
+const openAICompatibleDeployment = z
+  .object({
+    provider: z.literal('openai-compatible'),
+    model: z.string().min(1),
+    /** API root, e.g. https://api.openai.com/v1 */
+    baseUrl: z.url({ protocol: /^https?$/ }),
+    /** Name of the environment variable holding the API key; never the key itself. */
+    apiKeyEnv: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]*$/, 'use an environment variable name, e.g. OPENAI_API_KEY'),
+    ...attemptTimeouts,
+  })
+  .strict();
+
+const deployment = z.discriminatedUnion('provider', [mockDeployment, openAICompatibleDeployment]);
 
 export const modelsConfigSchema = z
   .object({

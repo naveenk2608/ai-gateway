@@ -1,7 +1,8 @@
-import type { Clock } from '@ai-gateway/shared';
+import type { Clock, Env } from '@ai-gateway/shared';
 import type { Logger } from '@ai-gateway/shared/node';
 import type { DeploymentConfig, ModelsConfig } from '../models-config.js';
 import { MockProvider } from './mock.js';
+import { OpenAICompatibleProvider } from './openai-compatible.js';
 import type { Provider } from './types.js';
 
 /** One configured upstream: a provider instance plus the model and timeouts to use with it. */
@@ -17,6 +18,8 @@ export interface Deployment {
 export interface RegistryDeps {
   clock: Clock;
   logger: Logger;
+  /** Where API keys named by `apiKeyEnv` are looked up. */
+  env: Env;
 }
 
 export class ProviderRegistry {
@@ -46,10 +49,23 @@ export class ProviderRegistry {
   }
 }
 
-function createProvider(config: DeploymentConfig, deps: RegistryDeps): Provider {
+type Created = { provider: Provider } | { disabled: string };
+
+function createProvider(config: DeploymentConfig, deps: RegistryDeps): Created {
   switch (config.provider) {
     case 'mock':
-      return new MockProvider(config.mock, deps.clock);
+      return { provider: new MockProvider(config.mock, deps.clock) };
+    case 'openai-compatible': {
+      const apiKey = deps.env[config.apiKeyEnv];
+      if (!apiKey) return { disabled: `${config.apiKeyEnv} is not set` };
+      return {
+        provider: new OpenAICompatibleProvider({
+          baseUrl: config.baseUrl,
+          apiKey,
+          clock: deps.clock,
+        }),
+      };
+    }
   }
 }
 
@@ -57,9 +73,14 @@ function createProvider(config: DeploymentConfig, deps: RegistryDeps): Provider 
 export function createRegistry(config: ModelsConfig, deps: RegistryDeps): ProviderRegistry {
   const deployments = new Map<string, Deployment>();
   for (const [id, deployment] of Object.entries(config.deployments)) {
+    const created = createProvider(deployment, deps);
+    if ('disabled' in created) {
+      deps.logger.warn({ deployment: id, reason: created.disabled }, 'deployment disabled');
+      continue;
+    }
     deployments.set(id, {
       id,
-      provider: createProvider(deployment, deps),
+      provider: created.provider,
       providerModel: deployment.model,
       timeoutMs: deployment.timeoutMs,
       streamIdleTimeoutMs: deployment.streamIdleTimeoutMs,
@@ -70,6 +91,7 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
   for (const [name, model] of Object.entries(config.models)) {
     const deployment = deployments.get(model.deployment);
     if (deployment) models.set(name, deployment);
+    else deps.logger.warn({ model: name, deployment: model.deployment }, 'model unavailable');
   }
 
   deps.logger.info(

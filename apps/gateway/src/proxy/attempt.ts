@@ -122,6 +122,7 @@ class Attempt {
       ttftMs: this.#firstEventAt === undefined ? undefined : this.#firstEventAt - this.#startedAt,
       outcome: error === undefined ? 'ok' : error instanceof ProviderError ? error.kind : 'error',
       upstreamStatus: error instanceof ProviderError ? error.upstreamStatus : undefined,
+      upstreamCode: error instanceof ProviderError ? error.upstreamCode : undefined,
     };
     if (error === undefined || (error instanceof ProviderError && error.kind === 'canceled')) {
       this.log.info(fields, 'provider attempt finished');

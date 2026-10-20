@@ -32,6 +32,8 @@ export class ProviderError extends Error {
   readonly retryable: boolean;
   readonly upstreamStatus: number | undefined;
   readonly retryAfterMs: number | undefined;
+  /** The upstream's short error code (e.g. `insufficient_quota`), for logs only. */
+  upstreamCode: string | undefined;
 
   constructor(kind: ProviderErrorKind, message: string, options: ProviderErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });

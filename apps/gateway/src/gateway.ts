@@ -1,4 +1,4 @@
-import { systemClock, type Clock } from '@ai-gateway/shared';
+import { systemClock, type Clock, type Env } from '@ai-gateway/shared';
 import {
   closeRedis,
   createPgPool,
@@ -25,13 +25,15 @@ export interface Gateway {
 export interface GatewayDeps {
   models: ModelsConfig;
   clock?: Clock;
+  /** Source of provider API keys; defaults to process.env. */
+  env?: Env;
 }
 
 export function createGateway(config: GatewayConfig, logger: Logger, deps: GatewayDeps): Gateway {
   const clock = deps.clock ?? systemClock;
   const pool = createPgPool(config.DATABASE_URL, logger);
   const redis = createRedis(config.REDIS_URL, logger);
-  const registry = createRegistry(deps.models, { clock, logger });
+  const registry = createRegistry(deps.models, { clock, logger, env: deps.env ?? process.env });
 
   const app = buildApp({
     logger,
