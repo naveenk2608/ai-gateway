@@ -80,10 +80,10 @@ describe('worker metrics', () => {
       expect(res.status).toBe(200);
       const text = await res.text();
       expect(text).toContain('worker_events_consumed_total 3');
-      expect(text).toContain('worker_stream_up 1');
-      expect(text).toContain('worker_stream_lag 0');
-      expect(text).toContain('worker_stream_pending 0');
-      expect(text).toContain('worker_dlq_length 0');
+      expect(text).toContain('usage_stream_up 1');
+      expect(text).toContain('usage_stream_lag 0');
+      expect(text).toContain('usage_stream_pending 0');
+      expect(text).toContain('usage_dlq_length 0');
       expect(text).toMatch(/^worker_batch_duration_seconds_count [1-3]$/m);
       expect(text).toMatch(/^worker_rollup_duration_seconds_count [1-3]$/m);
       expect(text).toContain('process_resident_memory_bytes');

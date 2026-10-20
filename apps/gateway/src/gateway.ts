@@ -40,7 +40,12 @@ import { HealthChecker, HealthReporter } from './routing/health.js';
 import type { RoutingDeps } from './routing/routed.js';
 import { LatencyTracker } from './routing/router.js';
 import { drainAndClose, type DrainOutcome } from './shutdown.js';
-import { createUsageConsumer, type UsageConsumer } from '@ai-gateway/worker';
+import {
+  createUsageConsumer,
+  readPipelineState,
+  watchPipeline,
+  type UsageConsumer,
+} from '@ai-gateway/worker';
 
 /** src/ and dist/ both sit three levels below the repository root, where db/migrations lives. */
 export const DEFAULT_MIGRATIONS_DIR = fileURLToPath(
@@ -201,6 +206,14 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     : null;
 
   metrics.watch({ breakers, events, pool, checks, timeoutMs: config.READY_CHECK_TIMEOUT_MS });
+  // The pipeline state stays visible here while the worker is down (stream lag rising).
+  watchPipeline(metrics.registry, () =>
+    readPipelineState(redis, clock, {
+      stream: config.EVENTS_STREAM,
+      dlqStream: config.EVENTS_DLQ_STREAM,
+      group: config.EVENTS_CONSUMER_GROUP,
+    }),
+  );
 
   const inProcess = config.RUN_WORKER_IN_PROCESS
     ? createUsageConsumer({
@@ -209,7 +222,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         db,
         logger,
         clock,
-        metrics: { registry: metrics.registry, redis },
+        metricsRegistry: metrics.registry,
       })
     : undefined;
 

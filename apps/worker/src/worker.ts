@@ -12,12 +12,11 @@ import {
   type Db,
   type Logger,
   type MetricsServer,
-  type Redis,
   type Registry,
 } from '@ai-gateway/shared/node';
 import type { ConsumerSettings, WorkerConfig } from './config.js';
 import { UsageConsumer, type ConsumerOptions } from './consumer.js';
-import { WorkerMetrics } from './metrics.js';
+import { watchPipeline, WorkerMetrics } from './metrics.js';
 import { readPipelineState } from './pipeline.js';
 
 /** src/ and dist/ both sit three levels below the repository root, where db/migrations lives. */
@@ -44,11 +43,8 @@ export interface UsageConsumerDeps {
   logger: Logger;
   clock?: Clock;
   faults?: ConsumerOptions['faults'];
-  /**
-   * Where the consumer's metrics go (ADR 017), and a connection to read the stream's state at
-   * scrape time: the consumer's own connection is held by its blocking read.
-   */
-  metrics?: { registry: Registry; redis: Redis };
+  /** Where the consumer's metrics go (ADR 017). */
+  metricsRegistry?: Registry;
 }
 
 /** A consumer on its own Redis connection, named uniquely for this process. */
@@ -59,18 +55,7 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
   const { settings, logger } = deps;
   const clock = deps.clock ?? systemClock;
   const redis = createRedis(deps.redisUrl, logger, { offlineQueue: true, role: 'usage-consumer' });
-  let metrics: WorkerMetrics | undefined;
-  if (deps.metrics) {
-    const { redis: stateRedis, registry } = deps.metrics;
-    metrics = new WorkerMetrics(registry);
-    metrics.watchPipeline(() =>
-      readPipelineState(stateRedis, clock, {
-        stream: settings.EVENTS_STREAM,
-        dlqStream: settings.EVENTS_DLQ_STREAM,
-        group: settings.EVENTS_CONSUMER_GROUP,
-      }),
-    );
-  }
+  const metrics = deps.metricsRegistry ? new WorkerMetrics(deps.metricsRegistry) : undefined;
   const consumer = new UsageConsumer({
     redis,
     db: deps.db,
@@ -103,13 +88,21 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
   const pool = createPgPool(config.DATABASE_URL, logger, { max: 5, queryTimeoutMs: 30_000 });
   const db = createDb(pool);
   const registry = createMetricsRegistry();
+  // The consumer's own connection is held by its blocking read; scrapes read on this one.
   const stateRedis = createRedis(config.REDIS_URL, logger, { role: 'metrics' });
+  watchPipeline(registry, () =>
+    readPipelineState(stateRedis, systemClock, {
+      stream: config.EVENTS_STREAM,
+      dlqStream: config.EVENTS_DLQ_STREAM,
+      group: config.EVENTS_CONSUMER_GROUP,
+    }),
+  );
   const { consumer, close } = createUsageConsumer({
     settings: config,
     redisUrl: config.REDIS_URL,
     db,
     logger,
-    metrics: { registry, redis: stateRedis },
+    metricsRegistry: registry,
   });
   let metricsServer: MetricsServer | undefined;
 

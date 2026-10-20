@@ -5,6 +5,7 @@ import type { PipelineState } from './pipeline.js';
 /**
  * The usage consumer's Prometheus metrics (ADR 017). They go on the worker's registry, or on the
  * gateway's when the consumer runs in the gateway process. No label carries an event or request ID.
+ * Stream state that any process can read is in `watchPipeline` below.
  */
 
 /** Seconds: a small batch insert up to a slow rollup or prune. */
@@ -100,53 +101,54 @@ export class WorkerMetrics {
     this.#prune.observe(seconds);
     for (const [table, rows] of Object.entries(deleted)) this.#pruned.inc({ table }, rows);
   }
+}
 
-  /**
-   * Gauges read from Redis at scrape time: stream lag, pending entries and the dead-letter
-   * stream. When Redis does not answer, `worker_stream_up` is 0 and the others are NaN (unknown),
-   * never a stale or made-up value.
-   */
-  watchPipeline(read: () => Promise<PipelineState>): void {
-    const registers = [this.registry];
-    // Every gauge below is collected in the same scrape; one read serves them all.
-    let reading: Promise<PipelineState | null> | undefined;
-    const state = () =>
-      (reading ??= read()
-        .catch(() => null)
-        .finally(() => {
-          reading = undefined;
-        }));
-    const gauge = (name: string, help: string, pick: (s: PipelineState) => number | null) =>
-      new Gauge({
-        name,
-        help,
-        registers,
-        async collect() {
-          const current = await state();
-          this.set((current === null ? null : pick(current)) ?? Number.NaN);
-        },
-      });
+/**
+ * The usage pipeline's state in Redis, read at scrape time: stream lag, pending entries and the
+ * dead-letter stream. Both the worker and the gateway register these, so the lag stays visible
+ * while the worker is down; dashboards take the max across them. When Redis does not answer,
+ * `usage_stream_up` is 0 and the others are NaN (unknown), never a stale or made-up value.
+ */
+export function watchPipeline(registry: Registry, read: () => Promise<PipelineState>): void {
+  const registers = [registry];
+  // Every gauge below is collected in the same scrape; one read serves them all.
+  let reading: Promise<PipelineState | null> | undefined;
+  const state = () =>
+    (reading ??= read()
+      .catch(() => null)
+      .finally(() => {
+        reading = undefined;
+      }));
+  const gauge = (name: string, help: string, pick: (s: PipelineState) => number | null) =>
     new Gauge({
-      name: 'worker_stream_up',
-      help: 'Whether the usage stream state could be read from Redis during this scrape.',
+      name,
+      help,
       registers,
       async collect() {
-        this.set((await state()) === null ? 0 : 1);
+        const current = await state();
+        this.set((current === null ? null : pick(current)) ?? Number.NaN);
       },
     });
-    gauge('worker_stream_lag', 'Usage events no consumer has read yet.', (s) => s.unreadEvents);
-    gauge(
-      'worker_stream_pending',
-      'Usage events read but not yet acknowledged.',
-      (s) => s.pendingEvents,
-    );
-    gauge(
-      'worker_stream_oldest_pending_age_seconds',
-      'Age of the oldest unacknowledged usage event; 0 when none is pending.',
-      (s) => (s.oldestPendingAgeMs ?? 0) / 1000,
-    );
-    gauge('worker_stream_length', 'Entries in the usage stream.', (s) => s.streamLength);
-    gauge('worker_dlq_length', 'Entries in the dead-letter stream.', (s) => s.deadLetterLength);
-    gauge('worker_consumers', 'Consumers in the usage consumer group.', (s) => s.consumers);
-  }
+  new Gauge({
+    name: 'usage_stream_up',
+    help: 'Whether the usage stream state could be read from Redis during this scrape.',
+    registers,
+    async collect() {
+      this.set((await state()) === null ? 0 : 1);
+    },
+  });
+  gauge('usage_stream_lag', 'Usage events no consumer has read yet.', (s) => s.unreadEvents);
+  gauge(
+    'usage_stream_pending',
+    'Usage events read but not yet acknowledged.',
+    (s) => s.pendingEvents,
+  );
+  gauge(
+    'usage_stream_oldest_pending_age_seconds',
+    'Age of the oldest unacknowledged usage event; 0 when none is pending.',
+    (s) => (s.oldestPendingAgeMs ?? 0) / 1000,
+  );
+  gauge('usage_stream_length', 'Entries in the usage stream.', (s) => s.streamLength);
+  gauge('usage_dlq_length', 'Entries in the dead-letter stream.', (s) => s.deadLetterLength);
+  gauge('usage_stream_consumers', 'Consumers in the usage consumer group.', (s) => s.consumers);
 }

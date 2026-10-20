@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createGateway, type Gateway } from '../src/gateway.js';
 import { parseModelsConfig } from '../src/models-config.js';
-import { createApiKey, createProject } from './db-fixtures.js';
+import { createApiKey, createProject, createUser } from './db-fixtures.js';
 import { captureLogger, testConfig, type LogLine } from './helpers.js';
 
 const tag = randomBytes(3).toString('hex');
@@ -146,7 +146,7 @@ describe('metrics after real requests', () => {
     expect(moved('gateway_usage_events_published_total')).toBe(7);
     expect(sample(after, 'gateway_usage_events_dropped_total')).toBe(0);
     expect(moved('worker_events_consumed_total')).toBe(7);
-    expect(sample(after, 'worker_stream_up')).toBe(1);
+    expect(sample(after, 'usage_stream_up')).toBe(1);
     expect(
       sample(after, 'gateway_circuit_breaker_state', { deployment: ok, state: 'closed' }),
     ).toBe(1);
@@ -204,5 +204,57 @@ describe('trace context', () => {
     expect(stored?.spanId).not.toBe(spanId);
     // Every line of the trace belongs to this one request.
     expect(new Set(traced.map((l) => l.requestId))).toEqual(new Set([requestId]));
+  });
+});
+
+describe('stream lag while no worker consumes', () => {
+  it('rises in /metrics and in the infra endpoint the Infrastructure page reads', async () => {
+    const lagTag = randomBytes(3).toString('hex');
+    // No consumer: the worker is stopped (and none runs in-process).
+    const idle = createGateway(
+      testConfig({
+        EVENTS_STREAM: `test:lag:${lagTag}`,
+        EVENTS_DLQ_STREAM: `test:lag:${lagTag}:dlq`,
+        EVENTS_CONSUMER_GROUP: `lag-${lagTag}`,
+        METRICS_TOKEN: TOKEN,
+      }),
+      captureLogger().logger,
+      { models },
+    );
+    await idle.start();
+    try {
+      const base = `http://127.0.0.1:${(idle.app.server.address() as AddressInfo).port}`;
+      const projectId = await createProject(idle.db);
+      const apiKey = (await createApiKey(idle.db, projectId)).plaintext;
+      const viewer = await createUser(idle.db, [{ projectId, role: 'viewer' }]);
+      const login = await fetch(`${base}/admin/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: viewer.email, password: viewer.password }),
+      });
+      const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0]!;
+      const unread = async () => {
+        const res = await fetch(`${base}/admin/analytics/infra?projectId=${projectId}&range=1h`, {
+          headers: { cookie },
+        });
+        return ((await res.json()) as { pipeline: { unreadEvents: number } }).pipeline.unreadEvents;
+      };
+
+      expect(sample(await scrape(base), 'usage_stream_lag')).toBe(0);
+      expect(await unread()).toBe(0);
+      for (let i = 0; i < 3; i++) {
+        const res = await fetch(`${base}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({ model: 'mock-ok', messages: [{ role: 'user', content: 'hi' }] }),
+        });
+        expect(res.status).toBe(200);
+      }
+      await vi.waitFor(async () => expect(sample(await scrape(base), 'usage_stream_lag')).toBe(3));
+      expect(await unread()).toBe(3);
+      expect(sample(await scrape(base), 'usage_stream_up')).toBe(1);
+    } finally {
+      await idle.shutdown();
+    }
   });
 });
