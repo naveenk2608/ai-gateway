@@ -64,6 +64,19 @@ export const gatewayConfigSchema = z
     HEALTH_CHECK_INTERVAL_MS: z.coerce.number().int().min(100).default(5_000),
     HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).default(5_000),
 
+    /**
+     * Exact-match response cache (ADR 013): for temperature-0 requests and those sent with
+     * `x-gateway-cache: on`. Entries live CACHE_TTL_SECONDS; larger responses are not stored.
+     */
+    CACHE_ENABLED: flag.default(true),
+    CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(30 * 24 * 3600)
+      .default(3_600),
+    CACHE_MAX_ENTRY_BYTES: z.coerce.number().int().min(1_024).max(10_000_000).default(262_144),
+
     /** Apply pending migrations at startup, under an advisory lock (safe with several instances). */
     MIGRATE_ON_START: flag.default(true),
     /** Defaults to db/migrations in the repository; the container image sets its own path. */

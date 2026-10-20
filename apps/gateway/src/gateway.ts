@@ -13,6 +13,7 @@ import {
   type Logger,
 } from '@ai-gateway/shared/node';
 import { registerAdminApi } from './admin/index.js';
+import { ResponseCache } from './cache/response-cache.js';
 import { buildApp, type App } from './app.js';
 import { bootstrap } from './auth/bootstrap.js';
 import { AuthInvalidation } from './auth/invalidation.js';
@@ -166,6 +167,15 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     },
   };
 
+  const cache = config.CACHE_ENABLED
+    ? new ResponseCache({
+        redis,
+        logger,
+        ttlSeconds: config.CACHE_TTL_SECONDS,
+        maxEntryBytes: config.CACHE_MAX_ENTRY_BYTES,
+      })
+    : null;
+
   const inProcess = config.RUN_WORKER_IN_PROCESS
     ? createUsageConsumer({ settings: config, redisUrl: config.REDIS_URL, db, logger, clock })
     : undefined;
@@ -182,7 +192,15 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     },
   });
   void app.register((instance, _opts, done) => {
-    registerChatCompletions(instance, { registry, clock, verifier, events, admission, routing });
+    registerChatCompletions(instance, {
+      registry,
+      clock,
+      verifier,
+      events,
+      admission,
+      routing,
+      cache,
+    });
     done();
   });
   void app.register((instance) =>

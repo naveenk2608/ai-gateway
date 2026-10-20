@@ -6,7 +6,8 @@ import {
   type BudgetPeriod,
   type UsageEvent,
 } from '@ai-gateway/shared';
-import type { Db } from '@ai-gateway/shared/node';
+import type { Database, Db } from '@ai-gateway/shared/node';
+import type { Insertable } from 'kysely';
 
 interface Price {
   id: string;
@@ -83,7 +84,7 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
   await trx
     .insertInto('request_records')
     .values(
-      events.map(({ request: r, attempts }) => ({
+      events.map(({ request: r, attempts, ...event }) => ({
         id: r.id,
         project_id: r.projectId,
         api_key_id: r.apiKeyId,
@@ -98,6 +99,7 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
         completed_at: r.completedAt,
         latency_ms: r.latencyMs,
         ttft_ms: r.ttftMs,
+        cache_hit: event.cacheHit === true,
       })),
     )
     .onConflict((oc) => oc.doNothing())
@@ -128,10 +130,33 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
       .execute();
   }
 
-  const usageRows = events.flatMap((event) => {
+  const usageRows = events.flatMap((event): Insertable<Database['usage_events']>[] => {
     const attempt = finalAttempt(event);
-    // A request rejected before any provider call has no usage to account.
-    if (!attempt) return [];
+    if (!attempt) {
+      // A cache hit used no provider: its tokens are recorded, at no cost (ADR 013). A request
+      // rejected before any provider call has no usage to account.
+      if (!event.cacheHit) return [];
+      return [
+        {
+          id: uuidv7(Date.parse(event.occurredAt)),
+          event_id: event.eventId,
+          request_id: event.request.id,
+          project_id: event.request.projectId,
+          api_key_id: event.request.apiKeyId,
+          deployment: null,
+          provider: null,
+          provider_model: null,
+          prompt_tokens: event.usage?.promptTokens ?? null,
+          completion_tokens: event.usage?.completionTokens ?? null,
+          total_tokens: event.usage?.totalTokens ?? null,
+          usage_source: event.usageSource,
+          cost_micro_usd: 0,
+          price_id: null,
+          estimated_prompt_tokens: event.estimatedPromptTokens ?? null,
+          occurred_at: event.occurredAt,
+        },
+      ];
+    }
     const usage = event.usage;
     const price = usage
       ? priceAt(
@@ -173,7 +198,7 @@ export async function ingestEvents(trx: Db, events: UsageEvent[]): Promise<void>
           .onConflict((oc) => oc.doNothing())
           .returning('request_id')
           .execute();
-  const costs = new Map(usageRows.map((row) => [row.request_id, row.cost_micro_usd]));
+  const costs = new Map(usageRows.map((row) => [row.request_id, row.cost_micro_usd ?? null]));
   await updateBudgetLedger(trx, events, costs, new Set(inserted.map((row) => row.request_id)));
 }
 

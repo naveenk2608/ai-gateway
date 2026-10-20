@@ -6,6 +6,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { apiKeyAuth } from '../auth/api-key-auth.js';
 import type { KeyVerifier } from '../auth/key-verifier.js';
 import { GatewayError } from '../errors.js';
+import { CACHE_HEADER, cacheable, cacheKey, type ResponseCache } from '../cache/response-cache.js';
 import type { EventBus } from '../events/bus.js';
 import type { AdmissionControl } from '../limits/admission.js';
 import { ProviderError } from '../providers/errors.js';
@@ -43,6 +44,8 @@ export interface ChatRouteOptions {
   events: EventBus;
   admission: AdmissionControl;
   routing: RoutingDeps;
+  /** The exact-match response cache (ADR 013); absent when CACHE_ENABLED is off. */
+  cache?: ResponseCache | null;
 }
 
 interface ResponseMeta {
@@ -150,9 +153,12 @@ async function* sseBody(
   log: FastifyBaseLogger,
   trace: RequestTrace,
   onEnd: () => void,
+  /** Called with the whole response when the stream completes (to cache it). */
+  onComplete?: (result: ChatResult) => void,
 ): AsyncGenerator<string> {
   let completed = false;
   let failure: unknown;
+  const text: string[] = [];
   try {
     yield write.role();
     let next = stream.first;
@@ -160,9 +166,15 @@ async function* sseBody(
       const event = next.value;
       if (event.type === 'content') {
         trace.addCompletionText(event.text);
+        if (onComplete) text.push(event.text);
         if (event.text !== '') yield write.content(event.text);
       } else {
         trace.setUsage(event.usage);
+        onComplete?.({
+          content: text.join(''),
+          finishReason: event.finishReason,
+          usage: event.usage,
+        });
         yield write.finish(event.finishReason);
         if (write.includeUsage && event.usage) yield write.usage(event.usage);
         yield SSE_DONE;
@@ -198,7 +210,7 @@ function upstreamFailure(err: unknown): unknown {
 }
 
 export function registerChatCompletions(app: FastifyInstance, options: ChatRouteOptions): void {
-  const { registry, clock, verifier, events, admission, routing } = options;
+  const { registry, clock, verifier, events, admission, routing, cache = null } = options;
   app.decorateRequest('apiKey', null);
   app.decorateRequest('trace', null);
 
@@ -301,11 +313,43 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           model: body.model,
         };
 
+        // Exact-match cache (ADR 013), after admission so hits still count toward RPM.
+        const header = request.headers[CACHE_HEADER];
+        const key =
+          cache && cacheable(body, typeof header === 'string' ? header : undefined)
+            ? cacheKey(apiKey.projectId, body)
+            : null;
+        if (cache && key) {
+          const hit = await cache.get(key);
+          void reply.header(CACHE_HEADER, hit ? 'hit' : 'miss');
+          if (hit) {
+            trace.cacheHit = true;
+            trace.markFirstToken();
+            trace.setUsage(hit.usage);
+            trace.addCompletionText(hit.content);
+            if (body.stream !== true) return toChatCompletion(meta, hit);
+            const write = chunkWriter(meta, body.stream_options?.include_usage === true);
+            const chunks = [
+              write.role(),
+              write.content(hit.content),
+              write.finish(hit.finishReason),
+              ...(write.includeUsage && hit.usage ? [write.usage(hit.usage)] : []),
+              SSE_DONE,
+            ];
+            void reply
+              .header('content-type', 'text/event-stream; charset=utf-8')
+              .header('cache-control', 'no-cache');
+            return reply.send(Readable.from(chunks, { objectMode: false }) as never);
+          }
+        }
+        const store = cache && key ? (result: ChatResult) => cache.set(key, result) : undefined;
+
         if (body.stream !== true) {
           try {
             const result = await runRouted(routing, routed, (ctx) => runChat(ctx, requestFor(ctx)));
             trace.setUsage(result.usage);
             trace.addCompletionText(result.content);
+            store?.(result);
             return toChatCompletion(meta, result);
           } catch (err) {
             throw upstreamFailure(err);
@@ -333,7 +377,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           settlement.release();
           emit(trace, 200);
         };
-        const sse = Readable.from(sseBody(stream, write, request.log, trace, onEnd), {
+        const sse = Readable.from(sseBody(stream, write, request.log, trace, onEnd, store), {
           objectMode: false,
         });
         streamOwnsSettlement = true;

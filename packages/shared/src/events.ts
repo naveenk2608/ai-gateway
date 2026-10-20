@@ -65,6 +65,8 @@ export const usageEventSchema = z.object({
    * reserved before the call. The worker audits it as a budget reservation.
    */
   budget: z.object({ limitMicroUsd: count, reservedMicroUsd: count }).optional(),
+  /** Answered from the response cache (ADR 013): no attempts, and the usage costs nothing. */
+  cacheHit: z.boolean().optional(),
 });
 
 export type UsageEvent = z.output<typeof usageEventSchema>;

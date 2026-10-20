@@ -183,6 +183,8 @@ export class AdmissionControl {
 
   /** Tokens and cost the request used, from the same usage its event reports. */
   #actual(trace: RequestTrace) {
+    // Served from the cache: no provider tokens, no cost.
+    if (trace.cacheHit) return { tokens: 0, costMicroUsd: 0 };
     const { usage } = trace.usage();
     const final = trace.attempts.at(-1);
     if (!usage || !final) {

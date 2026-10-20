@@ -35,6 +35,8 @@ const requestDetailSchema = z.object({
   completedAt: z.string(),
   latencyMs: z.number(),
   ttftMs: z.number().nullable(),
+  /** Answered from the response cache: no attempts, zero cost. */
+  cacheHit: z.boolean(),
   /** Null for requests rejected before any provider call. */
   usage: z
     .object({
@@ -111,6 +113,7 @@ export function registerRequestRoutes(app: FastifyInstance, deps: AdminDeps): vo
         completedAt: iso(record.completed_at),
         latencyMs: record.latency_ms,
         ttftMs: record.ttft_ms,
+        cacheHit: record.cache_hit,
         usage: usage
           ? {
               source: usage.usage_source,

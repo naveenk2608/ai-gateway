@@ -24,7 +24,7 @@ const TABLES = [
   'users',
 ];
 
-const MIGRATIONS = ['0001_initial-schema', '0002_limits-and-budgets'];
+const MIGRATIONS = ['0001_initial-schema', '0002_limits-and-budgets', '0003_response-cache'];
 
 /** A throwaway database, so migrations run from scratch. */
 const dbName = `gw_migrate_${randomBytes(4).toString('hex')}`;

@@ -116,6 +116,7 @@ export interface RequestRecordsTable {
   completed_at: Timestamp;
   latency_ms: number;
   ttft_ms: number | null;
+  cache_hit: Generated<boolean>;
   created_at: CreatedAt;
 }
 

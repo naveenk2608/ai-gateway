@@ -38,6 +38,8 @@ export class RequestTrace {
   #completionText = false;
   #errorCode: string | null = null;
   #budget: UsageEvent['budget'];
+  /** Answered from the response cache. */
+  cacheHit = false;
   #finished = false;
   /** Set once the SSE body owns the response; the stream then finishes the trace itself. */
   streaming = false;
@@ -130,6 +132,7 @@ export class RequestTrace {
       usageSource,
       estimatedPromptTokens: this.estimatedPromptTokens,
       ...(this.#budget ? { budget: this.#budget } : {}),
+      ...(this.cacheHit ? { cacheHit: true } : {}),
     };
   }
 
