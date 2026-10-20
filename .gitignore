@@ -6,6 +6,8 @@ node_modules/
 dist/
 build/
 coverage/
+test-results/
+playwright-report/
 *.tsbuildinfo
 bench/results/*.json
 !bench/results/.gitkeep

@@ -11,6 +11,7 @@
     "build": "pnpm -r build",
     "test": "vitest run --project unit",
     "test:int": "vitest run --project integration",
+    "test:e2e": "pnpm --filter @ai-gateway/dashboard test:e2e",
     "lint": "eslint .",
     "check:dashboard-data": "tsx scripts/check-dashboard-data.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --workspace-concurrency=1 typecheck",
