@@ -15,7 +15,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --workspace-concurrency=1 typecheck",
     "format": "tsx scripts/format.ts --write",
     "format:check": "tsx scripts/format.ts --check",
-    "db:migrate": "pnpm --filter @ai-gateway/gateway db:migrate"
+    "db:migrate": "pnpm --filter @ai-gateway/gateway db:migrate",
+    "db:seed": "pnpm --filter @ai-gateway/gateway db:seed",
+    "key:generate": "pnpm --silent --filter @ai-gateway/gateway key:generate"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -49,6 +49,13 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       # Optional: enables the hosted example deployment in config/models.json.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Required: set it in .env (`openssl rand -hex 32`); the gateway exits without it.
+      API_KEY_PEPPER: ${API_KEY_PEPPER:-}
+      # Plain HTTP on localhost, so the session cookie cannot be HTTPS-only.
+      SESSION_COOKIE_SECURE: 'false'
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
     extra_hosts:
       # Makes host.docker.internal resolve on Linux too (Docker Desktop provides it already).
       - host.docker.internal:host-gateway

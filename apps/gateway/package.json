@@ -12,7 +12,9 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:migrate": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/migrate.ts"
+    "db:migrate": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/migrate.ts",
+    "db:seed": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/seed.ts",
+    "key:generate": "tsx --conditions=development src/cli/generate-key.ts"
   },
   "dependencies": {
     "@ai-gateway/shared": "workspace:*",

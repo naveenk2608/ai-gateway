@@ -4,7 +4,14 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
-| 2026-10-20 | M1 | `POST /v1/chat/completions` is unauthenticated until API keys arrive in M2; the gateway binds to 127.0.0.1 by default. | planned M2 |
+| 2026-10-20 | M2 | Admin login and invalid API keys are not rate-limited; failed logins are only logged. Add per-IP/per-email login limits and invalid-key limits with the M4 Lua scripts. | planned M4 |
+| 2026-10-20 | M2 | `API_KEY_PEPPER` cannot be rotated without invalidating every key. Dual-pepper verification (try new, then old, rehash on use) would allow it. | open |
+| 2026-10-20 | M2 | No endpoints yet to change one's own password, reset a password, disable a user or list sessions; expired sessions are deleted only at that user's next login. | open |
+| 2026-10-20 | M2 | `api_keys.last_used_at` is not tracked (it would add a write per request). The dashboard can derive last use from usage rows (M6). | planned M6 |
+| 2026-10-20 | M2 | `model_deployments`, `routing_policies`, `budget_*` and `provider_health_events` tables exist but are unused: deployments still come from `config/models.json`. Routing (M5), budgets (M4) and the settings pages (M7) start using them. Prices have no admin endpoint; insert rows with SQL or the seed. | planned M4/M5/M7 |
+| 2026-10-20 | M2 | `request_records` and `usage_events` are not partitioned. Revisit with retention in M6. | planned M6 |
+| 2026-10-20 | M2 | CSRF protection for the admin API is `SameSite=Strict` cookies plus JSON bodies; add a CSRF token if the dashboard is ever served from a different site than the API. | by design |
+| 2026-10-20 | M1 | `POST /v1/chat/completions` is unauthenticated until API keys arrive in M2; the gateway binds to 127.0.0.1 by default. Resolved: API keys required on /v1 (M2). | done |
 | 2026-10-20 | M1 | The Ollama and OpenAI-compatible adapters are verified only against local fake servers that follow each documented wire format. No real Ollama (not installed on the dev machine) or paid API was called. Next: a smoke test against a real Ollama. | open |
 | 2026-10-20 | M1 | The mock provider runs in-process, so its settings and counters are per gateway instance. M5 ("mock heals" at runtime) and M9 (direct-to-mock benchmark) need a control or HTTP surface for it. | planned M5/M9 |
 | 2026-10-20 | M1 | Unsupported OpenAI parameters are rejected with a 400 naming the field: tools/function calling, `response_format`, `logprobs`, image content, `n > 1`. `GET /v1/models` is not implemented. Add when a client needs them. | open |
@@ -16,7 +23,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 | 2026-10-20 | M0 | Toolchain pins below latest: TypeScript 6.0.3 (typescript-eslint 8.72 supports `<6.1`; TS 7 is out) and pnpm 10.34.7 (corepack 0.32 bundled with Node 22.16 cannot run pnpm 12). Revisit when typescript-eslint supports TS 7. | open |
 | 2026-10-20 | M1 | Drain marks responses `Connection: close` in `onSend`. SSE responses send headers before a drain can start, so M1 must end or flag streams on drain itself (and the drain timeout must cover long streams). Resolved: a stream that started before the drain finishes, then its socket is closed (tested); `SHUTDOWN_TIMEOUT_MS` still bounds long streams. | done |
 | 2026-10-20 | M1 | ADR 002 (Fastify + Zod + OpenAPI) file is written in M1 with the OpenAPI work; M0 already uses Fastify. Written, with ADR 004 (undici, abort per attempt). | done |
-| 2026-10-20 | M2 | Root script `db:migrate` is added with the first migrations (node-pg-migrate, ADR 003). | planned M2 |
+| 2026-10-20 | M2 | Root script `db:migrate` is added with the first migrations (node-pg-migrate, ADR 003). Done, plus `db:seed` and `key:generate`. | done |
 | 2026-10-20 | M3 | Worker has no consumer yet; it holds the Postgres pool and Redis client the consumer will use. The pg pool's client-side query timeout defaults to 5 s; batch inserts may need a larger value. | planned M3 |
 | 2026-10-20 | M5 | Dashboard libraries from ADR 018 (TanStack Query/Table, Recharts) are added with the pages that need them. | planned M5/M7 |
 | 2026-10-20 | M8 | ADR 017 file (observability) is written in M8; M0 provides pino JSON logs with `requestId` only. | planned M8 |
