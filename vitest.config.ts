@@ -15,6 +15,10 @@ export default defineConfig({
         find: /^@ai-gateway\/shared\/node$/,
         replacement: fromRoot('./packages/shared/src/node/index.ts'),
       },
+      {
+        find: /^@ai-gateway\/worker$/,
+        replacement: fromRoot('./apps/worker/src/index.ts'),
+      },
     ],
   },
   test: {

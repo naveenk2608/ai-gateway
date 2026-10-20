@@ -6,6 +6,13 @@
   "files": [
     "dist"
   ],
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "dev": "tsx watch --conditions=development --env-file-if-exists=../../.env src/main.ts",
     "build": "tsc -p tsconfig.build.json",

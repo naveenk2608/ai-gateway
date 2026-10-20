@@ -8,4 +8,9 @@ const worker = createWorker(config, logger);
 
 onShutdownSignal(logger, async () => ((await worker.stop()) === 'stopped' ? 0 : 1));
 
-worker.start();
+try {
+  await worker.start();
+} catch (err) {
+  logger.fatal({ err }, 'worker failed to start');
+  process.exit(1);
+}
