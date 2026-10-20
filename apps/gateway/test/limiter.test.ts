@@ -263,3 +263,14 @@ describe('budgets (reserve worst case, reconcile to actual)', () => {
     expect((await t.rejection(budget(100), { costMicroUsd: 1 })).reason).toBe('budget');
   });
 });
+
+describe('simple buckets (admin logins)', () => {
+  it('allows the per-minute count, then says when the next one is allowed', async () => {
+    const t = setup();
+    for (let i = 0; i < 3; i++) expect(await t.limiter.take('login:x', 3)).toBeNull();
+    expect(await t.limiter.take('login:x', 3)).toBe(20_000);
+    expect(await t.limiter.take('login:y', 3)).toBeNull();
+    await t.clock.advance(20_000);
+    expect(await t.limiter.take('login:x', 3)).toBeNull();
+  });
+});

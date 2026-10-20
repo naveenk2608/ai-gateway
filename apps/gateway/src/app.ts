@@ -21,6 +21,8 @@ import { registerHealthRoutes, type ReadinessOptions } from './health.js';
 export interface AppOptions {
   logger: Logger;
   readiness: ReadinessOptions;
+  /** Trusted proxy hops for X-Forwarded-For (request.ip); 0 trusts none. */
+  trustProxy?: number;
 }
 
 const shuttingDown = new GatewayError('shutting_down', 'Server is shutting down, retry shortly', {
@@ -73,7 +75,7 @@ function sendError(reply: FastifyReply, error: GatewayError) {
   return reply.code(error.httpStatus).send(error.toBody());
 }
 
-export function buildApp({ logger, readiness }: AppOptions) {
+export function buildApp({ logger, readiness, trustProxy = 0 }: AppOptions) {
   // Typed as Fastify's base logger so routes and plugins use the standard instance type.
   const loggerInstance: FastifyBaseLogger = logger;
   const app = Fastify({
@@ -86,6 +88,8 @@ export function buildApp({ logger, readiness }: AppOptions) {
     return503OnClosing: false,
     forceCloseConnections: 'idle',
     bodyLimit: BODY_LIMIT_BYTES,
+    // Trust the nearest `trustProxy` hops, as proxy-addr does for a number.
+    trustProxy: trustProxy > 0 ? (_address: string, hop: number) => hop < trustProxy : false,
   });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);

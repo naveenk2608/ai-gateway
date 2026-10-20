@@ -1,7 +1,7 @@
 import { budgetPeriodAt, type BudgetPeriod, type Clock } from '@ai-gateway/shared';
 import type { Logger, Redis } from '@ai-gateway/shared/node';
 import type { ScopeLimits, UsagePolicy } from './policy.js';
-import { ADMIT, INIT_BUDGET, RENEW, SETTLE, SWEEP } from './scripts.js';
+import { ADMIT, INIT_BUDGET, RENEW, SETTLE, SWEEP, TAKE } from './scripts.js';
 
 export type LimitReason = 'rpm' | 'tpm' | 'concurrency' | 'budget';
 export type LimitScope = 'key' | 'project';
@@ -156,6 +156,19 @@ export class Limiter {
       budgeted,
     });
     return { admitted: true, ticket };
+  }
+
+  /**
+   * Takes one request from the bucket `name`, allowing `perMinute`. Returns null when allowed,
+   * otherwise how long until it would be.
+   */
+  async take(name: string, perMinute: number): Promise<number | null> {
+    const reply = (await TAKE.run(
+      this.#o.redis,
+      [`${this.#prefix}rl:${name}`],
+      [this.#o.clock.now(), perMinute],
+    )) as number[];
+    return reply[0] === 1 ? null : Number(reply[1]);
   }
 
   /**

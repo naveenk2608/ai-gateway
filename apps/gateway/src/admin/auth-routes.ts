@@ -29,6 +29,8 @@ export function registerLoginRoute(app: FastifyInstance, deps: AdminDeps): void 
     },
     async (request, reply) => {
       const email = request.body.email.toLowerCase();
+      // Before the password hash runs, so guessing is slow and cannot burn CPU.
+      await deps.loginThrottle.check(email, request.ip, request.log);
       const user = await db
         .selectFrom('users')
         .select(['id', 'email', 'password_hash'])

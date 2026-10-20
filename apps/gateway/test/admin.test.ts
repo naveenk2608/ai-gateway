@@ -685,3 +685,22 @@ describe('limits and budgets through the admin API', () => {
     );
   });
 });
+
+describe('login rate limit', () => {
+  it('stops password guessing on one account after LOGIN_ATTEMPTS_PER_MINUTE', async () => {
+    const user = await createUser(db);
+    const other = await createUser(db);
+    const attempt = (u: TestUser, password: string) =>
+      api('POST', '/admin/auth/login', undefined, { email: u.email, password });
+    for (let i = 0; i < 10; i++) expect((await attempt(user, 'wrong-password')).status).toBe(401);
+
+    const limited = await attempt(user, user.password);
+    expect(limited).toMatchObject({
+      status: 429,
+      body: { error: { code: 'too_many_login_attempts' } },
+    });
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+    // Other accounts are unaffected.
+    expect((await attempt(other, other.password)).status).toBe(200);
+  });
+});

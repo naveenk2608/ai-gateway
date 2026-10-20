@@ -2,6 +2,7 @@ import type { Clock } from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
 import { z } from 'zod';
 import type { AuthInvalidation } from '../auth/invalidation.js';
+import type { LoginThrottle } from '../limits/login-throttle.js';
 import { errorBodySchema } from '../proxy/schema.js';
 
 export interface AdminDeps {
@@ -12,6 +13,7 @@ export interface AdminDeps {
   sessionTtlSeconds: number;
   secureCookie: boolean;
   rotationGraceSeconds: number;
+  loginThrottle: Pick<LoginThrottle, 'check'>;
 }
 
 export const roleSchema = z.enum(['owner', 'admin', 'viewer']);

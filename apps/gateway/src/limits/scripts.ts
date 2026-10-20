@@ -214,3 +214,17 @@ for _, member in ipairs(members) do
 end
 return expired
 `);
+
+/**
+ * Takes one token from a bucket of `cap` per minute, for simple rate limits (admin logins).
+ * KEYS: 1 bucket. ARGV: 1 now, 2 cap. Returns {1} or {0, retryAfterMs}.
+ */
+export const TAKE = new LuaScript(`${BUCKET}
+local now = tonumber(ARGV[1])
+local cap = tonumber(ARGV[2])
+local tokens, ts = bucket(KEYS[1], cap, now)
+if tokens < 1 then return {0, math.ceil((1 - tokens) * 60000 / cap)} end
+redis.call('HSET', KEYS[1], 'tokens', tokens - 1, 'ts', ts)
+redis.call('PEXPIRE', KEYS[1], 120000)
+return {1}
+`);

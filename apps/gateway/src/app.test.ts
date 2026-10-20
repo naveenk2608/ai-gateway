@@ -115,3 +115,28 @@ describe('error responses', () => {
     expect(body.error.code).toMatch(/^FST_ERR_/);
   });
 });
+
+describe('client IP behind proxies (TRUST_PROXY)', () => {
+  function ipApp(trustProxy: number) {
+    const app = buildApp({
+      logger: captureLogger().logger,
+      readiness: { checks: {}, timeoutMs: 50 },
+      trustProxy,
+    });
+    app.get('/ip', (request) => ({ ip: request.ip }));
+    return app;
+  }
+  const ip = async (trustProxy: number, forwardedFor: string) =>
+    (
+      await ipApp(trustProxy).inject({ url: '/ip', headers: { 'x-forwarded-for': forwardedFor } })
+    ).json<{ ip: string }>().ip;
+
+  it('uses the TCP peer by default, ignoring X-Forwarded-For', async () => {
+    expect(await ip(0, '203.0.113.9')).toBe('127.0.0.1');
+  });
+
+  it('takes the entry the trusted proxy added, not one the client wrote', async () => {
+    expect(await ip(1, '198.51.100.1, 203.0.113.9')).toBe('203.0.113.9');
+    expect(await ip(2, '198.51.100.1, 203.0.113.9, 10.0.0.2')).toBe('203.0.113.9');
+  });
+});

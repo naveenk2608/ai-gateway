@@ -22,6 +22,7 @@ import { RedisStreamBus } from './events/redis-stream.js';
 import { AdmissionControl } from './limits/admission.js';
 import { databaseSpendLoader, ReservationSweeper } from './limits/ledger.js';
 import { Limiter } from './limits/limiter.js';
+import { LoginThrottle } from './limits/login-throttle.js';
 import { databasePriceLoader, PriceBook } from './limits/prices.js';
 import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
@@ -128,6 +129,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
 
   const app = buildApp({
     logger,
+    trustProxy: config.TRUST_PROXY,
     readiness: {
       checks: {
         postgres: () => pingPostgres(pool),
@@ -149,6 +151,12 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       sessionTtlSeconds: config.SESSION_TTL_SECONDS,
       secureCookie: config.SESSION_COOKIE_SECURE ?? config.NODE_ENV === 'production',
       rotationGraceSeconds: config.API_KEY_ROTATION_GRACE_SECONDS,
+      loginThrottle: new LoginThrottle({
+        limiter,
+        perEmail: config.LOGIN_ATTEMPTS_PER_MINUTE,
+        perIp: config.LOGIN_ATTEMPTS_PER_MINUTE_PER_IP,
+        failMode: config.LIMITS_FAIL_MODE,
+      }),
     }),
   );
 

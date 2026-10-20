@@ -12,6 +12,11 @@ export const gatewayConfigSchema = z
     HOST: z.string().min(1).default('127.0.0.1'),
     PORT: z.coerce.number().int().min(0).max(65_535).default(8080),
     READY_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(2_000),
+    /**
+     * Proxies in front of the gateway whose X-Forwarded-For entries are trusted, counted from the
+     * right; the client IP is the entry before them. 0 uses the TCP peer address.
+     */
+    TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
     /** JSON file mapping logical model names to deployments; defaults to config/models.json. */
     MODELS_CONFIG_PATH: z.string().min(1).optional(),
     /** Default server for Ollama deployments that do not set baseUrl. */
@@ -60,6 +65,10 @@ export const gatewayConfigSchema = z
       .min(0)
       .max(30 * 24 * 3600)
       .default(24 * 3600),
+
+    /** Admin login attempts allowed per minute for one email address, and from one client IP. */
+    LOGIN_ATTEMPTS_PER_MINUTE: z.coerce.number().int().positive().default(10),
+    LOGIN_ATTEMPTS_PER_MINUTE_PER_IP: z.coerce.number().int().positive().default(30),
 
     /** Admin session lifetime. */
     SESSION_TTL_SECONDS: z.coerce
