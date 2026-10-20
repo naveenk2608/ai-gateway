@@ -290,6 +290,107 @@ describe('roles', () => {
     ).toBe(403);
   });
 
+  it('refuses every project change to a viewer and leaves the project as it was', async () => {
+    const p = await createProject(db);
+    const viewer = await createUser(db, [{ projectId: p, role: 'viewer' }]);
+    const other = await createUser(db, [{ projectId: p, role: 'admin' }]);
+    const key = await createApiKey(db, p);
+    const cookie = await login(viewer);
+    // [route, path, valid body]: a valid body, so only the role can be the reason for a refusal.
+    const cases: [string, string, unknown?][] = [
+      ['PATCH /admin/projects/:projectId', `/admin/projects/${p}`, { name: 'renamed' }],
+      [
+        'POST /admin/projects/:projectId/members',
+        `/admin/projects/${p}/members`,
+        { email: other.email, role: 'viewer' },
+      ],
+      [
+        'PATCH /admin/projects/:projectId/members/:userId',
+        `/admin/projects/${p}/members/${other.id}`,
+        { role: 'viewer' },
+      ],
+      [
+        'DELETE /admin/projects/:projectId/members/:userId',
+        `/admin/projects/${p}/members/${other.id}`,
+      ],
+      ['POST /admin/projects/:projectId/api-keys', `/admin/projects/${p}/api-keys`, { name: 'x' }],
+      [
+        'PATCH /admin/projects/:projectId/api-keys/:apiKeyId',
+        `/admin/projects/${p}/api-keys/${key.id}`,
+        { limits: { requestsPerMinute: 1 } },
+      ],
+      [
+        'POST /admin/projects/:projectId/api-keys/:apiKeyId/revoke',
+        `/admin/projects/${p}/api-keys/${key.id}/revoke`,
+      ],
+      [
+        'POST /admin/projects/:projectId/api-keys/:apiKeyId/rotate',
+        `/admin/projects/${p}/api-keys/${key.id}/rotate`,
+        {},
+      ],
+    ];
+    // The table covers every registered route that changes a project.
+    const mutations = routes.filter((r) => r.includes(':projectId') && !r.startsWith('GET '));
+    expect(cases.map(([route]) => route).sort()).toEqual([...new Set(mutations)].sort());
+
+    for (const [route, path, body] of cases) {
+      const res = await api(route.split(' ')[0]!, path, cookie, body);
+      expect({
+        route,
+        status: res.status,
+        code: (res.body as { error?: { code: string } }).error?.code,
+      }).toEqual({ route, status: 403, code: 'insufficient_role' });
+    }
+    const project = await db
+      .selectFrom('projects')
+      .select('name')
+      .where('id', '=', p)
+      .executeTakeFirstOrThrow();
+    expect(project.name).not.toBe('renamed');
+    const keys = await db.selectFrom('api_keys').selectAll().where('project_id', '=', p).execute();
+    expect(keys.map((k) => [k.revoked_at, k.rotated_to, k.rpm_limit])).toEqual([
+      [null, null, null],
+    ]);
+    const members = await db
+      .selectFrom('project_members')
+      .select(['user_id', 'role'])
+      .where('project_id', '=', p)
+      .execute();
+    expect(members.length).toBe(2);
+    expect(members.find((m) => m.user_id === other.id)?.role).toBe('admin');
+  });
+
+  it('shows every user the configured deployments and routing policies, read-only', async () => {
+    const cookie = await login(await createUser(db));
+    const res = await api<{ deployments: { id: string; enabled: boolean }[]; models: unknown[] }>(
+      'GET',
+      '/admin/models',
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      deployments: [
+        {
+          id: 'quick',
+          provider: 'mock',
+          providerModel: expect.any(String) as string,
+          enabled: true,
+          timeoutMs: expect.any(Number) as number,
+          streamIdleTimeoutMs: expect.any(Number) as number,
+          maxOutputTokens: expect.any(Number) as number,
+        },
+      ],
+      models: [
+        {
+          name: 'mock-a',
+          policy: 'priority',
+          targets: [{ deployment: 'quick', weight: 1 }],
+          available: true,
+        },
+      ],
+    });
+  });
+
   it('never leaves a project without an owner', async () => {
     const p = await createProject(db);
     const owner = await createUser(db, [{ projectId: p, role: 'owner' }]);

@@ -14,6 +14,7 @@ import {
 } from '@ai-gateway/shared/node';
 import { registerAdminApi } from './admin/index.js';
 import { redisInfraProbe } from './admin/infra.js';
+import { modelCatalog } from './admin/model-routes.js';
 import { ResponseCache } from './cache/response-cache.js';
 import { buildApp, type App } from './app.js';
 import { bootstrap } from './auth/bootstrap.js';
@@ -228,6 +229,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         deployments: deployments.map((d) => d.id),
         checks: { postgres: () => pingPostgres(pool), redis: () => pingRedis(redis) },
       }),
+      models: modelCatalog(deps.models, registry),
     }),
   );
 

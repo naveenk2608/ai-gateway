@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AuthInvalidation } from '../auth/invalidation.js';
 import type { LoginThrottle } from '../limits/login-throttle.js';
 import type { InfraProbe } from './infra.js';
+import type { ModelCatalog } from './model-routes.js';
 import { errorBodySchema } from '../proxy/schema.js';
 
 export interface AdminDeps {
@@ -17,6 +18,8 @@ export interface AdminDeps {
   loginThrottle: Pick<LoginThrottle, 'check'>;
   /** Pipeline, breaker and dependency state for the analytics API. */
   infra: InfraProbe;
+  /** Deployments and routing policies loaded at startup, for the settings page. */
+  models: ModelCatalog;
 }
 
 export const roleSchema = z.enum(['owner', 'admin', 'viewer']);
