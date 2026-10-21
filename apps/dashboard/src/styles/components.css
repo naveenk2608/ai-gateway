@@ -27,6 +27,15 @@
   font-size: var(--text-md);
 }
 
+/* Cards without a header row: keep the heading off the content below it. */
+.card > h2 {
+  margin-bottom: var(--space-3);
+}
+
+.card-header + .form {
+  margin-top: var(--space-4);
+}
+
 .card h3 {
   margin: var(--space-6) 0 var(--space-2);
   font-size: var(--text-sm);
