@@ -312,21 +312,29 @@ an `audit_logs` row in the same transaction. Logins are limited per email and pe
 ## Dashboard
 
 Eight pages, all read from the admin and analytics APIs; nothing is computed or filled in by the
-dashboard, and a page with no data says so.
+dashboard, and a page with no data says so. The top bar picks the project and the time range
+(1 h, 24 h, 7 d, 30 d); pages live in the URL hash (`#cost`, `#settings/keys`), so links and
+reloads keep them. Dark is the default theme, with a light one in the top bar.
 
 | Page | Shows |
 | --- | --- |
-| Overview | Requests by outcome, tokens, cost, p50/p95 latency and TTFT, a request-rate chart, spend this month, gateway readiness |
-| Requests | Filters (range, status, key, model, provider), a paginated list, each request's routing history |
-| Cost | Spend by provider, model, project and key; a trend; budgets with alerts; the monthly projection |
-| Models | Latency, TTFT, tokens per second, cost, failure and fallback rates side by side (not answer quality) |
-| Reliability | Failures, retries and fallbacks over time, errors by code, breaker states and changes |
-| Security | Rejections by reason and key over time |
-| Infrastructure | Usage stream lag, pending events, dead letters, Postgres and Redis round trips |
-| Settings | Project name and allowed models, limits and budget, members, API keys, deployments and routing (read-only) |
+| Overview | KPI cards (requests, error rate, p95 latency, cost, cache hits) with sparklines, requests by outcome over time, recent requests, spend this month against the budget, gateway readiness |
+| Requests | Filters (status, key, model, provider), a dense paginated list with latency bars, and a side panel with each request's attempt timings and routing history |
+| Cost | KPI cards (spend, cost per request, tokens, projected month or "not enough data"), cost per interval, spend by model as shares, breakdowns by project, key, provider and model with each row's share, budgets as meters |
+| Models | p50/p95 latency bars, a table of latency, TTFT, tokens per second, cost, failure and fallback rates (not answer quality), every deployment with its breaker state |
+| Reliability | KPI cards for failures, retries, fallbacks and attempts; their trend; errors by code; each deployment's numbers; breaker states per instance and their changes |
+| Security | Rejections by kind (limits, budget, model policy), over time, by reason and by key with shares |
+| Infrastructure | Worker lag, pending events, dead letters and dependency checks, the pipeline in detail, and the answering instance's process readings |
+| Settings | Tabs: Project (name, ID, allowed models), Limits and budget (each limit with the busiest minute of the last hour as a meter, the month's spend against the budget), Members, API keys, Routing (read-only, from the models file) |
 
-Viewers see every page but no control that changes anything; admins also manage keys and project
-settings, and owners also manage members. The API enforces the same roles.
+Some things are shown as "not measured" or "not tracked" because the gateway does not record
+them: change against a previous period, deployment uptime, in-flight requests against the
+concurrency limit, and when a key was last used. Each has a row in
+[docs/PLAN-NOTES.md](docs/PLAN-NOTES.md). Models come from the models file, so there is no
+"add model" button. The design system (tokens, shell, shared components) is ADR 020.
+
+Viewers see every page but no control that changes anything; admins also manage keys, limits
+and project settings, and owners also manage members. The API enforces the same roles.
 
 ## Analytics
 
