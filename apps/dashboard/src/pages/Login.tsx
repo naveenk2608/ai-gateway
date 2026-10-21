@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { api, ApiError } from './api.js';
+import { api, ApiError } from '../api.js';
 
 export function Login() {
   const queryClient = useQueryClient();

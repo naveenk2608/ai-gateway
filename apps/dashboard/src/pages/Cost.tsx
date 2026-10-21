@@ -6,10 +6,12 @@ import {
   type BudgetStatus,
   type CostResponse,
   type Spend,
-} from './api.js';
-import { TimeSeriesChart } from './charts.js';
-import { formatCount, formatPercent, formatUsd } from './format.js';
-import { BreakdownTable, QueryCard, Stat } from './ui.js';
+} from '../api.js';
+import { TimeSeriesChart } from '../charts/TimeSeriesChart.js';
+import { formatCount, formatPercent, formatUsd } from '../format.js';
+import { BreakdownTable } from '../ui/BreakdownTable.js';
+import { QueryCard } from '../ui/QueryCard.js';
+import { Stat } from '../ui/Stat.js';
 
 const ALERT_TEXT: Record<NonNullable<BudgetStatus['alert']>, string> = {
   ok: 'within budget',

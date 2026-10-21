@@ -17,9 +17,9 @@ import {
   type RequestPage,
   type RequestStatus,
   type RequestSummary,
-} from './api.js';
-import { formatCount, formatLatency, formatTime, formatUsd } from './format.js';
-import { Empty, ErrorState, Loading } from './ui.js';
+} from '../api.js';
+import { formatCount, formatLatency, formatTime, formatUsd } from '../format.js';
+import { Empty, ErrorState, Loading } from '../ui/states.js';
 
 const PAGE_SIZE = 25;
 const column = createColumnHelper<RequestSummary>();

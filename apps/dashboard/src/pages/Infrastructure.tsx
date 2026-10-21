@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { analyticsPath, api, type AnalyticsFilters, type InfraResponse } from './api.js';
+import { analyticsPath, api, type AnalyticsFilters, type InfraResponse } from '../api.js';
 import {
   formatAge,
   formatBytes,
@@ -7,8 +7,9 @@ import {
   formatLatency,
   formatPercent,
   formatTime,
-} from './format.js';
-import { QueryCard, Stat } from './ui.js';
+} from '../format.js';
+import { QueryCard } from '../ui/QueryCard.js';
+import { Stat } from '../ui/Stat.js';
 
 /**
  * Only values the gateway measures (the infra endpoint). History lives in Prometheus and Grafana

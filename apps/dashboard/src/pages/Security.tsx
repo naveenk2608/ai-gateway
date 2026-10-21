@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { analyticsPath, api, type AnalyticsFilters, type SecurityResponse } from './api.js';
-import { TimeSeriesChart } from './charts.js';
-import { formatCount } from './format.js';
-import { BreakdownTable, QueryCard, Stat } from './ui.js';
+import { analyticsPath, api, type AnalyticsFilters, type SecurityResponse } from '../api.js';
+import { TimeSeriesChart } from '../charts/TimeSeriesChart.js';
+import { formatCount } from '../format.js';
+import { BreakdownTable } from '../ui/BreakdownTable.js';
+import { QueryCard } from '../ui/QueryCard.js';
+import { Stat } from '../ui/Stat.js';
 
 const CATEGORY_LABELS: Record<string, string> = {
   rate_limit: 'Rate limit',

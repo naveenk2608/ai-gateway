@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { api, ApiError, canManage, type ApiKey, type Limits, type Role } from './api.js';
-import { formatTime } from './format.js';
-import { Empty, ErrorState, Loading } from './ui.js';
+import { api, ApiError, canManage, type ApiKey, type Limits, type Role } from '../api.js';
+import { formatTime } from '../format.js';
+import { Empty, ErrorState, Loading } from '../ui/states.js';
 
 function describeLimits(limits: Limits): string {
   const parts = [

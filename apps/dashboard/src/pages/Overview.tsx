@@ -5,11 +5,13 @@ import {
   type AnalyticsFilters,
   type OverviewResponse,
   type Project,
-} from './api.js';
-import { TimeSeriesChart } from './charts.js';
-import { budgetShare, formatCount, formatLatency, formatPercent, formatUsd } from './format.js';
-import { fetchGatewayStatus, type GatewayStatus } from './gatewayStatus.js';
-import { Loading, QueryCard, Stat } from './ui.js';
+} from '../api.js';
+import { TimeSeriesChart } from '../charts/TimeSeriesChart.js';
+import { budgetShare, formatCount, formatLatency, formatPercent, formatUsd } from '../format.js';
+import { fetchGatewayStatus, type GatewayStatus } from '../gatewayStatus.js';
+import { QueryCard } from '../ui/QueryCard.js';
+import { Stat } from '../ui/Stat.js';
+import { Loading } from '../ui/states.js';
 
 const STATUS_LABELS: Record<GatewayStatus['kind'], string> = {
   ready: 'Ready',

@@ -9,10 +9,11 @@ import {
   type ModelCatalog,
   type Project,
   type Role,
-} from './api.js';
+} from '../api.js';
 import { ApiKeys } from './ApiKeys.js';
-import { formatLatency, formatTime, formatUsd, parseUsd, usdInput } from './format.js';
-import { Empty, ErrorState, Loading, QueryCard } from './ui.js';
+import { formatLatency, formatTime, formatUsd, parseUsd, usdInput } from '../format.js';
+import { QueryCard } from '../ui/QueryCard.js';
+import { Empty, ErrorState, Loading } from '../ui/states.js';
 
 const ROLES: Role[] = ['viewer', 'admin', 'owner'];
 

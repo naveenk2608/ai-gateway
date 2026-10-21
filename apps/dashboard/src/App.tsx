@@ -14,16 +14,16 @@ import {
   type Me,
   type Range,
 } from './api.js';
-import { Cost } from './Cost.js';
-import { Infrastructure } from './Infrastructure.js';
-import { Login } from './Login.js';
-import { Models } from './Models.js';
-import { Overview } from './Overview.js';
-import { Reliability } from './Reliability.js';
-import { Requests } from './Requests.js';
-import { Security } from './Security.js';
-import { NewProject, Settings } from './Settings.js';
-import { Empty, ErrorState, Loading } from './ui.js';
+import { Cost } from './pages/Cost.js';
+import { Infrastructure } from './pages/Infrastructure.js';
+import { Login } from './pages/Login.js';
+import { Models } from './pages/Models.js';
+import { Overview } from './pages/Overview.js';
+import { Reliability } from './pages/Reliability.js';
+import { Requests } from './pages/Requests.js';
+import { Security } from './pages/Security.js';
+import { NewProject, Settings } from './pages/Settings.js';
+import { Empty, ErrorState, Loading } from './ui/states.js';
 
 const TABS = {
   overview: 'Overview',

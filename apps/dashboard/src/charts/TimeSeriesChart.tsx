@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { formatAxisTime } from './format.js';
+import { formatAxisTime } from '../format.js';
 
 const CHART_HEIGHT = 220;
 

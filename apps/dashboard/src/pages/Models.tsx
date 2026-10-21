@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { analyticsPath, api, type AnalyticsFilters, type ModelsResponse } from './api.js';
-import { formatCount, formatLatency, formatPercent, formatUsd } from './format.js';
-import { QueryCard } from './ui.js';
+import { analyticsPath, api, type AnalyticsFilters, type ModelsResponse } from '../api.js';
+import { formatCount, formatLatency, formatPercent, formatUsd } from '../format.js';
+import { QueryCard } from '../ui/QueryCard.js';
 
 export function Models({ projectId, filters }: { projectId: string; filters: AnalyticsFilters }) {
   const models = useQuery({
