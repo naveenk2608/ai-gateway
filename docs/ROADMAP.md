@@ -4,7 +4,7 @@ What is left to build, milestone by milestone, from M8 to the end of the project
 has enough detail to start work from the repository alone: read this file, then
 [PLAN-NOTES.md](PLAN-NOTES.md) and the ADRs in [adr/](adr/).
 
-## Where the project stands (2026-10-21, after M8)
+## Where the project stands (2026-10-21, after M9)
 
 - M0–M7 are done and tagged `m0-done` … `m7-done`: the OpenAI-compatible proxy (streaming and
   non-streaming), API keys, admin auth and RBAC, the usage pipeline (Redis Stream → worker →
@@ -14,12 +14,16 @@ has enough detail to start work from the repository alone: read this file, then
   every commit on `main`). It runs the gateway image with `RUN_WORKER_IN_PROCESS=true` (the
   free plan has no background workers), with Render's free Postgres and Key Value (Redis).
 - CI (`.github/workflows/ci.yml`) has four jobs: `check` (format, lint, dashboard-data check,
-  typecheck, unit tests, build), `integration` (Postgres + Redis services), `dashboard-e2e`
-  (Chromium at 375 px) and `images` (all Compose images build).
+  benchmark report check, typecheck, unit tests, build), `integration` (Postgres + Redis
+  services), `dashboard-e2e` (Chromium at 375 px) and `images` (all Compose images build, the
+  Prometheus config and the bench stack's Compose file are valid).
 - M8 (observability) is done: every acceptance check passed, including Render `/metrics`
   answering 401 without the token or with a wrong one once `METRICS_TOKEN` was set. The owner
   tags `m8-done`.
-- Accepted decisions are ADR 001–018.
+- M9 (benchmarks) is done: the mock provider over HTTP, k6 scenarios that `pnpm bench` runs
+  against a two-instance Compose stack, results committed in `bench/results/`, and
+  `docs/benchmarks.md` generated from them and checked in CI. The owner tags `m9-done`.
+- Accepted decisions are ADR 001–019.
 
 ## How to work on a milestone
 
@@ -150,13 +154,14 @@ k6 output.
 
 **Acceptance**
 
-- [ ] Every number in `docs/benchmarks.md` traces to a committed k6 output file.
-- [ ] The report states machine, config, duration and limitations.
-- [ ] Unit tests for the report generator (fixture summaries → expected markdown); it fails when
+- [x] Every number in `docs/benchmarks.md` traces to a committed k6 output file (machine facts
+      to the run's `machine.json`).
+- [x] The report states machine, config, duration and limitations.
+- [x] Unit tests for the report generator (fixture summaries → expected markdown); it fails when
       a referenced result file is missing.
-- [ ] CI runs `pnpm bench:report --check`, which fails if `docs/benchmarks.md` differs from
+- [x] CI runs `pnpm bench:report --check`, which fails if `docs/benchmarks.md` differs from
       what the committed results generate (no hand edits).
-- [ ] CI green on all jobs; Render live on the last commit with `/ready` 200 (benchmarks never
+- [x] CI green on all jobs; Render live on the last commit with `/ready` 200 (benchmarks never
       run against the free Render service).
 
 **ADR to write.** ADR 019 — benchmark method: k6 in a container, the HTTP mock as the common

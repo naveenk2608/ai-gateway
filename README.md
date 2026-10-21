@@ -9,8 +9,8 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: MVP (milestones M0-M5), the analytics API (M6), the full dashboard (M7) and
-observability (M8).**
+**Status: MVP (milestones M0-M5), the analytics API (M6), the full dashboard (M7),
+observability (M8) and benchmarks (M9).**
 Architecture decisions are in [docs/adr/](docs/adr/).
 
 - `POST /v1/chat/completions` in OpenAI format, streaming and non-streaming; the official OpenAI
@@ -121,6 +121,7 @@ In Compose the gateway reaches Ollama on the host at `host.docker.internal:11434
 | `pnpm test:int` | Integration tests against Compose Postgres and Redis (`docker compose up -d` first): API contracts, isolation, Lua limits across two instances, routing and breakers, the usage pipeline, the OpenAI SDK |
 | `pnpm test:e2e` | The dashboard in Chromium at 375 px, with API answers from fixtures (`pnpm --filter @ai-gateway/dashboard exec playwright install chromium` once) |
 | `pnpm check:dashboard-data` | Fails on hand-written numbers in dashboard chart data |
+| `pnpm bench:report --check` | Fails when [docs/benchmarks.md](docs/benchmarks.md) differs from what the committed benchmark results generate |
 | `pnpm lint`, `pnpm typecheck`, `pnpm format` | ESLint, `tsc`, Prettier |
 
 CI (GitHub Actions) runs all of them plus the container builds on every push. The SIGTERM
@@ -444,6 +445,33 @@ is no trace store or tracing SDK (ADR 017).
 The dashboard's Infrastructure page shows the pipeline state, dependency round trips and the
 answering gateway instance's own measurements, from the admin API. History is in Prometheus.
 
+## Benchmarks
+
+[docs/benchmarks.md](docs/benchmarks.md) has the gateway's added latency, time to first token and
+throughput, and three correctness checks under load: rate limits across two instances, usage
+accounting through a worker crash (each request stored once), and the cache hit ratio for a
+repeated temperature-0 workload. Every number in it is generated from k6 output committed in
+[bench/results/](bench/results/), with the machine, configuration, durations and limitations of
+that run (ADR 019). They are cloud VM numbers for that setup, not measurements of the Render demo,
+which is never load-tested.
+
+```bash
+pnpm bench          # build the images, start bench/compose.yaml, run every scenario, remove it
+pnpm bench:report   # regenerate docs/benchmarks.md from the newest run in bench/results/
+```
+
+Only Docker is needed: k6 runs from the pinned `grafana/k6` image on the bench stack's network
+(Postgres, Redis, the HTTP mock provider, two gateway instances, one worker; no published ports).
+`pnpm bench` takes several minutes and removes the stack and its volumes when it ends; commit the
+new `bench/results/<run>/` together with the regenerated report.
+
+| Scenario (`bench/k6/`) | What it measures |
+| --- | --- |
+| `overhead.js` | Closed-loop VUs (`BENCH_VUS`, default `10,50,100`) sending the same request straight to the mock and through one gateway, streaming and not: p50/p95/p99 latency, TTFT, requests/s |
+| `ratelimit.js` | One key with an RPM limit, traffic alternating between both instances: admitted requests against the token bucket's ceiling |
+| `accounting.js` | Load across both instances while Postgres is paused and the worker is killed and restarted: requests sent against rows stored, distinct request IDs and rollup counts |
+| `cache.js` | A fixed set of temperature-0 prompts repeated across both instances: hit ratio against the best possible, and calls that reached the mock |
+
 ## Deploying (Render, or any host without a shell)
 
 The gateway image is the last Dockerfile stage, so a plain `docker build .` builds it. Everything
@@ -485,6 +513,8 @@ db/migrations    numbered plain-SQL migrations
 infra/compose    Docker Compose stack (compose.yaml at the root includes it); observability/
                  holds the Prometheus config and Grafana provisioning
 scripts          formatting and the demo
+bench            k6 scenarios, the bench Compose stack, `pnpm bench` and the report generator;
+                 results/ holds the committed runs
 docs/adr         architecture decision records
 docs/ROADMAP.md  remaining milestones, with scope and acceptance checks
 ```
