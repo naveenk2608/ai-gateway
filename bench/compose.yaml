@@ -1,0 +1,125 @@
+# Benchmark stack (M9, ADR 019). `pnpm bench` starts it, runs the k6 scenarios and removes it with
+# its volumes. Nothing publishes a port: k6 runs as a one-off container on this Compose network.
+#
+# Two gateway instances share Redis and Postgres (rate limits, cache and accounting are checked
+# across both); one worker stores usage events. The HTTP mock provider is the only upstream, for
+# the gateway (through an openai-compatible deployment in bench/models.json) and for k6 directly.
+# Secrets are generated per run by `pnpm bench` and passed only through the environment.
+
+name: ai-gateway-bench
+
+x-gateway-image: &gateway-image
+  image: ai-gateway-bench/gateway:local
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    target: gateway
+
+# Logs are kept (writing them is part of the measured cost) but capped on disk.
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 20m
+    max-file: '2'
+
+x-gateway: &gateway
+  <<: *gateway-image
+  environment:
+    DATABASE_URL: postgres://gateway@postgres:5432/gateway
+    REDIS_URL: redis://redis:6379
+    LOG_LEVEL: info
+    MODELS_CONFIG_PATH: /bench/models.json
+    # The mock accepts any key; the adapter needs one to enable the deployment.
+    MOCK_API_KEY: bench-not-a-secret
+    API_KEY_PEPPER: ${BENCH_API_KEY_PEPPER:?pnpm bench sets it}
+    BOOTSTRAP_ADMIN_EMAIL: bench@example.com
+    BOOTSTRAP_ADMIN_PASSWORD: ${BENCH_ADMIN_PASSWORD:?pnpm bench sets it}
+    BOOTSTRAP_PROJECT_NAME: Benchmarks
+    SESSION_COOKIE_SECURE: 'false'
+    RUN_WORKER_IN_PROCESS: 'false'
+    # Only temperature-0 requests use it; the overhead scenarios send 0.7.
+    CACHE_ENABLED: 'true'
+  volumes:
+    - ./models.json:/bench/models.json:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    mock:
+      condition: service_healthy
+  healthcheck:
+    test: [CMD, wget, -qO-, http://127.0.0.1:8080/ready]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+  logging: *logging
+
+services:
+  postgres:
+    image: postgres:16.15-alpine3.24
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_DB: gateway
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U gateway -d gateway]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4.11-alpine3.21
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mock:
+    <<: *gateway-image
+    command: [node, dist/mock-server/main.js]
+    environment:
+      MOCK_HOST: 0.0.0.0
+      MOCK_PORT: 8090
+      MOCK_SETTINGS: '{"latencyMs":50,"ttftMs":50,"tokensPerSecond":400,"completionTokens":32}'
+    healthcheck:
+      test: [CMD, wget, -qO-, http://127.0.0.1:8090/health]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    logging: *logging
+
+  gateway-a: *gateway
+
+  gateway-b: *gateway
+
+  worker:
+    image: ai-gateway-bench/worker:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      DATABASE_URL: postgres://gateway@postgres:5432/gateway
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: info
+      # Events left unacknowledged by a killed worker are claimed again after 5 s (accounting).
+      WORKER_CLAIM_IDLE_MS: 5000
+      # Metrics for the accounting check, on this network only and without a token.
+      METRICS_HOST: 0.0.0.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *logging
+
+  k6:
+    profiles: [tools]
+    image: grafana/k6:2.3.0
+    environment:
+      K6_NO_USAGE_REPORT: 'true'
+    volumes:
+      - ./k6:/scripts:ro
+      - ${BENCH_RESULTS_DIR:-./results}:/results

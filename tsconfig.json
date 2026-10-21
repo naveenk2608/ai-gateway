@@ -4,5 +4,5 @@
     "noEmit": true,
     "customConditions": ["development"]
   },
-  "include": ["*.ts", "test/**/*.ts", "scripts/**/*.ts"]
+  "include": ["*.ts", "test/**/*.ts", "scripts/**/*.ts", "bench/**/*.ts"]
 }

@@ -21,7 +21,8 @@
     "db:seed": "pnpm --filter @ai-gateway/gateway db:seed",
     "key:generate": "pnpm --silent --filter @ai-gateway/gateway key:generate",
     "mock:serve": "pnpm --filter @ai-gateway/gateway mock:serve",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "bench": "tsx bench/run.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

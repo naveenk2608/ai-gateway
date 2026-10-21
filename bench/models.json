@@ -1,0 +1,15 @@
+{
+  "deployments": {
+    "bench-http-mock": {
+      "provider": "openai-compatible",
+      "model": "bench-mock",
+      "baseUrl": "http://mock:8090/v1",
+      "apiKeyEnv": "MOCK_API_KEY"
+    }
+  },
+  "models": {
+    "bench-1": {
+      "deployment": "bench-http-mock"
+    }
+  }
+}

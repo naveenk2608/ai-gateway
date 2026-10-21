@@ -9,8 +9,6 @@ coverage/
 test-results/
 playwright-report/
 *.tsbuildinfo
-bench/results/*.json
-!bench/results/.gitkeep
 
 # env and secrets
 .env

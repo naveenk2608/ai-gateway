@@ -26,6 +26,11 @@ export default defineConfig(
     extends: [tseslint.configs.disableTypeChecked],
   },
   {
+    // k6 scripts run inside k6, which provides these globals.
+    files: ['bench/k6/**/*.js'],
+    languageOptions: { globals: { __ENV: 'readonly', __VU: 'readonly', __ITER: 'readonly' } },
+  },
+  {
     files: ['apps/dashboard/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat.recommended],
   },
