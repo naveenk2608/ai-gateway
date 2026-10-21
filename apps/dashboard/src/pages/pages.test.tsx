@@ -78,7 +78,7 @@ const pages: { name: string; page: () => ReactElement; empty: RegExp; data: RegE
     name: 'Overview',
     page: () => <Overview projectId={PROJECT_ID} filters={filters} />,
     empty: /No requests in the last 24h/,
-    data: /Request rate/,
+    data: /mock-failover/,
   },
   {
     name: 'Requests',
@@ -150,6 +150,67 @@ describe.each(pages)('$name page', ({ page, empty, data }) => {
     stubApi('data');
     show(page());
     expect((await screen.findAllByText(data)).length).toBeGreaterThan(0);
+  });
+});
+
+describe('Overview KPI cards', () => {
+  const page = () => <Overview projectId={PROJECT_ID} filters={filters} />;
+  const card = (name: string) => screen.getByRole('region', { name });
+
+  it('shows requests, error rate, p95 latency, cost and cache-hit ratio from the totals', async () => {
+    stubApi('data');
+    show(page());
+    // The cards are there with skeletons while the API answers.
+    expect(await within(card('Requests')).findByText('120')).toBeTruthy();
+    expect(within(card('Error rate')).getByText('7.3%')).toBeTruthy();
+    expect(within(card('Latency p95')).getByText('2.10 s')).toBeTruthy();
+    expect(within(card('Cost')).getByText('$0.18')).toBeTruthy();
+    expect(within(card('Cache-hit ratio')).getByText('4.5%')).toBeTruthy();
+  });
+
+  it('compares nothing with a previous period: the API returns one window', async () => {
+    stubApi('data');
+    show(page());
+    await within(card('Requests')).findByText('120');
+    expect(screen.queryByText(/previous|vs\.? last|[↑↓▲▼]/i)).toBeNull();
+  });
+
+  it('draws requests, error rate and cost from API series; p95 and cache-hit have none', async () => {
+    stubApi('data');
+    show(page());
+    expect(
+      await within(card('Cost')).findByRole('img', {
+        name: /^Cost per 15 min: low/,
+      }),
+    ).toBeTruthy();
+    await within(card('Requests')).findByText('120');
+    expect(
+      within(card('Requests')).getByRole('img', { name: /^Requests per 15 min: low/ }),
+    ).toBeTruthy();
+    expect(
+      within(card('Error rate')).getByRole('img', { name: /^Error rate per 15 min: low/ }),
+    ).toBeTruthy();
+    for (const name of ['Latency p95', 'Cache-hit ratio']) {
+      expect(within(card(name)).getByText('no trend data')).toBeTruthy();
+      expect(within(card(name)).queryByRole('img')).toBeNull();
+    }
+  });
+
+  it('has no error-rate line when no interval admitted a request', async () => {
+    stubApi('empty');
+    show(page());
+    const errors = card('Error rate');
+    expect(await within(errors).findByText('no admitted requests')).toBeTruthy();
+    expect(within(errors).queryByRole('img')).toBeNull();
+    expect(within(card('Requests')).getByText('0')).toBeTruthy();
+  });
+
+  it('shows the month spend against the budget and the gateway readiness', async () => {
+    stubApi('data');
+    show(page());
+    expect(await screen.findByText('Spend in 2026-10 (UTC)')).toBeTruthy();
+    expect(screen.getByRole('meter', { name: 'Budget used' })).toBeTruthy();
+    expect(await screen.findByText('Gateway readiness')).toBeTruthy();
   });
 });
 

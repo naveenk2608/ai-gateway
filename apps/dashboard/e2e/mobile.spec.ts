@@ -7,7 +7,7 @@ const PHONE = { width: 375, height: 812 };
 
 /** Text each page shows only when the API returned data. */
 const MARKERS: Record<(typeof PAGES)[number]['hash'], string> = {
-  overview: 'Request rate',
+  overview: 'mock-failover',
   requests: 'mock-failover',
   cost: 'Budgets this month (UTC)',
   models: 'Fallbacks / request',

@@ -4,6 +4,9 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-10-21 | UI | KPI cards show no change against a previous period: every analytics endpoint returns a single window. A comparison needs the previous window's totals, from a second call with an explicit `from`/`to` (the API takes a range only) or a compare option on the endpoint. | open |
+| 2026-10-21 | UI | The Overview's p95 latency card shows its value with "no trend data": the overview series has counts per interval only. The rollups keep a latency histogram per bucket, so the API could return a p95 per series point. | open |
+| 2026-10-21 | UI | The Overview's cache-hit ratio card shows its value with "no trend data": the overview series does not return cache hits per interval, though the rollups count them. Adding `cacheHits` to each series point would give it a sparkline. | open |
 | 2026-10-21 | M9 | Benchmarks run every process (k6, both gateways, worker, mock, Redis, Postgres) on one VM without CPU pinning, once per configuration: added latency includes contention, and there are no repetitions or confidence intervals. Separate hosts (e.g. the M10 AWS setup) and repeated runs would isolate and bound it. | open |
 | 2026-10-21 | M9 | TTFT in the benchmarks is k6's time to first byte. It equals time to first token because the gateway and the HTTP mock both send headers with the first token; token-level timing would need a custom k6 build (xk6-sse). | by design |
 | 2026-10-21 | M9 | Ollama inference benchmarks were not run: no Ollama ran on the benchmark machine. They belong in a separate report from gateway overhead, measured against a real Ollama. | open |

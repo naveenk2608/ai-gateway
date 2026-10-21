@@ -86,3 +86,30 @@ export function parseUsd(text: string): number | null {
 export function usdInput(microUsd: number | null): string {
   return microUsd === null ? '' : String(microUsd / MICRO);
 }
+
+/** A timestamp without the year, to the second, for dense tables and lists. */
+export function formatShortTime(iso: string, locale?: string): string {
+  return new Date(iso).toLocaleString(locale, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+/** The end of an ID: UUIDv7 IDs start with their timestamp, so their ends tell rows apart. */
+export function shortId(id: string): string {
+  return id.length > 8 ? `…${id.slice(-8)}` : id;
+}
+
+/** A series' interval as a unit after "per": "minute", "15 min", "hour", "day". */
+export function formatStep(stepSeconds: number): string {
+  if (stepSeconds === 60) return 'minute';
+  if (stepSeconds === 3_600) return 'hour';
+  if (stepSeconds === 86_400) return 'day';
+  if (stepSeconds % 86_400 === 0) return `${stepSeconds / 86_400} days`;
+  if (stepSeconds % 3_600 === 0) return `${stepSeconds / 3_600} h`;
+  if (stepSeconds % 60 === 0) return `${stepSeconds / 60} min`;
+  return `${stepSeconds} s`;
+}
