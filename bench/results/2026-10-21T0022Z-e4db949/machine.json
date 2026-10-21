@@ -1,0 +1,297 @@
+{
+  "runId": "2026-10-21T0022Z-e4db949",
+  "generatedAt": "2026-10-21T00:22:16.330Z",
+  "git": {
+    "commit": "e4db949945ad37d76df9f0b2363ba18207807110",
+    "dirty": false
+  },
+  "build": "prebuilt images (--no-build): built from this commit's Dockerfile; the build stage alone also trusted the VM's TLS-intercepting proxy CA to reach the npm registry",
+  "host": {
+    "cpuModel": "Intel(R) Xeon(R) Processor",
+    "vcpus": 4,
+    "memoryBytes": 16872808448,
+    "arch": "x64",
+    "kernel": "Linux 6.18.44-fc-v140",
+    "os": "Ubuntu 24.04.5 LTS",
+    "virtualization": {
+      "hypervisorFlag": true,
+      "detected": "docker",
+      "vendor": null,
+      "product": null
+    }
+  },
+  "docker": {
+    "server": "29.9.1",
+    "compose": "5.6.0"
+  },
+  "versions": {
+    "k6": "k6 v2.3.0 (commit/e088784614, go1.27.1, linux/amd64)",
+    "nodeInGatewayImage": "v22.23.3"
+  },
+  "images": [
+    {
+      "image": "postgres:16.15-alpine3.24",
+      "id": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+      "repoDigests": [
+        "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+        "mirror.gcr.io/library/postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+      ]
+    },
+    {
+      "image": "redis:7.4.11-alpine3.21",
+      "id": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+      "repoDigests": [
+        "redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+        "mirror.gcr.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+      ]
+    },
+    {
+      "image": "ai-gateway-bench/gateway:local",
+      "id": "sha256:f284aa217e99b288c4fd219dfd98c140325f898e07abdcbd7e7bce9afa53a843",
+      "repoDigests": [
+        "ai-gateway-bench/gateway@sha256:f284aa217e99b288c4fd219dfd98c140325f898e07abdcbd7e7bce9afa53a843"
+      ]
+    },
+    {
+      "image": "ai-gateway-bench/worker:local",
+      "id": "sha256:4847648a717e17791fa6158ec8319f1cc3f1b73ce48878a6b559cd397c0a7988",
+      "repoDigests": [
+        "ai-gateway-bench/worker@sha256:4847648a717e17791fa6158ec8319f1cc3f1b73ce48878a6b559cd397c0a7988"
+      ]
+    },
+    {
+      "image": "grafana/k6:2.3.0",
+      "id": "sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+      "repoDigests": [
+        "grafana/k6@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34"
+      ]
+    }
+  ],
+  "config": {
+    "gateway": {
+      "API_KEY_PEPPER": "<redacted>",
+      "BOOTSTRAP_ADMIN_EMAIL": "bench@example.com",
+      "BOOTSTRAP_ADMIN_PASSWORD": "<redacted>",
+      "BOOTSTRAP_PROJECT_NAME": "Benchmarks",
+      "CACHE_ENABLED": "true",
+      "DATABASE_URL": "postgres://gateway@postgres:5432/gateway",
+      "LOG_LEVEL": "info",
+      "MOCK_API_KEY": "<redacted>",
+      "MODELS_CONFIG_PATH": "/bench/models.json",
+      "REDIS_URL": "redis://redis:6379",
+      "RUN_WORKER_IN_PROCESS": "false",
+      "SESSION_COOKIE_SECURE": "false"
+    },
+    "gatewayInstances": 2,
+    "worker": {
+      "DATABASE_URL": "postgres://gateway@postgres:5432/gateway",
+      "LOG_LEVEL": "info",
+      "METRICS_HOST": "0.0.0.0",
+      "REDIS_URL": "redis://redis:6379",
+      "WORKER_CLAIM_IDLE_MS": "5000"
+    },
+    "mock": {
+      "MOCK_HOST": "0.0.0.0",
+      "MOCK_PORT": "8090",
+      "MOCK_SETTINGS": "{\"latencyMs\":50,\"ttftMs\":50,\"tokensPerSecond\":400,\"completionTokens\":32}"
+    },
+    "models": {
+      "deployments": {
+        "bench-http-mock": {
+          "provider": "openai-compatible",
+          "model": "bench-mock",
+          "baseUrl": "http://mock:8090/v1",
+          "apiKeyEnv": "MOCK_API_KEY"
+        }
+      },
+      "models": {
+        "bench-1": {
+          "deployment": "bench-http-mock"
+        }
+      }
+    }
+  },
+  "scenarios": [
+    {
+      "name": "overhead-direct-plain-10vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "false",
+        "VUS": "10",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:22:43.590Z",
+      "wallClockMs": 20510
+    },
+    {
+      "name": "overhead-gateway-plain-10vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "false",
+        "VUS": "10",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:23:04.100Z",
+      "wallClockMs": 20608
+    },
+    {
+      "name": "overhead-direct-stream-10vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "true",
+        "VUS": "10",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:23:24.708Z",
+      "wallClockMs": 20565
+    },
+    {
+      "name": "overhead-gateway-stream-10vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "true",
+        "VUS": "10",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:23:45.273Z",
+      "wallClockMs": 20699
+    },
+    {
+      "name": "overhead-direct-plain-50vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "false",
+        "VUS": "50",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:24:05.973Z",
+      "wallClockMs": 20529
+    },
+    {
+      "name": "overhead-gateway-plain-50vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "false",
+        "VUS": "50",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:24:26.502Z",
+      "wallClockMs": 20685
+    },
+    {
+      "name": "overhead-direct-stream-50vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "true",
+        "VUS": "50",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:24:47.187Z",
+      "wallClockMs": 20603
+    },
+    {
+      "name": "overhead-gateway-stream-50vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "true",
+        "VUS": "50",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:25:07.790Z",
+      "wallClockMs": 20749
+    },
+    {
+      "name": "overhead-direct-plain-100vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "false",
+        "VUS": "100",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:25:28.539Z",
+      "wallClockMs": 20591
+    },
+    {
+      "name": "overhead-gateway-plain-100vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "false",
+        "VUS": "100",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:25:49.130Z",
+      "wallClockMs": 20768
+    },
+    {
+      "name": "overhead-direct-stream-100vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "true",
+        "VUS": "100",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:26:09.898Z",
+      "wallClockMs": 20637
+    },
+    {
+      "name": "overhead-gateway-stream-100vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "true",
+        "VUS": "100",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:26:30.536Z",
+      "wallClockMs": 20849
+    },
+    {
+      "name": "ratelimit",
+      "script": "ratelimit.js",
+      "env": {
+        "RPM": "60",
+        "RATE": "10",
+        "DURATION": "30s"
+      },
+      "startedAt": "2026-10-21T00:26:51.385Z",
+      "wallClockMs": 30574
+    },
+    {
+      "name": "accounting",
+      "script": "accounting.js",
+      "env": {
+        "RATE": "40",
+        "DURATION": "30s",
+        "FAULT_PAUSE_AT_S": "8",
+        "FAULT_KILL_AT_S": "11",
+        "FAULT_UNPAUSE_AT_S": "13",
+        "FAULT_START_AT_S": "14"
+      },
+      "startedAt": "2026-10-21T00:27:21.959Z",
+      "wallClockMs": 37710
+    },
+    {
+      "name": "cache",
+      "script": "cache.js",
+      "env": {
+        "PROMPTS": "20",
+        "RATE": "20",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:27:59.669Z",
+      "wallClockMs": 23662
+    }
+  ],
+  "totalWallClockMs": 367816
+}

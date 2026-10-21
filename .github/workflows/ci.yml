@@ -28,6 +28,8 @@ jobs:
       - run: pnpm lint
       # No hard-coded numbers in dashboard chart data (M7).
       - run: pnpm check:dashboard-data
+      # docs/benchmarks.md is exactly what the committed k6 results generate (M9, ADR 019).
+      - run: pnpm bench:report --check
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
