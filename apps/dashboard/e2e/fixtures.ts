@@ -154,7 +154,7 @@ const requestRow = {
   model: 'mock-failover',
   deployment: 'mock',
   provider: 'mock',
-  stream: false,
+  stream: true,
   status: 'success' as const,
   httpStatus: 200,
   errorCode: null,
@@ -162,7 +162,7 @@ const requestRow = {
   cacheHit: false,
   startedAt: '2026-10-20T12:00:00.000Z',
   latencyMs: 812,
-  ttftMs: null,
+  ttftMs: 238,
   totalTokens: 420,
   costMicroUsd: 1_250,
 };
@@ -200,7 +200,7 @@ const requestDetail: RequestDetail = {
       routingPolicy: 'priority',
       routingReason: 'priority 2 of 2; fallback after mock-error failed (server_error)',
       latencyMs: 790,
-      ttftMs: null,
+      ttftMs: 226,
     },
   ],
 };

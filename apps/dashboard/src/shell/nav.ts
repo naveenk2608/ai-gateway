@@ -37,7 +37,7 @@ export const PAGES: PageInfo[] = [
     title: 'Requests',
     description: 'Every request with its outcome, timing and routing history.',
     icon: ListTree,
-    ranged: false,
+    ranged: true,
   },
   {
     id: 'cost',

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { emptyResponses, PROJECT_ID, sampleResponses } from '../../e2e/fixtures.js';
@@ -82,7 +82,7 @@ const pages: { name: string; page: () => ReactElement; empty: RegExp; data: RegE
   },
   {
     name: 'Requests',
-    page: () => <Requests projectId={PROJECT_ID} />,
+    page: () => <Requests projectId={PROJECT_ID} filters={filters} />,
     empty: /No requests in the last 24h/,
     data: /mock-failover/,
   },
@@ -211,6 +211,82 @@ describe('Overview KPI cards', () => {
     expect(await screen.findByText('Spend in 2026-10 (UTC)')).toBeTruthy();
     expect(screen.getByRole('meter', { name: 'Budget used' })).toBeTruthy();
     expect(await screen.findByText('Gateway readiness')).toBeTruthy();
+  });
+});
+
+describe('Requests page', () => {
+  const page = (range: AnalyticsFilters['range'] = '24h') => (
+    <Requests projectId={PROJECT_ID} filters={{ range }} />
+  );
+
+  it('takes its range from the top bar and keeps its other filters', async () => {
+    const fetchMock = stubApi('data');
+    show(page('7d'));
+    await screen.findByText('mock-failover');
+    const form = screen.getByRole('form', { name: 'Filters' });
+    expect(within(form).queryByRole('combobox', { name: 'Range' })).toBeNull();
+    for (const name of ['Status', 'API key']) {
+      expect(within(form).getByRole('combobox', { name })).toBeTruthy();
+    }
+    for (const name of ['Model', 'Provider']) {
+      expect(within(form).getByRole('textbox', { name })).toBeTruthy();
+    }
+    // The API client always calls fetch with a path string.
+    const urls = fetchMock.mock.calls.map(([input]) => input as string);
+    expect(
+      urls.some((u) => u.includes('/admin/analytics/requests?') && u.includes('range=7d')),
+    ).toBe(true);
+  });
+
+  it('shows each request in a dense row with a status badge, its ID and a latency bar', async () => {
+    stubApi('data');
+    show(page());
+    const row = (await screen.findByText('mock-failover')).closest('tr')!;
+    expect(within(row).getByText('200 success')).toBeTruthy();
+    const id = within(row).getByRole('button', { name: '…000000cc' });
+    expect(id.getAttribute('title')).toBe('0192f5a0-0000-7000-8000-0000000000cc');
+    expect(within(row).getByText('812 ms')).toBeTruthy();
+    // The slowest request on the page fills its bar.
+    expect(row.querySelector<HTMLElement>('.latency-track > span')?.style.width).toBe('100%');
+  });
+
+  it('opens a side panel with first-token time, attempt timings and routing history', async () => {
+    stubApi('data');
+    show(page());
+    fireEvent.click(await screen.findByText('mock-failover'));
+    const panel = await screen.findByRole('dialog', { name: 'Request detail' });
+    expect(await within(panel).findByText('238 ms')).toBeTruthy();
+    expect(within(panel).getByText('time to first token')).toBeTruthy();
+    expect(within(panel).getByRole('heading', { name: 'Attempt timings' })).toBeTruthy();
+    expect(within(panel).getByText('12 ms')).toBeTruthy();
+    expect(within(panel).getByText('790 ms · first token 226 ms')).toBeTruthy();
+    expect(within(panel).getByRole('heading', { name: 'Routing history' })).toBeTruthy();
+    expect(
+      within(panel).getByText('priority 2 of 2; fallback after mock-error failed (server_error)'),
+    ).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Request detail' })).toBeNull();
+  });
+
+  it('shows the error with a retry when the request detail fails', async () => {
+    const fetchMock = stubApi('data');
+    show(page());
+    const row = await screen.findByText('mock-failover');
+    // The list has loaded; from here every call fails, the detail included.
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        Response.json(
+          { error: { code: 'internal_error', message: 'Detail failed (test).' } },
+          { status: 500 },
+        ),
+      ),
+    );
+    fireEvent.click(row);
+    const panel = await screen.findByRole('dialog', { name: 'Request detail' });
+    const alert = await within(panel).findByRole('alert');
+    expect(alert.textContent).toContain('Detail failed (test).');
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeTruthy();
   });
 });
 

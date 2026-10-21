@@ -43,6 +43,13 @@ test.describe('screenshots', () => {
           });
         }
 
+        test('requests-panel', async ({ page }) => {
+          await open(page, theme, 'requests');
+          await page.getByText('mock-failover').first().click();
+          await expect(page.getByRole('heading', { name: 'Routing history' })).toBeVisible();
+          await shot(page, `${theme}-${size}-requests-panel`);
+        });
+
         test('navigation', async ({ page }) => {
           await open(page, theme, 'overview');
           if (size === 'phone') await page.getByRole('button', { name: 'Open navigation' }).click();

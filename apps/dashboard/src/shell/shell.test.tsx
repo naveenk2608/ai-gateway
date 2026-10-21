@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Me, Range } from '../api.js';
 import { AppShell } from './AppShell.js';
+import { pageInfo } from './nav.js';
 import { RangePicker } from './RangePicker.js';
 import { ThemeToggle } from './ThemeToggle.js';
 import { initials } from './UserMenu.js';
@@ -140,6 +141,11 @@ describe('AppShell', () => {
     cleanup();
     shell({ page: 'settings', range: null });
     expect(screen.queryByRole('radiogroup', { name: 'Time range' })).toBeNull();
+  });
+
+  it('gives the Requests page the top-bar range, and Settings none', () => {
+    expect(pageInfo('requests').ranged).toBe(true);
+    expect(pageInfo('settings').ranged).toBe(false);
   });
 
   it('opens the account menu with the email, role and Log out; Escape closes it', () => {

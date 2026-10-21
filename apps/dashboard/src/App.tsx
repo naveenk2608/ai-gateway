@@ -70,7 +70,9 @@ function Dashboard({ me }: { me: Me }) {
       ) : (
         <>
           {page === 'overview' && <Overview projectId={project.id} filters={filters} />}
-          {page === 'requests' && <Requests key={project.id} projectId={project.id} />}
+          {page === 'requests' && (
+            <Requests key={project.id} projectId={project.id} filters={filters} />
+          )}
           {page === 'cost' && <Cost projectId={project.id} filters={filters} />}
           {page === 'models' && <Models projectId={project.id} filters={filters} />}
           {page === 'reliability' && <Reliability projectId={project.id} filters={filters} />}

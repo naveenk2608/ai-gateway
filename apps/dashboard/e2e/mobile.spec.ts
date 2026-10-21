@@ -59,13 +59,17 @@ for (const [dataset, responses] of [
       expect(new URL(page.url()).hash).toBe('#cost');
     });
 
-    test('the request detail with its routing history fits the screen', async ({ page }) => {
+    test('the request detail side panel fits the screen and closes', async ({ page }) => {
       await serveApi(page, responses);
       await page.goto('/#requests');
       if (dataset === 'empty') return;
       await page.getByText('mock-failover').first().click();
-      await expect(page.getByRole('heading', { name: 'Routing history' })).toBeVisible();
+      const panel = page.getByRole('dialog', { name: 'Request detail' });
+      await expect(panel.getByRole('heading', { name: 'Routing history' })).toBeVisible();
+      await expect(panel.getByText('time to first token')).toBeVisible();
       expect(await overflow(page)).toBeLessThanOrEqual(0);
+      await page.keyboard.press('Escape');
+      await expect(panel).toBeHidden();
     });
   });
 }
