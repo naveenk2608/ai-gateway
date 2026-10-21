@@ -290,6 +290,105 @@ describe('Requests page', () => {
   });
 });
 
+describe('Cost page', () => {
+  const page = () => <Cost projectId={PROJECT_ID} filters={filters} />;
+  const card = (name: string) => screen.getByRole('region', { name });
+
+  it('shows spend, cost per request, tokens and the projection in KPI cards', async () => {
+    stubApi('data');
+    show(page());
+    expect(await within(card('Spend')).findByText('$0.18')).toBeTruthy();
+    expect(within(card('Spend')).getByRole('img', { name: /^Spend per 15 min: low/ })).toBeTruthy();
+    expect(within(card('Cost per request')).getByText('$0.001533')).toBeTruthy();
+    expect(within(card('Tokens')).getByText('52,000')).toBeTruthy();
+    expect(within(card('Tokens')).getByText('40,000 in · 12,000 out')).toBeTruthy();
+    expect(within(card('Projected this month')).getByText('$6.10')).toBeTruthy();
+    expect(within(card('Projected this month')).getByText(/from 12 days of data/)).toBeTruthy();
+  });
+
+  it('says the projection needs more data instead of showing a number', async () => {
+    stubApi('empty');
+    show(page());
+    const projection = card('Projected this month');
+    expect(await within(projection).findByText('not enough data')).toBeTruthy();
+    expect(within(projection).getByText(/needs 7 full days of data; there are 0/)).toBeTruthy();
+    expect(within(card('Cost per request')).getByText('—')).toBeTruthy();
+  });
+
+  it('draws spend by model as shares of the total, and each breakdown with its share', async () => {
+    stubApi('data');
+    show(page());
+    const donut = await screen.findByRole('figure', { name: 'Share of spend by model' });
+    const legend = within(donut).getByRole('list');
+    expect(within(legend).getByText('mock-1')).toBeTruthy();
+    expect(within(legend).getByText('100.0%')).toBeTruthy();
+    for (const title of ['By project', 'By API key', 'By provider', 'By model']) {
+      expect(screen.getByRole('heading', { name: title })).toBeTruthy();
+    }
+    const keyRow = screen.getAllByText('backend')[0]!.closest('tr')!;
+    expect(within(keyRow).getByText('120')).toBeTruthy();
+    expect(within(keyRow).getByText('100.0%')).toBeTruthy();
+  });
+
+  it('shows each budget as a meter with its alert', async () => {
+    stubApi('data');
+    show(page());
+    const meter = await screen.findByRole('meter', { name: 'Budget used by Demo project' });
+    expect(meter.getAttribute('aria-valuenow')).toBe('84');
+    expect(meter.className).toContain('tone-warning');
+    const tile = screen.getByRole('group', { name: 'Budget of Demo project' });
+    expect(within(tile).getByText('over 80% used')).toBeTruthy();
+    expect(within(tile).getByText('84.0% used')).toBeTruthy();
+  });
+
+  it('compares nothing with a previous period', async () => {
+    stubApi('data');
+    show(page());
+    await within(card('Spend')).findByText('$0.18');
+    expect(screen.queryByText(/previous|vs\.? last|[↑↓▲▼]/i)).toBeNull();
+  });
+});
+
+describe('Models page', () => {
+  const page = () => <Models projectId={PROJECT_ID} filters={filters} />;
+
+  it('keeps the note that speed and cost say nothing about answer quality', async () => {
+    stubApi('data');
+    show(page());
+    const note = await screen.findByRole('note');
+    expect(note.textContent).toMatch(/say nothing about the quality of the answers/);
+  });
+
+  it('charts p50 and p95 latency and compares deployments in a table', async () => {
+    stubApi('data');
+    show(page());
+    expect(
+      await screen.findByRole('figure', { name: 'Latency p50 and p95 per model and deployment' }),
+    ).toBeTruthy();
+    const row = (await screen.findByText('mock-1')).closest('tr')!;
+    for (const value of ['420 ms', '2.10 s', '150 ms / 600 ms', '42.5', '7.3%', '0.02']) {
+      expect(within(row).getByText(value)).toBeTruthy();
+    }
+    // The rejected-only row (no deployment) is not compared.
+    expect(screen.getAllByRole('row')).toHaveLength(2);
+  });
+
+  it('shows each deployment with its breaker state and uptime as not measured', async () => {
+    stubApi('data');
+    show(page());
+    const failing = await screen.findByRole('group', { name: 'mock-error' });
+    expect(await within(failing).findByText('Breaker open')).toBeTruthy();
+    expect(
+      within(screen.getByRole('group', { name: 'mock' })).getByText('never tripped'),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByRole('group', { name: 'hosted-small' })).getByText('disabled'),
+    ).toBeTruthy();
+    expect(screen.getAllByText('not measured')).toHaveLength(3);
+    expect(screen.queryByText(/%\s*uptime|uptime\s*\d/i)).toBeNull();
+  });
+});
+
 describe('Infrastructure instance card', () => {
   const page = () => <Infrastructure projectId={PROJECT_ID} filters={filters} />;
 

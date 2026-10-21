@@ -25,14 +25,12 @@ import {
 } from '../format.js';
 import { fetchGatewayStatus, type GatewayStatus } from '../gatewayStatus.js';
 import { KpiCard, NoTrend } from '../ui/KpiCard.js';
+import { budgetUse, Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
 import { ErrorState, Loading } from '../ui/states.js';
 
 /** Rows in the recent requests card; the Requests page has the rest. */
 const RECENT = 6;
-
-/** Budget use from which the meter turns to a warning, as on the Cost page's budget alerts. */
-const BUDGET_WARNING = 0.8;
 
 const STATUS_LABELS: Record<GatewayStatus['kind'], string> = {
   ready: 'Ready',
@@ -215,26 +213,6 @@ function RecentRequests({ projectId, filters }: { projectId: string; filters: An
   );
 }
 
-/** Spend as a bar of the budget; the fill turns to a warning, then danger, as it fills. */
-function BudgetMeter({ spent, budget }: { spent: number; budget: number }) {
-  const share = budget > 0 ? spent / budget : spent > 0 ? 1 : 0;
-  const filled = Math.min(share, 1);
-  const tone = share >= 1 ? 'danger' : share >= BUDGET_WARNING ? 'warning' : 'accent';
-  return (
-    <div
-      className={`meter tone-${tone}`}
-      role="meter"
-      aria-label="Budget used"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(filled * 100)}
-      aria-valuetext={budgetShare(spent, budget) ?? undefined}
-    >
-      <span style={{ width: `${filled * 100}%` }} />
-    </div>
-  );
-}
-
 function MonthSpend({
   overview,
   project,
@@ -265,7 +243,13 @@ function MonthSpend({
                     : `of ${formatUsd(budget)} budget · ${budgetShare(spent, budget)} used`}
               </span>
             </div>
-            {budget !== null && <BudgetMeter spent={spent} budget={budget} />}
+            {budget !== null && (
+              <Meter
+                share={budgetUse(spent, budget)}
+                label="Budget used"
+                valueText={budgetShare(spent, budget) ?? undefined}
+              />
+            )}
             <p className="muted small card-text">
               The calendar month so far, for the whole project.
             </p>

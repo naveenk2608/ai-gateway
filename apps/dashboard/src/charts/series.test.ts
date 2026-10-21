@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatStep } from '../format.js';
-import { errorRates, shareOfAdmitted } from './series.js';
+import { errorRates, foldShares, shareOfAdmitted } from './series.js';
 import { sparklinePath } from './Sparkline.js';
 
 const point = (requests: number, failed: number, rejected: number) => ({
@@ -30,6 +30,35 @@ describe('shareOfAdmitted', () => {
     expect(shareOfAdmitted(5, { requests: 120, rejected: 10 })).toBeCloseTo(5 / 110);
     expect(shareOfAdmitted(0, { requests: 7, rejected: 7 })).toBeNull();
     expect(shareOfAdmitted(0, { requests: 0, rejected: 0 })).toBeNull();
+  });
+});
+
+describe('foldShares', () => {
+  const part = (key: string, value: number) => ({ key, label: key, value });
+
+  it('keeps every part, largest first, when they fit and add up to the total', () => {
+    expect(foldShares([part('a', 1), part('b', 3)], 4, 5).map((s) => s.key)).toEqual(['b', 'a']);
+  });
+
+  it('folds the smallest parts into one Other slice holding the rest of the total', () => {
+    const parts = ['a', 'b', 'c', 'd', 'e', 'f'].map((key, i) => part(key, 60 - i * 10));
+    const shares = foldShares(parts, 210, 5);
+    expect(shares.map((s) => s.key)).toEqual(['a', 'b', 'c', 'd', 'other']);
+    expect(shares.at(-1)).toEqual({ key: 'other', label: 'Other', value: 30, other: true });
+    expect(shares.reduce((sum, s) => sum + s.value, 0)).toBe(210);
+  });
+
+  it('adds Other for spend the breakdown left out, so the slices add up to the total', () => {
+    const shares = foldShares([part('a', 5), part('b', 3)], 10, 5);
+    expect(shares.map((s) => [s.key, s.value])).toEqual([
+      ['a', 5],
+      ['b', 3],
+      ['other', 2],
+    ]);
+  });
+
+  it('drops parts worth nothing', () => {
+    expect(foldShares([part('a', 2), part('free', 0)], 2, 5).map((s) => s.key)).toEqual(['a']);
   });
 });
 

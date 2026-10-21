@@ -136,6 +136,24 @@ const catalog: ModelCatalog = {
       streamIdleTimeoutMs: 30_000,
       maxOutputTokens: 4_096,
     },
+    {
+      id: 'mock-error',
+      provider: 'mock',
+      providerModel: 'mock',
+      enabled: true,
+      timeoutMs: 30_000,
+      streamIdleTimeoutMs: 30_000,
+      maxOutputTokens: 4_096,
+    },
+    {
+      id: 'hosted-small',
+      provider: 'openai-compatible',
+      providerModel: 'small-model',
+      enabled: false,
+      timeoutMs: 60_000,
+      streamIdleTimeoutMs: 30_000,
+      maxOutputTokens: 4_096,
+    },
   ],
   models: [
     {

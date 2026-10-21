@@ -4,6 +4,8 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-10-21 | UI | The Models page shows each deployment's uptime as "not measured": the gateway records breaker changes per instance (`provider_health_events`) and per-request outcomes, not availability over time. An uptime figure needs health-check results stored per interval, or time spent open derived from the breaker changes and merged across instances. Provider logos are left out. | open |
+| 2026-10-21 | UI | The Cost page's cost-per-request card has no trend: the cost series has cost and tokens per interval but no request count. Adding `requests` to each cost series point would give it a sparkline. | open |
 | 2026-10-21 | UI | KPI cards show no change against a previous period: every analytics endpoint returns a single window. A comparison needs the previous window's totals, from a second call with an explicit `from`/`to` (the API takes a range only) or a compare option on the endpoint. | open |
 | 2026-10-21 | UI | The Overview's p95 latency card shows its value with "no trend data": the overview series has counts per interval only. The rollups keep a latency histogram per bucket, so the API could return a p95 per series point. | open |
 | 2026-10-21 | UI | The Overview's cache-hit ratio card shows its value with "no trend data": the overview series does not return cache hits per interval, though the rollups count them. Adding `cacheHits` to each series point would give it a sparkline. | open |

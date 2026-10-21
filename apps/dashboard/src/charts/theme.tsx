@@ -18,6 +18,27 @@ export const gridProps = { stroke: 'var(--chart-grid)', vertical: false } as con
 
 export const cursorProps = { stroke: 'var(--chart-cursor)', strokeWidth: 1 } as const;
 
+/** The hover band behind a bar chart's category. */
+export const barCursorProps = { fill: 'var(--color-surface-hover)' } as const;
+
+/** Bars are rounded at their data end only; the end at the baseline stays square. */
+// hardcoded-data-ok: corner radii (top left, top right, bottom right, bottom left), not data
+export const ROUNDED_TOP: [number, number, number, number] = [4, 4, 0, 0];
+// hardcoded-data-ok: corner radii (top left, top right, bottom right, bottom left), not data
+export const ROUNDED_RIGHT: [number, number, number, number] = [0, 4, 4, 0];
+
+/**
+ * Categorical colours in a fixed order, for series that are entities (models, projects).
+ * Anything past the last one folds into "Other", which is neutral.
+ */
+export const CATEGORICAL = [
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+] as const;
+
 /** Colours with a meaning; series without one take the chart palette. */
 export const TONES = {
   accent: 'var(--color-accent)',
