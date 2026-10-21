@@ -27,3 +27,6 @@ infra/terraform/*.tfvars
 .DS_Store
 Thumbs.db
 *.log
+
+# dashboard design-review screenshots (e2e/screenshots.spec.ts)
+apps/dashboard/screenshots/

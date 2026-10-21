@@ -64,7 +64,7 @@ for (const [dataset, responses] of [
       await page.goto('/#requests');
       if (dataset === 'empty') return;
       await page.getByText('mock-failover').first().click();
-      await expect(page.getByText('Routing history')).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Routing history' })).toBeVisible();
       expect(await overflow(page)).toBeLessThanOrEqual(0);
     });
   });
