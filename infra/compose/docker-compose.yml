@@ -49,8 +49,10 @@ services:
       SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
       # Ollama running on the host machine.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      # Optional: enables the hosted example deployment in config/models.json.
+      # Optional: enable the hosted deployments in config/models.json.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # Required: set it in .env (`openssl rand -hex 32`); the gateway exits without it.
       API_KEY_PEPPER: ${API_KEY_PEPPER:-}
       # Plain HTTP on localhost, so the session cookie cannot be HTTPS-only.

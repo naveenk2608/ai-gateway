@@ -54,6 +54,18 @@
       "model": "gpt-4o-mini",
       "baseUrl": "https://api.openai.com/v1",
       "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    "groq-gpt-oss-20b": {
+      "provider": "openai-compatible",
+      "model": "openai/gpt-oss-20b",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "apiKeyEnv": "GROQ_API_KEY"
+    },
+    "gemini-3.5-flash-lite": {
+      "provider": "openai-compatible",
+      "model": "gemini-3.5-flash-lite",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apiKeyEnv": "GEMINI_API_KEY"
     }
   },
   "models": {
@@ -80,6 +92,26 @@
     },
     "gpt-4o-mini": {
       "deployment": "openai-gpt-4o-mini"
+    },
+    "gpt-oss-20b": {
+      "deployment": "groq-gpt-oss-20b"
+    },
+    "gemini-3.5-flash-lite": {
+      "deployment": "gemini-3.5-flash-lite"
+    },
+    "chat-default": {
+      "policy": "priority",
+      "targets": [
+        {
+          "deployment": "groq-gpt-oss-20b"
+        },
+        {
+          "deployment": "gemini-3.5-flash-lite"
+        },
+        {
+          "deployment": "mock"
+        }
+      ]
     },
     "mock-failover": {
       "policy": "priority",

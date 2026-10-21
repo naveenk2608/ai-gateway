@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { generateApiKey } from '../auth/api-keys.js';
 import { bootstrap } from '../auth/bootstrap.js';
 import { DEFAULT_MIGRATIONS_DIR } from '../gateway.js';
+import { SEED_PRICES } from './seed-prices.js';
 
 const config = loadConfigOrExit(
   z.object({
@@ -50,26 +51,20 @@ try {
     logger,
   );
   if (!result) throw new Error('nothing to seed');
-  // Demo prices for the mock provider, so local requests show a cost. Illustrative values, not
-  // any real provider's prices; added only if the mock has no price yet.
-  const mockPrice = await db
-    .selectFrom('model_prices')
-    .select('id')
-    .where('provider', '=', 'mock')
-    .where('model', '=', 'mock')
-    .executeTakeFirst();
-  if (!mockPrice) {
-    await db
-      .insertInto('model_prices')
-      .values({
-        id: uuidv7(),
-        provider: 'mock',
-        model: 'mock',
-        input_micro_usd_per_mtok: 1_000_000,
-        output_micro_usd_per_mtok: 2_000_000,
-        effective_from: new Date(0),
-      })
-      .execute();
+  // Each price is added only if that provider and model have none yet; a later change is a new
+  // row with a later effective_from (ADR 016), never an edit.
+  for (const price of SEED_PRICES) {
+    const existing = await db
+      .selectFrom('model_prices')
+      .select('id')
+      .where('provider', '=', price.provider)
+      .where('model', '=', price.model)
+      .executeTakeFirst();
+    if (!existing)
+      await db
+        .insertInto('model_prices')
+        .values({ id: uuidv7(), ...price })
+        .execute();
   }
   const lines = [
     `Project:  Demo project (${result.projectId})`,
@@ -77,7 +72,7 @@ try {
       ? `Admin:    ${config.SEED_ADMIN_EMAIL} / ${password}`
       : `Admin:    ${config.SEED_ADMIN_EMAIL} already exists; password unchanged`,
     `API key:  ${key.plaintext}`,
-    'Prices:   demo prices for the mock provider ($1 / $2 per million tokens)',
+    'Prices:   mock (demo, $1 / $2 per million tokens), gpt-oss-20b on Groq, gemini-3.5-flash-lite',
     '',
     'The password and key are shown only now. Use the key as `Authorization: Bearer <key>`.',
   ];

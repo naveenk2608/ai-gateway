@@ -231,10 +231,23 @@ A model names one deployment, or several with a policy:
   model and request. Projects never share entries. Hits count toward request limits but cost
   nothing, and are recorded with `cacheHit: true`. `x-gateway-cache: off` skips the cache.
 
-The default file has `mock-1` and a mock for every failure mode (`mock-slow`,
-`mock-rate-limited`, `mock-error`, `mock-flaky`, `mock-drop`), two routed models (`mock-failover`,
-`mock-balanced`), `llama3.2` on Ollama, and `gpt-4o-mini` (enabled only when `OPENAI_API_KEY`
-is set).
+The default file has these models:
+
+| Model | Served by | Needs |
+| --- | --- | --- |
+| `mock-1` | the mock | nothing |
+| `mock-slow`, `mock-rate-limited`, `mock-error`, `mock-flaky`, `mock-drop` | the mock, one failure mode each | nothing |
+| `mock-failover` | `priority`: `mock-error`, then `mock` | nothing |
+| `mock-balanced` | `weighted`: `mock` ×3, `mock-flaky` ×1 | nothing |
+| `chat-default` | `priority`: Groq `openai/gpt-oss-20b`, then Gemini `gemini-3.5-flash-lite`, then `mock` | nothing; each provider joins once its key is set |
+| `gpt-oss-20b` | Groq, `openai/gpt-oss-20b` | `GROQ_API_KEY` |
+| `gemini-3.5-flash-lite` | Google Gemini API (OpenAI-compatible endpoint) | `GEMINI_API_KEY` |
+| `gpt-4o-mini` | OpenAI | `OPENAI_API_KEY` |
+| `llama3.2` | Ollama, `llama3.2:1b` | a running Ollama |
+
+A deployment whose key variable is empty is disabled at startup (the log says which), and a
+model with no enabled deployment answers 404. `chat-default` always answers: with no keys it is
+the mock.
 
 The mock also runs as a standalone HTTP server speaking the OpenAI wire format
 (`POST /v1/chat/completions` with or without streaming, `GET /v1/models`, `GET /stats` for its
@@ -243,6 +256,42 @@ call it directly; the benchmarks use it as their upstream. `pnpm mock:serve` sta
 `MOCK_HOST:MOCK_PORT` (`127.0.0.1:8090`); `MOCK_SETTINGS` is a JSON object with the same fields
 as a deployment's `mock` block, e.g. `MOCK_SETTINGS='{"latencyMs":50,"completionTokens":32}'`.
 In a container image it is `node dist/mock-server/main.js`.
+
+### Using real providers
+
+Groq and the Gemini API both speak the OpenAI wire format, so they use the `openai-compatible`
+provider; no provider code is specific to them.
+
+1. Create a key: Groq at <https://console.groq.com/keys>, Gemini at
+   <https://aistudio.google.com/apikey>.
+2. Put it in `.env` (never commit it) as `GROQ_API_KEY=` or `GEMINI_API_KEY=`, then restart
+   `pnpm dev`. With Compose, the `full` profile passes both through to the gateway. On a host such
+   as Render, set them as environment variables of the gateway service.
+3. Call `chat-default` (or `gpt-oss-20b` / `gemini-3.5-flash-lite` directly):
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions   -H "Authorization: Bearer $GATEWAY_KEY" -H 'content-type: application/json'   -d '{"model":"chat-default","messages":[{"role":"user","content":"Say hi"}]}'
+```
+
+If Groq fails or is rate-limited, the request falls back to Gemini, then to the mock; the
+request's routing history in the dashboard shows each attempt and why.
+
+`pnpm db:seed` adds prices for both models (from the providers' pricing pages, checked
+2026-10-21, with the sources in
+[apps/gateway/src/cli/seed-prices.ts](apps/gateway/src/cli/seed-prices.ts)), so their requests
+show a cost and count against budgets. A database the seed never ran on (such as the Render demo)
+needs the rows inserted; prices are versioned and never edited (ADR 016). Any unique UUID works
+as the `id`:
+
+```sql
+INSERT INTO model_prices (id, provider, model, input_micro_usd_per_mtok, output_micro_usd_per_mtok, effective_from)
+VALUES (gen_random_uuid(), 'openai-compatible', 'openai/gpt-oss-20b', 75000, 300000, '2026-10-21'),
+       (gen_random_uuid(), 'openai-compatible', 'gemini-3.5-flash-lite', 300000, 2500000, '2026-10-21');
+```
+
+Free tiers have low request limits, and Google's pricing page says content sent on the Gemini
+free tier is used to improve its products (on the paid tier it is not); check each provider's
+terms before sending real data.
 
 ## Limits and budgets
 
