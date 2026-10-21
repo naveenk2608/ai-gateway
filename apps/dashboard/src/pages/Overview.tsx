@@ -7,6 +7,7 @@ import {
   type Project,
 } from '../api.js';
 import { TimeSeriesChart } from '../charts/TimeSeriesChart.js';
+import { TONES } from '../charts/theme.js';
 import { budgetShare, formatCount, formatLatency, formatPercent, formatUsd } from '../format.js';
 import { fetchGatewayStatus, type GatewayStatus } from '../gatewayStatus.js';
 import { QueryCard } from '../ui/QueryCard.js';
@@ -120,10 +121,10 @@ export function Overview({ projectId, filters }: { projectId: string; filters: A
               data={data.series}
               stepSeconds={data.window.stepSeconds}
               lines={[
-                { key: 'succeeded', label: 'Succeeded', color: 'var(--ok)' },
-                { key: 'failed', label: 'Failed', color: 'var(--fail)' },
-                { key: 'rejected', label: 'Rejected', color: 'var(--warn)' },
-                { key: 'canceled', label: 'Canceled', color: 'var(--muted)' },
+                { key: 'succeeded', label: 'Succeeded', color: TONES.success },
+                { key: 'failed', label: 'Failed', color: TONES.danger },
+                { key: 'rejected', label: 'Rejected', color: TONES.warning },
+                { key: 'canceled', label: 'Canceled', color: TONES.neutral },
               ]}
             />
           </>

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { analyticsPath, api, type AnalyticsFilters, type SecurityResponse } from '../api.js';
 import { TimeSeriesChart } from '../charts/TimeSeriesChart.js';
+import { TONES } from '../charts/theme.js';
 import { formatCount } from '../format.js';
 import { BreakdownTable } from '../ui/BreakdownTable.js';
 import { QueryCard } from '../ui/QueryCard.js';
@@ -48,7 +49,7 @@ export function Security({ projectId, filters }: { projectId: string; filters: A
             label="Rejections per interval"
             data={data.series}
             stepSeconds={data.window.stepSeconds}
-            lines={[{ key: 'rejected', label: 'Rejected', color: 'var(--warn)' }]}
+            lines={[{ key: 'rejected', label: 'Rejected', color: TONES.warning }]}
           />
           <div className="grid-2">
             <div>

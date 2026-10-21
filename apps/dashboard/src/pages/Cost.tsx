@@ -8,6 +8,7 @@ import {
   type Spend,
 } from '../api.js';
 import { TimeSeriesChart } from '../charts/TimeSeriesChart.js';
+import { TONES } from '../charts/theme.js';
 import { formatCount, formatPercent, formatUsd } from '../format.js';
 import { BreakdownTable } from '../ui/BreakdownTable.js';
 import { QueryCard } from '../ui/QueryCard.js';
@@ -59,7 +60,7 @@ export function Cost({ projectId, filters }: { projectId: string; filters: Analy
               data={data.series}
               stepSeconds={data.window.stepSeconds}
               format={formatUsd}
-              lines={[{ key: 'costMicroUsd', label: 'Cost', color: 'var(--accent)' }]}
+              lines={[{ key: 'costMicroUsd', label: 'Cost', color: TONES.accent }]}
             />
             <div className="grid-2">
               <div>

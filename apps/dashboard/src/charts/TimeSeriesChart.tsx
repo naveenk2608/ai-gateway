@@ -1,16 +1,23 @@
+import { useId } from 'react';
 import {
   Area,
   AreaChart,
   CartesianGrid,
-  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { formatAxisTime } from '../format.js';
-
-const CHART_HEIGHT = 220;
+import {
+  axisProps,
+  CHART_HEIGHT,
+  ChartLegend,
+  ChartTooltip,
+  cursorProps,
+  gridProps,
+  svgId,
+} from './theme.js';
 
 export interface SeriesLine<T> {
   key: keyof T & string;
@@ -20,8 +27,8 @@ export interface SeriesLine<T> {
 }
 
 /**
- * A stacked area chart over a series from the analytics API. Every point comes from the API; the
- * chart draws nothing of its own.
+ * An area chart over a series from the analytics API. Every point comes from the API; the chart
+ * draws nothing of its own.
  */
 export function TimeSeriesChart<T extends { start: string }>({
   data,
@@ -40,33 +47,51 @@ export function TimeSeriesChart<T extends { start: string }>({
   /** Read by screen readers instead of the drawing. */
   label: string;
 }) {
+  const gradient = svgId(useId());
+  const axisTime = (value: unknown) =>
+    typeof value === 'string' ? formatAxisTime(value, stepSeconds) : '';
   return (
     <figure className="chart" aria-label={label}>
+      <ChartLegend series={lines} />
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-        <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid stroke="var(--border)" vertical={false} />
-          <XAxis
-            dataKey="start"
-            tickFormatter={(value: string) => formatAxisTime(value, stepSeconds)}
-            stroke="var(--muted)"
-            fontSize={12}
-            minTickGap={24}
-          />
+        <AreaChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
+          <defs>
+            {lines.map((line) => (
+              <linearGradient
+                key={line.key}
+                id={`${gradient}-${line.key}`}
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="1"
+              >
+                <stop offset="0%" stopColor={line.color} stopOpacity={0.3} />
+                <stop offset="100%" stopColor={line.color} stopOpacity={0.02} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid {...gridProps} />
+          <XAxis dataKey="start" tickFormatter={axisTime} minTickGap={32} dy={4} {...axisProps} />
           <YAxis
-            stroke="var(--muted)"
-            fontSize={12}
             width={56}
             tickFormatter={(value: number) => format(value)}
             allowDecimals={false}
+            {...axisProps}
           />
           <Tooltip
-            labelFormatter={(value) =>
-              typeof value === 'string' ? formatAxisTime(value, stepSeconds) : ''
-            }
-            formatter={(value) => format(Number(value))}
-            contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+            cursor={cursorProps}
+            isAnimationActive={false}
+            content={({ active, payload, label: point }) => (
+              <ChartTooltip
+                active={active}
+                payload={payload}
+                label={point}
+                series={lines}
+                format={format}
+                formatLabel={axisTime}
+              />
+            )}
           />
-          <Legend />
           {lines.map((line) => (
             <Area
               key={line.key}
@@ -76,8 +101,10 @@ export function TimeSeriesChart<T extends { start: string }>({
               name={line.label}
               stackId={stacked ? 'series' : undefined}
               stroke={line.color}
-              fill={line.color}
-              fillOpacity={0.25}
+              strokeWidth={1.5}
+              fill={`url(#${gradient}-${line.key})`}
+              fillOpacity={1}
+              activeDot={{ r: 3, strokeWidth: 0, fill: line.color }}
               isAnimationActive={false}
             />
           ))}

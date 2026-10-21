@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { analyticsPath, api, type AnalyticsFilters, type ReliabilityResponse } from '../api.js';
 import { TimeSeriesChart } from '../charts/TimeSeriesChart.js';
+import { TONES } from '../charts/theme.js';
 import { formatCount, formatPercent, formatTime } from '../format.js';
 import { BreakdownTable } from '../ui/BreakdownTable.js';
 import { QueryCard } from '../ui/QueryCard.js';
@@ -50,9 +51,9 @@ export function Reliability({
               stepSeconds={data.window.stepSeconds}
               stacked={false}
               lines={[
-                { key: 'failed', label: 'Failed', color: 'var(--fail)' },
-                { key: 'retries', label: 'Retries', color: 'var(--warn)' },
-                { key: 'fallbacks', label: 'Fallbacks', color: 'var(--accent)' },
+                { key: 'failed', label: 'Failed', color: TONES.danger },
+                { key: 'retries', label: 'Retries', color: TONES.warning },
+                { key: 'fallbacks', label: 'Fallbacks', color: TONES.accent },
               ]}
             />
             <div className="grid-2">

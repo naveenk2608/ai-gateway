@@ -1,0 +1,71 @@
+/* Page layout: the header, the page tabs and the range selector. */
+
+main {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-10);
+}
+
+main.narrow {
+  max-width: 420px;
+}
+
+main > .card {
+  margin-top: var(--space-6);
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* The tab row scrolls sideways on narrow screens instead of widening the page. */
+.tabs {
+  display: flex;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--color-text-muted);
+}
+
+.tab.active {
+  border-bottom-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.range {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 480px) {
+  main {
+    padding: var(--space-4) var(--space-3);
+  }
+}
