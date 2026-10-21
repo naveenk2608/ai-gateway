@@ -1,0 +1,201 @@
+{
+  "runId": "2026-10-21T0014Z-00f0bfc",
+  "generatedAt": "2026-10-21T00:14:09.491Z",
+  "git": {
+    "commit": "00f0bfcfb8f884510e68319b373f8fe4be97cdbc",
+    "dirty": false
+  },
+  "build": "docker compose build",
+  "host": {
+    "cpuModel": "Intel(R) Xeon(R) Processor",
+    "vcpus": 4,
+    "memoryBytes": 16872808448,
+    "arch": "x64",
+    "kernel": "Linux 6.18.44-fc-v140",
+    "os": "Ubuntu 24.04.5 LTS",
+    "virtualization": {
+      "hypervisorFlag": true,
+      "detected": "docker",
+      "vendor": null,
+      "product": null
+    }
+  },
+  "docker": {
+    "server": "29.9.1",
+    "compose": "5.6.0"
+  },
+  "versions": {
+    "k6": "k6 v2.3.0 (commit/e088784614, go1.27.1, linux/amd64)",
+    "nodeInGatewayImage": "v22.23.3"
+  },
+  "images": [
+    {
+      "image": "postgres:16.15-alpine3.24",
+      "id": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+      "repoDigests": [
+        "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+        "mirror.gcr.io/library/postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+      ]
+    },
+    {
+      "image": "redis:7.4.11-alpine3.21",
+      "id": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+      "repoDigests": [
+        "redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+        "mirror.gcr.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+      ]
+    },
+    {
+      "image": "ai-gateway-bench/gateway:local",
+      "id": "sha256:2517e72b8385a9e277cd458b65fadf546f0bee3a09ff399f1039c73abb0af99f",
+      "repoDigests": [
+        "ai-gateway-bench/gateway@sha256:2517e72b8385a9e277cd458b65fadf546f0bee3a09ff399f1039c73abb0af99f"
+      ]
+    },
+    {
+      "image": "ai-gateway-bench/worker:local",
+      "id": "sha256:0f8421444e0bc1ef8b245fb2fc80b507ecfee5529bfec68048301efb3e0b24d3",
+      "repoDigests": [
+        "ai-gateway-bench/worker@sha256:0f8421444e0bc1ef8b245fb2fc80b507ecfee5529bfec68048301efb3e0b24d3"
+      ]
+    },
+    {
+      "image": "grafana/k6:2.3.0",
+      "id": "sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+      "repoDigests": [
+        "grafana/k6@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34"
+      ]
+    }
+  ],
+  "config": {
+    "gateway": {
+      "API_KEY_PEPPER": "<redacted>",
+      "BOOTSTRAP_ADMIN_EMAIL": "bench@example.com",
+      "BOOTSTRAP_ADMIN_PASSWORD": "<redacted>",
+      "BOOTSTRAP_PROJECT_NAME": "Benchmarks",
+      "CACHE_ENABLED": "true",
+      "DATABASE_URL": "postgres://gateway@postgres:5432/gateway",
+      "LOG_LEVEL": "info",
+      "MOCK_API_KEY": "<redacted>",
+      "MODELS_CONFIG_PATH": "/bench/models.json",
+      "REDIS_URL": "redis://redis:6379",
+      "RUN_WORKER_IN_PROCESS": "false",
+      "SESSION_COOKIE_SECURE": "false"
+    },
+    "gatewayInstances": 2,
+    "worker": {
+      "DATABASE_URL": "postgres://gateway@postgres:5432/gateway",
+      "LOG_LEVEL": "info",
+      "METRICS_HOST": "0.0.0.0",
+      "REDIS_URL": "redis://redis:6379",
+      "WORKER_CLAIM_IDLE_MS": "5000"
+    },
+    "mock": {
+      "MOCK_HOST": "0.0.0.0",
+      "MOCK_PORT": "8090",
+      "MOCK_SETTINGS": "{\"latencyMs\":50,\"ttftMs\":50,\"tokensPerSecond\":400,\"completionTokens\":32}"
+    },
+    "models": {
+      "deployments": {
+        "bench-http-mock": {
+          "provider": "openai-compatible",
+          "model": "bench-mock",
+          "baseUrl": "http://mock:8090/v1",
+          "apiKeyEnv": "MOCK_API_KEY"
+        }
+      },
+      "models": {
+        "bench-1": {
+          "deployment": "bench-http-mock"
+        }
+      }
+    }
+  },
+  "scenarios": [
+    {
+      "name": "overhead-direct-plain-5vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "false",
+        "VUS": "5",
+        "DURATION": "3s"
+      },
+      "startedAt": "2026-10-21T00:14:37.467Z",
+      "wallClockMs": 3525
+    },
+    {
+      "name": "overhead-gateway-plain-5vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "false",
+        "VUS": "5",
+        "DURATION": "3s"
+      },
+      "startedAt": "2026-10-21T00:14:40.993Z",
+      "wallClockMs": 3655
+    },
+    {
+      "name": "overhead-direct-stream-5vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "true",
+        "VUS": "5",
+        "DURATION": "3s"
+      },
+      "startedAt": "2026-10-21T00:14:44.648Z",
+      "wallClockMs": 3611
+    },
+    {
+      "name": "overhead-gateway-stream-5vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "true",
+        "VUS": "5",
+        "DURATION": "3s"
+      },
+      "startedAt": "2026-10-21T00:14:48.259Z",
+      "wallClockMs": 3686
+    },
+    {
+      "name": "ratelimit",
+      "script": "ratelimit.js",
+      "env": {
+        "RPM": "60",
+        "RATE": "10",
+        "DURATION": "30s"
+      },
+      "startedAt": "2026-10-21T00:14:51.945Z",
+      "wallClockMs": 30554
+    },
+    {
+      "name": "accounting",
+      "script": "accounting.js",
+      "env": {
+        "RATE": "40",
+        "DURATION": "30s",
+        "FAULT_PAUSE_AT_S": "8",
+        "FAULT_KILL_AT_S": "11",
+        "FAULT_UNPAUSE_AT_S": "13",
+        "FAULT_START_AT_S": "14"
+      },
+      "startedAt": "2026-10-21T00:15:22.499Z",
+      "wallClockMs": 37624
+    },
+    {
+      "name": "cache",
+      "script": "cache.js",
+      "env": {
+        "PROMPTS": "20",
+        "RATE": "20",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-10-21T00:16:00.124Z",
+      "wallClockMs": 23540
+    }
+  ],
+  "totalWallClockMs": 135098
+}

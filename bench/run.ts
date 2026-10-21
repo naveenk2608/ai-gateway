@@ -7,7 +7,8 @@
  *   pnpm bench --no-build    reuse ai-gateway-bench/* images built earlier
  *   pnpm bench --out <dir>   write somewhere else (e.g. a trial run that is not committed)
  *
- * BENCH_VUS (10,50,100) and BENCH_OVERHEAD_DURATION (20s) change the overhead matrix. k6 runs
+ * BENCH_VUS (10,50,100) and BENCH_OVERHEAD_DURATION (20s) change the overhead matrix;
+ * BENCH_BUILD_NOTE says how prebuilt images were made (recorded with --no-build). k6 runs
  * from its pinned image; nothing is installed locally. The stack is removed with its volumes at
  * the end, also when a scenario fails; after an interrupted run, remove it with
  * `docker compose -f bench/compose.yaml down -v`.
@@ -304,7 +305,9 @@ async function main() {
       runId,
       generatedAt: now.toISOString(),
       git: { commit, dirty },
-      build: build ? 'docker compose build' : 'prebuilt images (--no-build)',
+      build: build
+        ? 'docker compose build'
+        : `prebuilt images (--no-build)${process.env.BENCH_BUILD_NOTE ? `: ${process.env.BENCH_BUILD_NOTE}` : ''}`,
       host: await machineInfo(),
       docker: {
         server: await run('docker', ['version', '--format', '{{.Server.Version}}']),

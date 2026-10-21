@@ -1,0 +1,67 @@
+{
+  "bench": {
+    "scenario": "overhead",
+    "target": "gateway",
+    "stream": false,
+    "vus": 5,
+    "duration": "3s",
+    "maxTokens": 32,
+    "temperature": 0.7
+  },
+  "state": {
+    "testRunDurationMs": 3142.182076
+  },
+  "metrics": {
+    "bench_failed": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0
+      }
+    },
+    "bench_completed": {
+      "type": "counter",
+      "values": {
+        "count": 255,
+        "rate": 81.15379498460355
+      }
+    },
+    "bench_latency": {
+      "type": "trend",
+      "values": {
+        "p(95)": 61.8191947,
+        "p(99)": 70.93806942,
+        "max": 72.135829,
+        "avg": 58.6241075843137,
+        "min": 56.003674,
+        "med": 58.037899,
+        "p(50)": 58.037899,
+        "p(90)": 60.6586338
+      }
+    },
+    "bench_sent_at_ms": {
+      "type": "gauge",
+      "values": {
+        "value": 1792541684399,
+        "min": 1792541681454,
+        "max": 1792541684399
+      }
+    },
+    "bench_error_rate": {
+      "type": "rate",
+      "values": {
+        "rate": 0,
+        "passes": 0,
+        "fails": 255
+      }
+    },
+    "bench_done_at_ms": {
+      "type": "gauge",
+      "values": {
+        "value": 1792541684459,
+        "min": 1792541681525,
+        "max": 1792541684459
+      }
+    }
+  }
+}

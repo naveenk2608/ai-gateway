@@ -3,3 +3,5 @@ pnpm-lock.yaml
 **/coverage/
 # Hand-written docs are not reformatted.
 *.md
+# Benchmark results are committed exactly as k6 and `pnpm bench` wrote them.
+bench/results/

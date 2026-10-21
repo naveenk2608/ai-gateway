@@ -1,0 +1,57 @@
+{
+  "bench": {
+    "scenario": "cache",
+    "prompts": 20,
+    "rate": 20,
+    "duration": "20s",
+    "instances": 2,
+    "temperature": 0
+  },
+  "state": {
+    "testRunDurationMs": 23049.839871
+  },
+  "metrics": {
+    "cache_misses": {
+      "type": "counter",
+      "values": {
+        "count": 20,
+        "rate": 0.8676849866173199
+      }
+    },
+    "cache_sent": {
+      "type": "counter",
+      "values": {
+        "count": 401,
+        "rate": 17.397083981677262
+      }
+    },
+    "cache_hits": {
+      "type": "counter",
+      "values": {
+        "count": 381,
+        "rate": 16.529398995059942
+      }
+    },
+    "cache_upstream_requests": {
+      "type": "counter",
+      "values": {
+        "count": 20,
+        "rate": 0.8676849866173199
+      }
+    },
+    "cache_failed": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0
+      }
+    },
+    "cache_verified": {
+      "type": "counter",
+      "values": {
+        "count": 1,
+        "rate": 0.043384249330865994
+      }
+    }
+  }
+}

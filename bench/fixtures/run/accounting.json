@@ -1,0 +1,91 @@
+{
+  "bench": {
+    "scenario": "accounting",
+    "rate": 40,
+    "duration": "30s",
+    "instances": 2,
+    "streamingShare": 0.5,
+    "fault": {
+      "postgresPausedAtS": 8,
+      "workerKilledAtS": 11,
+      "postgresUnpausedAtS": 13,
+      "workerStartedAtS": 14
+    }
+  },
+  "state": {
+    "testRunDurationMs": 37153.660113
+  },
+  "metrics": {
+    "acct_sent": {
+      "type": "counter",
+      "values": {
+        "count": 1200,
+        "rate": 32.29829837357322
+      }
+    },
+    "acct_verified": {
+      "type": "counter",
+      "values": {
+        "count": 1,
+        "rate": 0.026915248644644348
+      }
+    },
+    "acct_rows_stored": {
+      "type": "counter",
+      "values": {
+        "count": 1200,
+        "rate": 32.29829837357322
+      }
+    },
+    "acct_completed": {
+      "type": "counter",
+      "values": {
+        "count": 1200,
+        "rate": 32.29829837357322
+      }
+    },
+    "acct_drain_wait_ms": {
+      "type": "gauge",
+      "values": {
+        "value": 2029,
+        "min": 2029,
+        "max": 2029
+      }
+    },
+    "acct_rollup_requests": {
+      "type": "counter",
+      "values": {
+        "count": 1200,
+        "rate": 32.29829837357322
+      }
+    },
+    "acct_dead_letters": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0
+      }
+    },
+    "acct_worker_reclaimed": {
+      "type": "counter",
+      "values": {
+        "count": 1,
+        "rate": 0.026915248644644348
+      }
+    },
+    "acct_distinct_requests": {
+      "type": "counter",
+      "values": {
+        "count": 1200,
+        "rate": 32.29829837357322
+      }
+    },
+    "acct_failed": {
+      "type": "counter",
+      "values": {
+        "rate": 0,
+        "count": 0
+      }
+    }
+  }
+}

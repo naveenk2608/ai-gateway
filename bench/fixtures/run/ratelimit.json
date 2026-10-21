@@ -1,0 +1,85 @@
+{
+  "bench": {
+    "scenario": "ratelimit",
+    "rpm": 60,
+    "rate": 10,
+    "duration": "30s",
+    "instances": 2
+  },
+  "state": {
+    "testRunDurationMs": 30085.588253
+  },
+  "metrics": {
+    "rl_other_a": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0
+      }
+    },
+    "rl_other": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0
+      }
+    },
+    "rl_sent_at_ms": {
+      "type": "gauge",
+      "values": {
+        "value": 1792541722296,
+        "min": 1792541692295,
+        "max": 1792541722296
+      }
+    },
+    "rl_rejected_a": {
+      "type": "counter",
+      "values": {
+        "count": 95,
+        "rate": 3.157658052124908
+      }
+    },
+    "rl_rejected": {
+      "type": "counter",
+      "values": {
+        "count": 211,
+        "rate": 7.01332472629848
+      }
+    },
+    "rl_rejected_b": {
+      "type": "counter",
+      "values": {
+        "count": 116,
+        "rate": 3.855666674173572
+      }
+    },
+    "rl_admitted_a": {
+      "type": "counter",
+      "values": {
+        "count": 56,
+        "rate": 1.8613563254631038
+      }
+    },
+    "rl_admitted": {
+      "type": "counter",
+      "values": {
+        "count": 90,
+        "rate": 2.9914655230657026
+      }
+    },
+    "rl_admitted_b": {
+      "type": "counter",
+      "values": {
+        "count": 34,
+        "rate": 1.1301091976025988
+      }
+    },
+    "rl_other_b": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0
+      }
+    }
+  }
+}

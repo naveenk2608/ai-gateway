@@ -1,0 +1,80 @@
+{
+  "bench": {
+    "scenario": "overhead",
+    "target": "gateway",
+    "stream": true,
+    "vus": 5,
+    "duration": "3s",
+    "maxTokens": 32,
+    "temperature": 0.7
+  },
+  "state": {
+    "testRunDurationMs": 3215.98004
+  },
+  "metrics": {
+    "bench_error_rate": {
+      "type": "rate",
+      "values": {
+        "fails": 125,
+        "rate": 0,
+        "passes": 0
+      }
+    },
+    "bench_latency": {
+      "type": "trend",
+      "values": {
+        "avg": 123.99076286399996,
+        "min": 117.9726,
+        "med": 124.027664,
+        "p(50)": 124.027664,
+        "p(90)": 127.5069772,
+        "p(95)": 129.0901716,
+        "p(99)": 132.4173408,
+        "max": 133.301822
+      }
+    },
+    "bench_completed": {
+      "type": "counter",
+      "values": {
+        "count": 125,
+        "rate": 38.86840043945049
+      }
+    },
+    "bench_sent_at_ms": {
+      "type": "gauge",
+      "values": {
+        "min": 1792541688672,
+        "max": 1792541691663,
+        "value": 1792541691663
+      }
+    },
+    "bench_failed": {
+      "type": "counter",
+      "values": {
+        "rate": 0,
+        "count": 0
+      }
+    },
+    "bench_ttft": {
+      "type": "trend",
+      "values": {
+        "med": 56.343188,
+        "p(50)": 56.343188,
+        "p(90)": 59.5883882,
+        "p(95)": 61.30506,
+        "p(99)": 65.97993384,
+        "max": 66.669658,
+        "avg": 56.427018400000016,
+        "min": 51.876321
+      }
+    },
+    "bench_done_at_ms": {
+      "type": "gauge",
+      "values": {
+        "value": 1792541691785,
+        "min": 1792541688801,
+        "max": 1792541691785
+      }
+    }
+  }
+}
