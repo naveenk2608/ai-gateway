@@ -16,7 +16,13 @@ const failing = `failing-${tag}`;
 const models = parseModelsConfig(
   {
     deployments: {
-      [ok]: { provider: 'mock', model: `mock-${tag}`, mock: { completionTokens: 5 } },
+      // Generation takes a few milliseconds, so every success has a measurable tokens/s rate (an
+      // instant reply would finish within the same millisecond and record none).
+      [ok]: {
+        provider: 'mock',
+        model: `mock-${tag}`,
+        mock: { completionTokens: 5, latencyMs: 5, tokensPerSecond: 1_000 },
+      },
       [failing]: { provider: 'mock', model: `mock-${tag}`, mock: { failWith: 500 } },
     },
     models: {
