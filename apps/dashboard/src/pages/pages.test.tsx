@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { emptyResponses, PROJECT_ID, sampleResponses } from '../../e2e/fixtures.js';
@@ -658,5 +658,46 @@ describe('roles in the settings page', () => {
     const { buttons, roleSelects } = await controlsFor('owner');
     expect(buttons).toEqual(expect.arrayContaining(mutationButtons));
     expect(roleSelects.length).toBeGreaterThan(0);
+  });
+});
+
+describe('provider badges', () => {
+  const badge = (scope: HTMLElement, name: string) =>
+    within(scope)
+      .getAllByTitle(name)
+      .filter((el) => el.classList.contains('provider-badge'));
+
+  it('show the provider in the request table and the request side panel', async () => {
+    stubApi('data');
+    show(<Requests projectId={PROJECT_ID} filters={filters} />);
+    const row = (await screen.findByText('mock-failover')).closest('tr')!;
+    await waitFor(() => expect(badge(row, 'Mock')).toHaveLength(1));
+    fireEvent.click(row);
+    const panel = await screen.findByRole('dialog', { name: 'Request detail' });
+    await within(panel).findByRole('heading', { name: 'Routing history' });
+    // The deployment fact, both attempt timings and both routing steps.
+    expect(badge(panel, 'Mock')).toHaveLength(5);
+  });
+
+  it('show the provider on the models table and on each deployment card', async () => {
+    stubApi('data');
+    show(<Models projectId={PROJECT_ID} filters={filters} />);
+    const row = (await screen.findByText('mock-1')).closest('tr')!;
+    await waitFor(() => expect(badge(row, 'Mock')).toHaveLength(1));
+    const hosted = await screen.findByRole('group', { name: 'hosted-small' });
+    expect(badge(hosted, 'OpenAI-compatible')).toHaveLength(1);
+    expect(badge(screen.getByRole('group', { name: 'mock' }), 'Mock')).toHaveLength(1);
+  });
+
+  it('show the provider in the cost breakdowns by provider and by model', async () => {
+    stubApi('data');
+    show(<Cost projectId={PROJECT_ID} filters={filters} />);
+    const byProvider = (await screen.findByRole('heading', { name: 'By provider' })).closest(
+      'section',
+    )!;
+    // The card's heading shows while it loads; the rows come with the data.
+    await waitFor(() => expect(badge(byProvider, 'Mock')).toHaveLength(1));
+    const byModel = screen.getByRole('heading', { name: 'By model' }).closest('section')!;
+    await waitFor(() => expect(badge(byModel, 'Mock')).toHaveLength(1));
   });
 });

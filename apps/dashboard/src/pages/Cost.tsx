@@ -1,4 +1,5 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { CalendarClock, CircleDollarSign, Coins, Receipt } from 'lucide-react';
 import {
   analyticsPath,
@@ -6,6 +7,7 @@ import {
   type AnalyticsFilters,
   type BudgetStatus,
   type CostResponse,
+  type ModelCatalog,
   type Spend,
 } from '../api.js';
 import { BarSeriesChart } from '../charts/BarSeriesChart.js';
@@ -17,6 +19,8 @@ import { formatCount, formatPercent, formatStep, formatUsd } from '../format.js'
 import { KpiCard, NoTrend } from '../ui/KpiCard.js';
 import { Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
+import { ProviderBadge } from '../ui/ProviderBadge.js';
+import { identifyProvider } from '../ui/providers.js';
 import { ShareTable, type ShareRow } from '../ui/ShareTable.js';
 import { ErrorState } from '../ui/states.js';
 
@@ -35,7 +39,7 @@ type Data = CostResponse;
 function spendRows<T extends Spend>(
   rows: T[],
   key: (row: T) => string,
-  name: (row: T) => string,
+  name: (row: T) => ReactNode,
 ): ShareRow[] {
   return rows.map((row) => ({
     key: key(row),
@@ -159,7 +163,37 @@ function BudgetTile({ budget }: { budget: BudgetStatus }) {
 
 const nothingSpent = (data: Data) => data.totals.requests === 0;
 
+/**
+ * A model with the provider of its deployment, when it routes to exactly one; a routed model
+ * (several deployments) or one missing from the catalog shows its name only.
+ */
+function ModelName({ model, catalog }: { model: string; catalog: ModelCatalog | undefined }) {
+  const targets = catalog?.models.find((m) => m.name === model)?.targets;
+  const deployment =
+    targets?.length === 1
+      ? catalog?.deployments.find((d) => d.id === targets[0]?.deployment)
+      : undefined;
+  if (!deployment) return model;
+  return (
+    <span className="deployment-cell">
+      <ProviderBadge
+        provider={identifyProvider({
+          provider: deployment.provider,
+          deployment: deployment.id,
+          model: deployment.providerModel,
+        })}
+      />
+      <span>{model}</span>
+    </span>
+  );
+}
+
 export function Cost({ projectId, filters }: { projectId: string; filters: AnalyticsFilters }) {
+  // Which deployment each model routes to; shared with the Models and Settings pages.
+  const catalog = useQuery({
+    queryKey: ['catalog'],
+    queryFn: ({ signal }) => api<ModelCatalog>('/admin/models', { signal }),
+  });
   const cost = useQuery({
     queryKey: ['cost', projectId, filters],
     queryFn: ({ signal }) =>
@@ -275,7 +309,12 @@ export function Cost({ projectId, filters }: { projectId: string; filters: Analy
             spendRows(
               data.byProvider,
               (r) => r.provider ?? '',
-              (r) => r.provider ?? 'none (rejected or cached)',
+              (r) =>
+                r.provider ? (
+                  <ProviderBadge provider={identifyProvider({ provider: r.provider })} />
+                ) : (
+                  'none (rejected or cached)'
+                ),
             ),
           'No provider was called.',
         )}
@@ -286,7 +325,7 @@ export function Cost({ projectId, filters }: { projectId: string; filters: Analy
             spendRows(
               data.byModel,
               (r) => r.model,
-              (r) => r.model,
+              (r) => <ModelName model={r.model} catalog={catalog.data} />,
             ),
           'No model was called.',
         )}

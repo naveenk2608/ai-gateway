@@ -27,6 +27,8 @@ import {
   shortId,
 } from '../format.js';
 import { Drawer } from '../ui/Drawer.js';
+import { ProviderBadge } from '../ui/ProviderBadge.js';
+import { useProviderOf, type ProviderInfo } from '../ui/providers.js';
 import { Stat } from '../ui/Stat.js';
 import { Empty, ErrorState, Loading } from '../ui/states.js';
 
@@ -53,7 +55,9 @@ function LatencyCell({ ms, slowest }: { ms: number; slowest: number }) {
   );
 }
 
-function requestColumns(slowest: number, open: (id: string) => void) {
+type ProviderOf = (provider: string, deployment?: string | null) => ProviderInfo;
+
+function requestColumns(slowest: number, open: (id: string) => void, providerOf: ProviderOf) {
   return [
     column.accessor('startedAt', { header: 'Time', cell: (c) => formatShortTime(c.getValue()) }),
     column.accessor('id', {
@@ -75,12 +79,17 @@ function requestColumns(slowest: number, open: (id: string) => void) {
     column.accessor('model', { header: 'Model' }),
     column.accessor('deployment', {
       header: 'Deployment',
-      cell: (c) =>
-        c.row.original.cacheHit ? (
-          <span className="badge tone-accent">cache</span>
-        ) : (
-          (c.getValue() ?? '—')
-        ),
+      cell: (c) => {
+        const deployment = c.getValue();
+        if (c.row.original.cacheHit) return <span className="badge tone-accent">cache</span>;
+        if (!deployment) return '—';
+        return (
+          <div className="deployment-cell">
+            <ProviderBadge provider={providerOf(c.row.original.provider ?? '', deployment)} />
+            <span>{deployment}</span>
+          </div>
+        );
+      },
     }),
     column.accessor('status', {
       header: 'Status',
@@ -110,7 +119,15 @@ function outcomeTone(outcome: string): string {
 }
 
 /** Each attempt's time as a share of the whole request, with its first token when streamed. */
-function AttemptTimings({ attempts, total }: { attempts: Attempt[]; total: number }) {
+function AttemptTimings({
+  attempts,
+  total,
+  providerOf,
+}: {
+  attempts: Attempt[];
+  total: number;
+  providerOf: ProviderOf;
+}) {
   return (
     <>
       <h3>Attempt timings</h3>
@@ -120,6 +137,7 @@ function AttemptTimings({ attempts, total }: { attempts: Attempt[]; total: numbe
             <div className="attempt-head">
               <span className="attempt-number">#{a.attemptNumber}</span>
               <span className="attempt-name">{a.deployment}</span>
+              <ProviderBadge provider={providerOf(a.provider, a.deployment)} />
               <span className={`badge ${outcomeTone(a.outcome)}`}>
                 {a.outcome}
                 {a.upstreamStatus === null ? '' : ` ${a.upstreamStatus}`}
@@ -143,7 +161,7 @@ function AttemptTimings({ attempts, total }: { attempts: Attempt[]; total: numbe
 }
 
 /** The routing decisions in order: which deployment, by which policy, and why. */
-function RoutingHistory({ detail }: { detail: Detail }) {
+function RoutingHistory({ detail, providerOf }: { detail: Detail; providerOf: ProviderOf }) {
   return (
     <>
       <h3>Routing history</h3>
@@ -161,7 +179,8 @@ function RoutingHistory({ detail }: { detail: Detail }) {
               <div className="routing-text">
                 <div>
                   <span className="attempt-name">{a.deployment}</span>{' '}
-                  <span className="muted small">via {a.provider}</span>
+                  <span className="muted small">via</span>{' '}
+                  <ProviderBadge provider={providerOf(a.provider, a.deployment)} />
                 </div>
                 <div className="muted small">
                   {a.routingPolicy && <span className="mono">{a.routingPolicy}: </span>}
@@ -182,8 +201,10 @@ function firstToken(detail: Detail): { value: string; note: string } {
   return { value: formatLatency(detail.ttftMs), note: 'time to first token' };
 }
 
-function RequestFacts({ detail }: { detail: Detail }) {
+function RequestFacts({ detail, providerOf }: { detail: Detail; providerOf: ProviderOf }) {
   const usage = detail.usage;
+  // The request's deployment is the one its last attempt used; attempts carry the provider.
+  const served = detail.attempts.findLast((a) => a.deployment === detail.deployment);
   const ttft = firstToken(detail);
   return (
     <>
@@ -198,7 +219,18 @@ function RequestFacts({ detail }: { detail: Detail }) {
         <dt>Model</dt>
         <dd>{detail.model}</dd>
         <dt>Deployment</dt>
-        <dd>{detail.deployment ?? '—'}</dd>
+        <dd>
+          {detail.deployment ? (
+            <span className="deployment-cell">
+              {served && (
+                <ProviderBadge provider={providerOf(served.provider, served.deployment)} />
+              )}
+              <span>{detail.deployment}</span>
+            </span>
+          ) : (
+            '—'
+          )}
+        </dd>
         <dt>Started</dt>
         <dd>{formatTime(detail.startedAt)}</dd>
         <dt>Completed</dt>
@@ -217,15 +249,20 @@ function RequestFacts({ detail }: { detail: Detail }) {
         <Stat label="First token" value={ttft.value} note={ttft.note} />
       </div>
       {!detail.cacheHit && detail.attempts.length > 0 && (
-        <AttemptTimings attempts={detail.attempts} total={detail.latencyMs} />
+        <AttemptTimings
+          attempts={detail.attempts}
+          total={detail.latencyMs}
+          providerOf={providerOf}
+        />
       )}
-      <RoutingHistory detail={detail} />
+      <RoutingHistory detail={detail} providerOf={providerOf} />
     </>
   );
 }
 
 /** The selected request in a panel from the right: what happened, how long, and where it went. */
 function RequestPanel({ requestId, onClose }: { requestId: string; onClose: () => void }) {
+  const providerOf = useProviderOf();
   const detail = useQuery({
     queryKey: ['request', requestId],
     queryFn: ({ signal }) => api<Detail>(`/admin/requests/${requestId}`, { signal }),
@@ -252,7 +289,7 @@ function RequestPanel({ requestId, onClose }: { requestId: string; onClose: () =
         ) : detail.isError ? (
           <ErrorState error={detail.error} retry={() => void detail.refetch()} />
         ) : (
-          <RequestFacts detail={detail.data} />
+          <RequestFacts detail={detail.data} providerOf={providerOf} />
         )}
       </div>
     </Drawer>
@@ -359,7 +396,11 @@ export function Requests({ projectId, filters }: { projectId: string; filters: A
   const filtered = Object.values(own).some((value) => value !== undefined);
   const rows = page.data?.data;
   const slowest = Math.max(0, ...(rows ?? []).map((r) => r.latencyMs));
-  const columns = useMemo(() => requestColumns(slowest, setSelected), [slowest]);
+  const providerOf = useProviderOf();
+  const columns = useMemo(
+    () => requestColumns(slowest, setSelected, providerOf),
+    [slowest, providerOf],
+  );
   // The dashboard is not built with React Compiler, so its memoization caveat does not apply.
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({

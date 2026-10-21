@@ -11,6 +11,8 @@ import {
 import { CategoryBarChart } from '../charts/CategoryBarChart.js';
 import { TONES } from '../charts/theme.js';
 import { formatCount, formatLatency, formatPercent, formatUsd } from '../format.js';
+import { ProviderBadge } from '../ui/ProviderBadge.js';
+import { identifyProvider, useProviderOf } from '../ui/providers.js';
 import { QueryCard } from '../ui/QueryCard.js';
 
 type Row = ModelsResponse['data'][number] & { deployment: string };
@@ -33,6 +35,7 @@ function worstState(instances: BreakerInstance[]): BreakerInstance['state'] {
 }
 
 function ComparisonTable({ rows }: { rows: Row[] }) {
+  const providerOf = useProviderOf();
   return (
     <div className="table-wrap">
       <table>
@@ -58,8 +61,10 @@ function ComparisonTable({ rows }: { rows: Row[] }) {
               <tr key={`${model}|${deployment}`}>
                 <td className="strong">{model}</td>
                 <td>
-                  {deployment}
-                  {provider && <div className="muted small">{provider}</div>}
+                  <div className="deployment-cell">
+                    {provider && <ProviderBadge provider={providerOf(provider, deployment)} />}
+                    <span>{deployment}</span>
+                  </div>
                 </td>
                 <td className="num">{formatCount(m.requests)}</td>
                 <td className="num">{formatLatency(m.latencyMs.p50)}</td>
@@ -179,8 +184,15 @@ export function Models({ projectId, filters }: { projectId: string; filters: Ana
                           <span className={`badge breaker-${state}`}>{BREAKER_LABELS[state]}</span>
                         ) : null}
                       </div>
-                      <div className="muted small">
-                        {d.provider} · <span className="mono">{d.providerModel}</span>
+                      <div className="deployment-cell">
+                        <ProviderBadge
+                          provider={identifyProvider({
+                            provider: d.provider,
+                            deployment: d.id,
+                            model: d.providerModel,
+                          })}
+                        />
+                        <span className="mono muted small">{d.providerModel}</span>
                       </div>
                       <dl className="tile-facts">
                         <dt>Breaker</dt>
