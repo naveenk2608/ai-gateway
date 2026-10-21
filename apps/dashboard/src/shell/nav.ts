@@ -87,18 +87,25 @@ export function pageInfo(id: PageId): PageInfo {
   return PAGES.find((p) => p.id === id) ?? PAGES[0]!;
 }
 
-function readHash(): PageId {
-  const hash = window.location.hash.slice(1);
-  return PAGES.some((p) => p.id === hash) ? (hash as PageId) : 'overview';
+export interface Route {
+  page: PageId;
+  /** The part after the page, e.g. a settings tab in `#settings/keys`; null when there is none. */
+  section: string | null;
 }
 
-/** The page in the URL hash, so links, reloads and the back button keep it. */
-export function usePage(): PageId {
-  const [page, setPage] = useState<PageId>(readHash);
+function readHash(): Route {
+  const [first = '', section] = window.location.hash.slice(1).split('/');
+  const page = PAGES.some((p) => p.id === first) ? (first as PageId) : 'overview';
+  return { page, section: page === first && section ? section : null };
+}
+
+/** The page (and section) in the URL hash, so links, reloads and the back button keep it. */
+export function useRoute(): Route {
+  const [route, setRoute] = useState<Route>(readHash);
   useEffect(() => {
-    const onHash = () => setPage(readHash());
+    const onHash = () => setRoute(readHash());
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
-  return page;
+  return route;
 }

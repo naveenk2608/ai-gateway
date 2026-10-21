@@ -14,7 +14,7 @@ const MARKERS: Record<(typeof PAGES)[number]['hash'], string> = {
   reliability: 'Circuit breakers',
   security: 'By reason',
   infra: 'Unread events',
-  settings: 'Deployments and routing',
+  settings: 'Project ID',
 };
 
 for (const [dataset, responses] of [
@@ -45,6 +45,26 @@ for (const [dataset, responses] of [
         await expect(drawer).toBeHidden();
       });
     }
+
+    for (const tab of ['project', 'limits', 'members', 'keys', 'routing']) {
+      test(`settings tab ${tab} fits the screen`, async ({ page }) => {
+        await serveApi(page, responses);
+        await page.goto(`/#settings/${tab}`);
+        const selected = page.getByRole('tab', { selected: true });
+        await expect(selected).toHaveAttribute('href', `#settings/${tab}`);
+        await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+      });
+    }
+
+    test('a settings tab opens from the tab row and keeps its hash', async ({ page }) => {
+      await serveApi(page, responses);
+      await page.goto('/#settings');
+      await page.getByRole('tab', { name: 'API keys' }).click();
+      await expect(page.getByRole('tab', { selected: true })).toHaveText('API keys');
+      expect(new URL(page.url()).hash).toBe('#settings/keys');
+      await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
+    });
 
     test('the navigation drawer opens another page and closes', async ({ page }) => {
       await serveApi(page, responses);

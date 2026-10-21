@@ -118,7 +118,7 @@ const pages: { name: string; page: () => ReactElement; empty: RegExp; data: RegE
   },
   {
     name: 'Settings',
-    page: () => <Settings projectId={PROJECT_ID} userId="u" />,
+    page: () => <Settings projectId={PROJECT_ID} userId="u" tab="keys" />,
     empty: /This project has no API keys yet/,
     data: /backend/,
   },
@@ -409,45 +409,254 @@ describe('Infrastructure instance card', () => {
   });
 });
 
+describe('Reliability page', () => {
+  const page = () => <Reliability projectId={PROJECT_ID} filters={filters} />;
+  const card = (name: string) => screen.getByRole('region', { name });
+
+  it('shows failures, retries, fallbacks and attempts with lines from the API series', async () => {
+    stubApi('data');
+    show(page());
+    expect(await within(card('Failed')).findByText('8')).toBeTruthy();
+    expect(within(card('Failed')).getByText('7.3% of admitted requests')).toBeTruthy();
+    for (const [name, line] of [
+      ['Failed', /^Failed requests per 15 min: low/],
+      ['Retries', /^Retries per 15 min: low/],
+      ['Fallbacks', /^Fallbacks per 15 min: low/],
+    ] as const) {
+      expect(within(card(name)).getByRole('img', { name: line })).toBeTruthy();
+    }
+    expect(within(card('Upstream attempts')).getByText('125')).toBeTruthy();
+  });
+
+  it('shows each breaker per instance and each deployment in a table', async () => {
+    stubApi('data');
+    show(page());
+    const breaker = await screen.findByRole('group', { name: 'mock-error' });
+    expect(within(breaker).getByText('open')).toBeTruthy();
+    expect(within(breaker).getByText('5 consecutive failures')).toBeTruthy();
+    const row = screen.getByText('110').closest('tr')!;
+    expect(within(row).getByText('7.3%')).toBeTruthy();
+  });
+});
+
+describe('Security page', () => {
+  const page = () => <Security projectId={PROJECT_ID} filters={filters} />;
+  const card = (name: string) => screen.getByRole('region', { name });
+
+  it('counts rejections by kind and says invalid keys are not counted', async () => {
+    stubApi('data');
+    show(page());
+    expect(await within(card('Rejected')).findByText('10')).toBeTruthy();
+    expect(
+      within(card('Rejected')).getByRole('img', { name: /^Rejected per 15 min/ }),
+    ).toBeTruthy();
+    expect(within(card('Rate, token and concurrency limits')).getByText('7')).toBeTruthy();
+    expect(within(card('Budget')).getByText('3')).toBeTruthy();
+    expect(within(card('Model policy')).getByText('0')).toBeTruthy();
+    expect(within(card('Invalid API keys')).getByText('not counted')).toBeTruthy();
+  });
+
+  it('shows each reason with its share of the rejections', async () => {
+    stubApi('data');
+    show(page());
+    const row = (await screen.findByText('rpm_limit_exceeded')).closest('tr')!;
+    expect(within(row).getByText('70.0%')).toBeTruthy();
+    expect(within(row).getByText('Rate limit')).toBeTruthy();
+  });
+});
+
+describe('Infrastructure KPI cards', () => {
+  const page = () => <Infrastructure projectId={PROJECT_ID} filters={filters} />;
+  const card = (name: string) => screen.getByRole('region', { name });
+
+  it('shows worker lag, pending, dead letters and reachable dependencies as readings', async () => {
+    stubApi('data');
+    show(page());
+    expect(await within(card('Worker lag')).findByText('3')).toBeTruthy();
+    expect(within(card('Pending')).getByText('read, not stored · oldest 1 s')).toBeTruthy();
+    expect(within(card('Dead letters')).getByText('0')).toBeTruthy();
+    expect(within(card('Dependencies')).getByText('2 of 2')).toBeTruthy();
+    expect(screen.getAllByText('current reading')).toHaveLength(4);
+  });
+});
+
+describe('Settings tabs', () => {
+  const settings = (tab: string | null, role: Role = 'owner') => {
+    stubApi('data', role);
+    return show(<Settings projectId={PROJECT_ID} userId="u" tab={tab} />);
+  };
+
+  it('has one tab per area, linked from the URL hash, and opens the project tab by default', async () => {
+    settings(null);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      'Project',
+      'Limits and budget',
+      'Members',
+      'API keys',
+      'Routing',
+    ]);
+    expect(tabs.map((t) => t.getAttribute('href'))).toEqual([
+      '#settings/project',
+      '#settings/limits',
+      '#settings/members',
+      '#settings/keys',
+      '#settings/routing',
+    ]);
+    expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Project');
+    expect((await screen.findAllByText(/Project ID/)).length).toBeGreaterThan(0);
+    expect(screen.getByRole('tabpanel', { name: 'Project' })).toBeTruthy();
+  });
+
+  it('opens the tab in the URL and falls back to the first for an unknown one', () => {
+    settings('routing');
+    expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Routing');
+    cleanup();
+    settings('nope');
+    expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Project');
+  });
+
+  it('moves between tabs with the arrow keys', () => {
+    settings('members');
+    fireEvent.keyDown(screen.getByRole('tab', { selected: true }), { key: 'ArrowRight' });
+    expect(window.location.hash).toBe('#settings/keys');
+    fireEvent.keyDown(screen.getByRole('tab', { selected: true }), { key: 'Home' });
+    expect(window.location.hash).toBe('#settings/project');
+  });
+
+  it('shows limits as meters of the busiest minute in the last hour, and the budget spent', async () => {
+    const fetchMock = stubApi('data');
+    const answer = fetchMock.getMockImplementation()!;
+    const minutes = Array.from({ length: 60 }, (_, i) =>
+      new Date(Date.parse('2026-10-20T23:00:00Z') + i * 60_000).toISOString(),
+    );
+    const hour = { range: '1h', granularity: 'minute', stepSeconds: 60 };
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = new URL(input as string, 'http://dashboard.test');
+      if (url.searchParams.get('range') !== '1h') return answer(input);
+      const section = url.pathname.split('/').at(-1);
+      const base = sampleResponses('owner')[`/admin/analytics/${section}`] as { window: object };
+      const series =
+        section === 'overview'
+          ? minutes.map((start, i) => ({
+              start,
+              requests: i === 30 ? 50 : 4,
+              succeeded: 4,
+              failed: 0,
+              rejected: i === 30 ? 5 : 0,
+              canceled: 0,
+            }))
+          : minutes.map((start, i) => ({ start, costMicroUsd: 10, totalTokens: i * 20 }));
+      return Promise.resolve(
+        Response.json({ ...base, window: { ...base.window, ...hour }, series }),
+      );
+    });
+    show(<Settings projectId={PROJECT_ID} userId="u" tab="limits" />);
+
+    const rpm = await screen.findByRole('meter', { name: 'Requests per minute used' });
+    expect(rpm.getAttribute('aria-valuenow')).toBe('75');
+    const rpmTile = screen.getByRole('group', { name: 'Requests per minute' });
+    expect(within(rpmTile).getByText('busiest minute in the last hour: 45')).toBeTruthy();
+    // No token limit: the measurement is shown without a meter.
+    const tpm = screen.getByRole('group', { name: 'Tokens per minute' });
+    expect(await within(tpm).findByText('busiest minute in the last hour: 1,180')).toBeTruthy();
+    expect(within(tpm).queryByRole('meter')).toBeNull();
+    const concurrency = screen.getByRole('group', { name: 'Concurrent requests' });
+    expect(within(concurrency).getByText('in-flight requests: not measured')).toBeTruthy();
+    const budget = screen.getByRole('meter', { name: 'Monthly budget used' });
+    expect(budget.getAttribute('aria-valuenow')).toBe('37');
+    expect(screen.getByText('$1.84 spent in 2026-10 (UTC)')).toBeTruthy();
+  });
+
+  it('measures nothing against a limit when the series is not per minute', async () => {
+    settings('limits');
+    const rpmTile = await screen.findByRole('group', { name: 'Requests per minute' });
+    expect(await within(rpmTile).findByText('use unavailable')).toBeTruthy();
+    expect(within(rpmTile).queryByRole('meter')).toBeNull();
+  });
+
+  it('lists keys with their hint, status and last use as not tracked, and filters them', async () => {
+    settings('keys');
+    const row = (await screen.findByText('backend')).closest('tr')!;
+    expect(within(row).getByText('gw_0123456789abcdef_…')).toBeTruthy();
+    expect(within(row).getByText('active')).toBeTruthy();
+    expect(within(row).getByText('not tracked')).toBeTruthy();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search keys' }), {
+      target: { value: 'frontend' },
+    });
+    expect(screen.queryByText('backend')).toBeNull();
+    expect(screen.getByText('No key matches “frontend”.')).toBeTruthy();
+  });
+});
+
 describe('roles in the settings page', () => {
   const mutationButtons = [
     'Save project settings',
+    'Save limits and budget',
     'Add member',
     'Remove',
     'Create key',
     'Rotate',
     'Revoke',
   ];
+  const mutationForms = ['Project settings', 'Limits and budget', 'Add member', 'New key'];
+  /** Each tab with text it shows once its data has loaded. */
+  const tabs: [string, RegExp][] = [
+    ['project', /Project ID/],
+    ['limits', /busiest minute|use unavailable/],
+    ['members', /viewer@example\.com/],
+    ['keys', /backend/],
+    ['routing', /mock-1/],
+  ];
 
-  async function buttonsFor(role: Role) {
+  /** The buttons, named forms and role pickers on every tab, for one role. */
+  async function controlsFor(role: Role) {
     stubApi('data', role);
-    show(<Settings projectId={PROJECT_ID} userId="u" />);
-    await screen.findAllByText('backend');
-    await screen.findAllByText('viewer@example.com');
-    return screen.getAllByRole('button').map((b) => b.textContent);
+    const buttons: (string | null)[] = [];
+    const forms: (string | null)[] = [];
+    const roleSelects: HTMLElement[] = [];
+    for (const [tab, ready] of tabs) {
+      const view = show(<Settings projectId={PROJECT_ID} userId="u" tab={tab} />);
+      await screen.findAllByText(ready);
+      buttons.push(...screen.queryAllByRole('button').map((b) => b.textContent));
+      forms.push(...screen.queryAllByRole('form').map((f) => f.getAttribute('aria-label')));
+      roleSelects.push(...screen.queryAllByRole('combobox', { name: /Role of/ }));
+      view.unmount();
+    }
+    return { buttons, forms, roleSelects };
   }
 
-  it('gives a viewer no control that changes the project, its members or its keys', async () => {
-    const buttons = await buttonsFor('viewer');
+  it('gives a viewer no control that changes the project, its limits, members or keys', async () => {
+    const { buttons, forms, roleSelects } = await controlsFor('viewer');
     for (const name of mutationButtons) expect(buttons).not.toContain(name);
-    expect(screen.queryByRole('form', { name: 'Project settings' })).toBeNull();
-    expect(screen.queryByRole('form', { name: 'Add member' })).toBeNull();
-    expect(screen.queryAllByRole('combobox', { name: /Role of/ })).toEqual([]);
-    expect(screen.getByText('every configured model')).toBeTruthy();
+    for (const name of mutationForms) expect(forms).not.toContain(name);
+    expect(roleSelects).toEqual([]);
   });
 
-  it('gives an admin project and key controls but not member controls', async () => {
-    const buttons = await buttonsFor('admin');
+  it('shows a viewer the project and its allow-list as text', async () => {
+    stubApi('data', 'viewer');
+    show(<Settings projectId={PROJECT_ID} userId="u" tab="project" />);
+    expect(await screen.findByText('every configured model')).toBeTruthy();
+  });
+
+  it('gives an admin project, limit and key controls but not member controls', async () => {
+    const { buttons } = await controlsFor('admin');
     expect(buttons).toEqual(
-      expect.arrayContaining(['Save project settings', 'Create key', 'Revoke']),
+      expect.arrayContaining([
+        'Save project settings',
+        'Save limits and budget',
+        'Create key',
+        'Rotate',
+        'Revoke',
+      ]),
     );
     expect(buttons).not.toContain('Add member');
+    expect(buttons).not.toContain('Remove');
   });
 
   it('gives an owner every control', async () => {
-    const buttons = await buttonsFor('owner');
-    expect(buttons).toEqual(
-      expect.arrayContaining(['Save project settings', 'Create key', 'Add member', 'Remove']),
-    );
+    const { buttons, roleSelects } = await controlsFor('owner');
+    expect(buttons).toEqual(expect.arrayContaining(mutationButtons));
+    expect(roleSelects.length).toBeGreaterThan(0);
   });
 });

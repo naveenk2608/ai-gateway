@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { KeyRound, Search, TriangleAlert } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { api, ApiError, canManage, type ApiKey, type Limits, type Role } from '../api.js';
-import { formatTime } from '../format.js';
+import { formatCount, formatTime } from '../format.js';
 import { Empty, ErrorState, Loading } from '../ui/states.js';
 
 function describeLimits(limits: Limits): string {
@@ -43,9 +44,15 @@ function NewKey({ value, onDone }: { value: string; onDone: () => void }) {
   );
 }
 
+const matches = (key: ApiKey, search: string) => {
+  const text = search.trim().toLowerCase();
+  return text === '' || `${key.name} ${key.maskedKey}`.toLowerCase().includes(text);
+};
+
 export function ApiKeys({ projectId, role }: { projectId: string; role: Role }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
+  const [search, setSearch] = useState('');
   const [shown, setShown] = useState<string | null>(null);
   const keys = useQuery({
     queryKey: ['api-keys', projectId],
@@ -89,42 +96,80 @@ export function ApiKeys({ projectId, role }: { projectId: string; role: Role }) 
     event.preventDefault();
     if (name.trim() !== '') create.mutate();
   };
+  const all = keys.data?.data ?? [];
+  const listed = all.filter((key) => matches(key, search));
 
   return (
     <section className="card" aria-busy={keys.isPending}>
-      <h2>API keys</h2>
+      <div className="card-header">
+        <div>
+          <h2>API keys</h2>
+          <p className="muted small">
+            Keys call <code>/v1/chat/completions</code> for this project, within its limits and
+            their own.
+          </p>
+        </div>
+        {manage && (
+          <form className="row" onSubmit={submit} aria-label="New key">
+            <input
+              aria-label="New key name"
+              placeholder="Name, e.g. backend"
+              maxLength={100}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="primary"
+              disabled={create.isPending || name.trim() === ''}
+            >
+              Create key
+            </button>
+          </form>
+        )}
+      </div>
       {shown && <NewKey value={shown} onDone={() => setShown(null)} />}
-      {manage ? (
-        <form className="row" onSubmit={submit}>
-          <input
-            aria-label="New key name"
-            placeholder="Name, e.g. backend"
-            maxLength={100}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <button
-            type="submit"
-            className="primary"
-            disabled={create.isPending || name.trim() === ''}
-          >
-            Create key
-          </button>
-        </form>
-      ) : (
-        <p className="muted small">Your role ({role}) can view keys but not change them.</p>
+      <div className="note warning-note" role="note">
+        <TriangleAlert size={16} aria-hidden="true" />
+        <span>
+          Revoking a key stops it on every gateway instance, at the latest when their cached copy
+          expires (<code>API_KEY_CACHE_TTL_MS</code>); requests that use it fail from then on.
+          Rotating issues a new key and keeps the old one working for a grace period.
+        </span>
+      </div>
+      {!manage && (
+        <p className="muted small card-text">
+          Your role ({role}) can view keys but not change them.
+        </p>
       )}
       {mutationError && (
         <p className="error-text" role="alert">
           {mutationError instanceof ApiError ? mutationError.message : 'The change failed.'}
         </p>
       )}
+      <div className="section-head">
+        <h3>
+          Keys {keys.data && <span className="muted small">{formatCount(all.length)} in all</span>}
+        </h3>
+        <label className="search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            aria-label="Search keys"
+            placeholder="Search keys…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
+      </div>
       {keys.isPending ? (
         <Loading what="keys" />
       ) : keys.isError ? (
         <ErrorState error={keys.error} retry={() => void keys.refetch()} />
-      ) : keys.data.data.length === 0 ? (
+      ) : all.length === 0 ? (
         <Empty>This project has no API keys yet.</Empty>
+      ) : listed.length === 0 ? (
+        <Empty>No key matches “{search.trim()}”.</Empty>
       ) : (
         <div className="table-wrap">
           <table>
@@ -133,19 +178,29 @@ export function ApiKeys({ projectId, role }: { projectId: string; role: Role }) 
                 <th>Name</th>
                 <th>Key</th>
                 <th>Status</th>
-                <th>Limits</th>
                 <th>Created</th>
+                <th>Last used</th>
                 {manage && <th aria-label="Actions" />}
               </tr>
             </thead>
             <tbody>
-              {keys.data.data.map((key) => {
+              {listed.map((key) => {
                 const usable = key.status === 'active' || key.status === 'expiring';
                 return (
                   <tr key={key.id}>
-                    <td>{key.name}</td>
                     <td>
-                      <code>{key.maskedKey}</code>
+                      <div className="name-cell">
+                        <span className="icon-tile" aria-hidden="true">
+                          <KeyRound size={14} />
+                        </span>
+                        <span>
+                          <span className="strong">{key.name}</span>
+                          <span className="muted small block">{describeLimits(key.limits)}</span>
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <code className="chip">{key.maskedKey}</code>
                     </td>
                     <td>
                       <span className={`badge key-${key.status}`}>{key.status}</span>
@@ -153,8 +208,8 @@ export function ApiKeys({ projectId, role }: { projectId: string; role: Role }) 
                         <div className="muted small">until {formatTime(key.expiresAt)}</div>
                       )}
                     </td>
-                    <td className="small">{describeLimits(key.limits)}</td>
                     <td className="small">{formatTime(key.createdAt)}</td>
+                    <td className="small muted">not tracked</td>
                     {manage && (
                       <td className="actions">
                         {usable && !key.rotatedTo && (

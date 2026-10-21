@@ -18,7 +18,7 @@ import { Security } from './pages/Security.js';
 import { NewProject, Settings } from './pages/Settings.js';
 import { AppShell } from './shell/AppShell.js';
 import { Brand } from './shell/Brand.js';
-import { pageInfo, usePage } from './shell/nav.js';
+import { pageInfo, useRoute } from './shell/nav.js';
 import { Empty, ErrorState, Loading } from './ui/states.js';
 
 const queryClient = new QueryClient({
@@ -33,7 +33,7 @@ const queryClient = new QueryClient({
 
 function Dashboard({ me }: { me: Me }) {
   const client = useQueryClient();
-  const page = usePage();
+  const { page, section } = useRoute();
   const [projectId, setProjectId] = useState(me.projects[0]?.id ?? '');
   const [range, setRange] = useState<Range>('24h');
   const filters: AnalyticsFilters = { range };
@@ -79,7 +79,7 @@ function Dashboard({ me }: { me: Me }) {
           {page === 'security' && <Security projectId={project.id} filters={filters} />}
           {page === 'infra' && <Infrastructure projectId={project.id} filters={filters} />}
           {page === 'settings' && (
-            <Settings key={project.id} projectId={project.id} userId={me.user.id} />
+            <Settings key={project.id} projectId={project.id} userId={me.user.id} tab={section} />
           )}
         </>
       )}
