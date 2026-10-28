@@ -1312,6 +1312,47 @@ button.small-button {
   object-fit: contain;
 }
 
+/* Logos: mono ones are a mask filled with the text colour, so they follow the theme. */
+.logo-mark {
+  display: block;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  object-fit: contain;
+}
+
+.logo-mono {
+  background-color: currentColor;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+}
+
+.provider-logo,
+.provider-icon {
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.model-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.family-mark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  color: var(--color-text);
+  font-size: 14px;
+}
+
 .provider-initials {
   color: var(--color-text);
   font-size: 8px;

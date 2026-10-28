@@ -9,7 +9,7 @@ import {
   type Served,
 } from './gateway.js';
 import { describeProblem, formatWait } from './problems.js';
-import { providerName } from './providers.js';
+import { providerName, servedBy } from './providers.js';
 
 const conn = { gatewayUrl: 'https://gw.example.com', apiKey: 'gw_test_placeholder' };
 
@@ -221,5 +221,22 @@ describe('providerName', () => {
     expect(providerName('ollama-llama3.2')).toBe('Ollama');
     expect(providerName('groqish')).toBe('groqish');
     expect(providerName('acme-large')).toBe('acme-large');
+  });
+});
+
+describe('servedBy', () => {
+  it("gives the provider's logo, and the model family when it is not the provider's own", () => {
+    const qwen = servedBy('groq-qwen3.8-27b');
+    expect(qwen).toMatchObject({ name: 'Groq', known: true });
+    expect(decodeURIComponent(qwen.logo?.src ?? '')).toContain('<title>Groq</title>');
+    expect(qwen.family?.name).toBe('Qwen');
+    expect(servedBy('groq-gpt-oss-20b').family?.name).toBe('OpenAI');
+    expect(servedBy('ollama-llama3.2').family?.name).toBe('Llama');
+    expect(servedBy('gemini-3.5-flash-lite').family).toBeNull();
+  });
+
+  it('has no logo for the mock (an icon is drawn) or for an unknown deployment', () => {
+    expect(servedBy('mock')).toMatchObject({ name: 'Mock', logo: null, known: true });
+    expect(servedBy('acme-large')).toMatchObject({ name: 'acme-large', logo: null, known: false });
   });
 });

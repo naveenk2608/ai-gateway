@@ -1,9 +1,10 @@
-import { Copy } from 'lucide-react';
+import { Copy, FlaskConical } from 'lucide-react';
 import { useState } from 'react';
 import type { ReplyTurn, Turn } from '../chat.js';
 import { formatCount, formatMs, shortId } from '../format.js';
 import { describeProblem } from '../problems.js';
-import { providerName } from '../providers.js';
+import { LogoMark } from '../../../dashboard/src/ui/logos/logos.js';
+import { providerName, servedBy } from '../providers.js';
 import { WakingHint } from './SettingsPanel.js';
 
 function CopyId({ id }: { id: string }) {
@@ -38,16 +39,38 @@ const deploymentLabel = (deployment: string) => {
 export function ReplyMeta({ turn }: { turn: ReplyTurn }) {
   const served = turn.served;
   const finished = turn.status === 'done' || turn.status === 'stopped';
+  // The provider's logo (a neutral icon for the mock; none for an unknown id) and the model's
+  // family when it is not the provider's own.
+  const by = served?.deployment && !served.cacheHit ? servedBy(served.deployment) : null;
+  const provider = by?.known ? by : null;
+  const family = by?.family ?? null;
   return (
     <dl className="pg-meta" aria-label="Reply details">
       <div>
         <dt>Model</dt>
-        <dd className="mono">{turn.model}</dd>
+        <dd className="mono">
+          {family && (
+            <span
+              className="pg-logo"
+              role="img"
+              aria-label={`${family.name} model`}
+              title={`${family.name} model`}
+            >
+              <LogoMark logo={family.logo} />
+            </span>
+          )}
+          {turn.model}
+        </dd>
       </div>
       {served && (
         <div>
           <dt>Served by</dt>
           <dd>
+            {provider && (
+              <span className="pg-logo" aria-hidden="true">
+                {provider.logo ? <LogoMark logo={provider.logo} /> : <FlaskConical size={12} />}
+              </span>
+            )}
             {served.cacheHit
               ? 'the response cache'
               : served.deployment

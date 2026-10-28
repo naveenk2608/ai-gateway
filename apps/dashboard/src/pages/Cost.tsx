@@ -19,8 +19,8 @@ import { formatCount, formatPercent, formatStep, formatUsd } from '../format.js'
 import { KpiCard, NoTrend } from '../ui/KpiCard.js';
 import { Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
-import { ProviderBadge } from '../ui/ProviderBadge.js';
-import { identifyProvider } from '../ui/providers.js';
+import { ModelLabel, ProviderBadge } from '../ui/ProviderBadge.js';
+import { familyOnHost, identifyProvider } from '../ui/providers.js';
 import { ShareTable, type ShareRow } from '../ui/ShareTable.js';
 import { ErrorState } from '../ui/states.js';
 
@@ -174,16 +174,15 @@ function ModelName({ model, catalog }: { model: string; catalog: ModelCatalog | 
       ? catalog?.deployments.find((d) => d.id === targets[0]?.deployment)
       : undefined;
   if (!deployment) return model;
+  const provider = identifyProvider({
+    provider: deployment.provider,
+    deployment: deployment.id,
+    model: deployment.providerModel,
+  });
   return (
     <span className="deployment-cell">
-      <ProviderBadge
-        provider={identifyProvider({
-          provider: deployment.provider,
-          deployment: deployment.id,
-          model: deployment.providerModel,
-        })}
-      />
-      <span>{model}</span>
+      <ProviderBadge provider={provider} />
+      <ModelLabel name={model} family={familyOnHost(provider, deployment.providerModel)} />
     </span>
   );
 }

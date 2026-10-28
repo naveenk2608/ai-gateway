@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ProviderBadge } from './ProviderBadge.js';
-import { identifyProvider, unknownProvider } from './providers.js';
+import { ModelLabel, ProviderBadge } from './ProviderBadge.js';
+import { familyOnHost, identifyProvider, modelFamily, unknownProvider } from './providers.js';
 
 afterEach(cleanup);
 
@@ -106,21 +106,84 @@ describe('unknownProvider', () => {
   });
 });
 
-describe('ProviderBadge', () => {
-  it('shows an initials tile and the name when there is no logo', () => {
-    render(<ProviderBadge provider={identifyProvider({ provider: 'mock' })} />);
-    const badge = screen.getByTitle('Mock');
-    expect(badge.textContent).toBe('MOMock');
-    expect(badge.querySelector('img')).toBeNull();
-    expect(badge.querySelector('.provider-initials')?.getAttribute('aria-hidden')).toBe('true');
+describe('modelFamily and familyOnHost', () => {
+  it('names the family from the model name', () => {
+    expect(modelFamily('openai/gpt-oss-20b')?.name).toBe('OpenAI');
+    expect(modelFamily('groq-gpt-oss-20b')?.name).toBe('OpenAI');
+    expect(modelFamily('qwen/qwen3.8-27b')?.name).toBe('Qwen');
+    expect(modelFamily('llama3.2:1b')?.name).toBe('Llama');
+    expect(modelFamily('gemini-3.5-flash-lite')?.name).toBe('Gemini');
+    expect(modelFamily('mock')).toBeNull();
+    expect(modelFamily(null)).toBeNull();
   });
 
-  it('shows a logo as a decorative image next to the name when one is set', () => {
-    render(<ProviderBadge provider={{ ...unknownProvider('acme'), logo: '/acme.svg' }} />);
-    const badge = screen.getByTitle('acme');
-    expect(badge.querySelector('img')?.getAttribute('src')).toBe('/acme.svg');
-    expect(badge.querySelector('img')?.getAttribute('alt')).toBe('');
+  it("adds the family only when it is not the host's own", () => {
+    const groq = identifyProvider({ provider: 'openai-compatible', deployment: 'groq-x' });
+    const gemini = identifyProvider({ provider: 'openai-compatible', deployment: 'gemini-x' });
+    const ollama = identifyProvider({ provider: 'ollama' });
+    expect(familyOnHost(groq, 'qwen/qwen3.8-27b')?.name).toBe('Qwen');
+    expect(familyOnHost(groq, 'openai/gpt-oss-20b')?.name).toBe('OpenAI');
+    expect(familyOnHost(ollama, 'llama3.2:1b')?.name).toBe('Llama');
+    expect(familyOnHost(gemini, 'gemini-3.5-flash-lite')).toBeNull();
+  });
+});
+
+describe('ProviderBadge', () => {
+  it("shows a known provider's bundled logo, decorative, next to its name", () => {
+    render(
+      <ProviderBadge
+        provider={identifyProvider({ provider: 'openai-compatible', deployment: 'gemini-x' })}
+      />,
+    );
+    const badge = screen.getByTitle('Gemini');
+    const img = badge.querySelector('img');
+    expect(decodeURIComponent(img?.getAttribute('src') ?? '')).toContain('<title>Gemini</title>');
+    expect(img?.getAttribute('alt')).toBe('');
     expect(badge.querySelector('.provider-initials')).toBeNull();
-    expect(screen.getByText('acme')).toBeTruthy();
+    expect(badge.textContent).toBe('Gemini');
+  });
+
+  it('draws a mono logo in the text colour, so it follows the theme', () => {
+    render(
+      <ProviderBadge
+        provider={identifyProvider({ provider: 'openai-compatible', deployment: 'groq-x' })}
+      />,
+    );
+    const mark = screen.getByTitle('Groq').querySelector<HTMLElement>('.logo-mono');
+    expect(decodeURIComponent(mark?.style.maskImage ?? '')).toContain('<title>Groq</title>');
+    expect(mark?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('gives the mock a neutral icon, not a logo', () => {
+    render(<ProviderBadge provider={identifyProvider({ provider: 'mock' })} />);
+    const badge = screen.getByTitle('Mock');
+    expect(badge.querySelector('.provider-icon svg')).toBeTruthy();
+    expect(badge.querySelector('.logo-mark')).toBeNull();
+    expect(badge.textContent).toBe('Mock');
+  });
+
+  it('keeps the letter tile for a provider it does not know', () => {
+    render(
+      <ProviderBadge
+        provider={identifyProvider({ provider: 'openai-compatible', deployment: 'acme-large' })}
+      />,
+    );
+    const badge = screen.getByTitle('OpenAI-compatible');
+    expect(badge.querySelector('.provider-initials')?.textContent).toBe('OP');
+    expect(badge.querySelector('.logo-mark')).toBeNull();
+  });
+});
+
+describe('ModelLabel', () => {
+  it("puts the family's logo before the name, named for screen readers", () => {
+    render(<ModelLabel name="qwen3" family={modelFamily('qwen/qwen3.8-27b')} />);
+    expect(screen.getByRole('img', { name: 'Qwen model' })).toBeTruthy();
+    expect(screen.getByText('qwen3')).toBeTruthy();
+  });
+
+  it('is just the name without a family', () => {
+    const { container } = render(<ModelLabel name="mock-1" family={null} />);
+    expect(container.textContent).toBe('mock-1');
+    expect(container.querySelector('.family-mark')).toBeNull();
   });
 });

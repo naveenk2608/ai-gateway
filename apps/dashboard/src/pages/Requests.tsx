@@ -27,8 +27,8 @@ import {
   shortId,
 } from '../format.js';
 import { Drawer } from '../ui/Drawer.js';
-import { ProviderBadge } from '../ui/ProviderBadge.js';
-import { useProviderOf, type ProviderInfo } from '../ui/providers.js';
+import { ModelLabel, ProviderBadge } from '../ui/ProviderBadge.js';
+import { useProviderOf, type ModelFamily, type ProviderInfo } from '../ui/providers.js';
 import { Stat } from '../ui/Stat.js';
 import { Empty, ErrorState, Loading } from '../ui/states.js';
 
@@ -55,7 +55,10 @@ function LatencyCell({ ms, slowest }: { ms: number; slowest: number }) {
   );
 }
 
-type ProviderOf = (provider: string, deployment?: string | null) => ProviderInfo;
+type ProviderOf = (
+  provider: string,
+  deployment?: string | null,
+) => ProviderInfo & { family: ModelFamily | null };
 
 function requestColumns(slowest: number, open: (id: string) => void, providerOf: ProviderOf) {
   return [
@@ -76,7 +79,14 @@ function requestColumns(slowest: number, open: (id: string) => void, providerOf:
         </button>
       ),
     }),
-    column.accessor('model', { header: 'Model' }),
+    column.accessor('model', {
+      header: 'Model',
+      cell: (c) => {
+        const { provider, deployment } = c.row.original;
+        const family = deployment ? providerOf(provider ?? '', deployment).family : null;
+        return <ModelLabel name={c.getValue()} family={family} />;
+      },
+    }),
     column.accessor('deployment', {
       header: 'Deployment',
       cell: (c) => {
@@ -217,7 +227,12 @@ function RequestFacts({ detail, providerOf }: { detail: Detail; providerOf: Prov
       </div>
       <dl className="facts">
         <dt>Model</dt>
-        <dd>{detail.model}</dd>
+        <dd>
+          <ModelLabel
+            name={detail.model}
+            family={served ? providerOf(served.provider, served.deployment).family : null}
+          />
+        </dd>
         <dt>Deployment</dt>
         <dd>
           {detail.deployment ? (

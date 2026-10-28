@@ -11,8 +11,8 @@ import {
 import { CategoryBarChart } from '../charts/CategoryBarChart.js';
 import { TONES } from '../charts/theme.js';
 import { formatCount, formatLatency, formatPercent, formatUsd } from '../format.js';
-import { ProviderBadge } from '../ui/ProviderBadge.js';
-import { identifyProvider, useProviderOf } from '../ui/providers.js';
+import { ModelLabel, ProviderBadge } from '../ui/ProviderBadge.js';
+import { familyOnHost, identifyProvider, useProviderOf } from '../ui/providers.js';
 import { QueryCard } from '../ui/QueryCard.js';
 
 type Row = ModelsResponse['data'][number] & { deployment: string };
@@ -59,7 +59,12 @@ function ComparisonTable({ rows }: { rows: Row[] }) {
             const admitted = m.requests - m.rejected;
             return (
               <tr key={`${model}|${deployment}`}>
-                <td className="strong">{model}</td>
+                <td className="strong">
+                  <ModelLabel
+                    name={model}
+                    family={provider ? providerOf(provider, deployment).family : null}
+                  />
+                </td>
                 <td>
                   <div className="deployment-cell">
                     {provider && <ProviderBadge provider={providerOf(provider, deployment)} />}
@@ -88,6 +93,23 @@ function ComparisonTable({ rows }: { rows: Row[] }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** A deployment's provider, then the provider's model name with its family's logo. */
+function DeploymentModel({ deployment: d }: { deployment: ModelCatalog['deployments'][number] }) {
+  const provider = identifyProvider({
+    provider: d.provider,
+    deployment: d.id,
+    model: d.providerModel,
+  });
+  return (
+    <div className="deployment-cell">
+      <ProviderBadge provider={provider} />
+      <span className="mono muted small">
+        <ModelLabel name={d.providerModel} family={familyOnHost(provider, d.providerModel)} />
+      </span>
     </div>
   );
 }
@@ -184,16 +206,7 @@ export function Models({ projectId, filters }: { projectId: string; filters: Ana
                           <span className={`badge breaker-${state}`}>{BREAKER_LABELS[state]}</span>
                         ) : null}
                       </div>
-                      <div className="deployment-cell">
-                        <ProviderBadge
-                          provider={identifyProvider({
-                            provider: d.provider,
-                            deployment: d.id,
-                            model: d.providerModel,
-                          })}
-                        />
-                        <span className="mono muted small">{d.providerModel}</span>
-                      </div>
+                      <DeploymentModel deployment={d} />
                       <dl className="tile-facts">
                         <dt>Breaker</dt>
                         <dd>

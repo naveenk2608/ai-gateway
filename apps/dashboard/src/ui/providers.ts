@@ -1,7 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
+import { FlaskConical, type LucideIcon } from 'lucide-react';
 import { useCallback } from 'react';
 import { api, type ModelCatalog } from '../api.js';
 import { CATEGORICAL } from '../charts/theme.js';
+import { modelFamily, type ModelFamily } from './logos/families.js';
+import { LOGOS, type Logo } from './logos/logos.js';
+
+export { modelFamily, type ModelFamily };
 
 /** Who serves a deployment, as far as the API's data tells. */
 export interface ProviderInfo {
@@ -12,20 +17,46 @@ export interface ProviderInfo {
   initials: string;
   /** A chart colour token, fixed per provider so it is the same on every page. */
   color: string;
-  /**
-   * The URL of a logo, for a provider whose brand owner allows its use. None is set: the brand
-   * rules of every provider here ask for permission first (see docs/PLAN-NOTES.md).
-   */
-  logo?: string;
+  /** The provider's logo (see ui/logos/NOTICE.md); unknown providers have none. */
+  logo?: Logo;
+  /** A neutral icon instead of a logo: the mock provider is not a company. */
+  icon?: LucideIcon;
 }
 
 const KNOWN = {
-  groq: { id: 'groq', name: 'Groq', initials: 'GQ', color: 'var(--chart-4)' },
-  gemini: { id: 'gemini', name: 'Gemini', initials: 'GE', color: 'var(--chart-3)' },
-  openai: { id: 'openai', name: 'OpenAI', initials: 'OA', color: 'var(--chart-1)' },
-  ollama: { id: 'ollama', name: 'Ollama', initials: 'OL', color: 'var(--chart-2)' },
-  mock: { id: 'mock', name: 'Mock', initials: 'MO', color: 'var(--chart-5)' },
+  groq: { id: 'groq', name: 'Groq', initials: 'GQ', color: 'var(--chart-4)', logo: LOGOS.groq },
+  gemini: {
+    id: 'gemini',
+    name: 'Gemini',
+    initials: 'GE',
+    color: 'var(--chart-3)',
+    logo: LOGOS.gemini,
+  },
+  openai: {
+    id: 'openai',
+    name: 'OpenAI',
+    initials: 'OA',
+    color: 'var(--chart-1)',
+    logo: LOGOS.openai,
+  },
+  ollama: {
+    id: 'ollama',
+    name: 'Ollama',
+    initials: 'OL',
+    color: 'var(--chart-2)',
+    logo: LOGOS.ollama,
+  },
+  mock: { id: 'mock', name: 'Mock', initials: 'MO', color: 'var(--chart-5)', icon: FlaskConical },
 } satisfies Record<string, ProviderInfo>;
+
+/** The model's family when it differs from the provider serving it; null otherwise. */
+export function familyOnHost(
+  provider: ProviderInfo,
+  model: string | null | undefined,
+): ModelFamily | null {
+  const family = modelFamily(model);
+  return family && family.id !== provider.id ? family : null;
+}
 
 /** What the API says about a deployment: its provider kind, and its id and model when known. */
 export interface DeploymentFacts {
@@ -73,21 +104,25 @@ export function identifyProvider({ provider, deployment, model }: DeploymentFact
 
 /**
  * Names the provider of a deployment by id, using the model catalog for the provider's model
- * name. The catalog query is shared with the Models and Settings pages.
+ * name. The catalog query is shared with the Models and Settings pages. The provider carries the
+ * model's family (`family`) when it differs from the host.
  */
-export function useProviderOf(): (provider: string, deployment?: string | null) => ProviderInfo {
+export function useProviderOf(): (
+  provider: string,
+  deployment?: string | null,
+) => ProviderInfo & { family: ModelFamily | null } {
   const catalog = useQuery({
     queryKey: ['catalog'],
     queryFn: ({ signal }) => api<ModelCatalog>('/admin/models', { signal }),
   });
   const deployments = catalog.data?.deployments;
   return useCallback(
-    (provider: string, deployment?: string | null) =>
-      identifyProvider({
-        provider,
-        deployment,
-        model: deployments?.find((d) => d.id === deployment)?.providerModel,
-      }),
+    (provider: string, deployment?: string | null) => {
+      const model = deployments?.find((d) => d.id === deployment)?.providerModel;
+      const info = identifyProvider({ provider, deployment, model });
+      // Without the catalog, the deployment id usually names the model (groq-qwen3.8-27b).
+      return { ...info, family: familyOnHost(info, model ?? deployment) };
+    },
     [deployments],
   );
 }
