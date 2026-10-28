@@ -26,7 +26,8 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lo
 COPY tsconfig.base.json ./
 COPY packages ./packages
 COPY apps ./apps
-RUN pnpm build
+# Everything the images ship; the playground is a separate static site (ADR 021) and is skipped.
+RUN pnpm -r --filter '!@ai-gateway/playground' build
 # Self-contained production installs: compiled app, injected shared package, prod deps only.
 RUN pnpm deploy --legacy --filter=@ai-gateway/gateway --prod /out/gateway \
  && pnpm deploy --legacy --filter=@ai-gateway/worker --prod /out/worker
