@@ -146,6 +146,7 @@ for await (const chunk of stream) process.stdout.write(chunk.choices[0]?.delta.c
 | Endpoint | Meaning |
 | --- | --- |
 | `POST /v1/chat/completions` | OpenAI chat completions. `stream: true` returns SSE chunks ending with `data: [DONE]`; `stream_options.include_usage` adds a usage chunk. |
+| `GET /v1/models` | OpenAI model list: the models this key's project may use that have an enabled deployment. `created` is when the gateway loaded its models file. |
 | `/admin/...` | Admin API used by the dashboard; see [Admin API](#admin-api). |
 | `GET /docs` | Swagger UI; the OpenAPI 3.1 spec is at `/docs/json`. |
 | `GET /health` | The process is up. |
@@ -156,6 +157,14 @@ The body accepts OpenAI's text chat parameters (`messages`, `max_tokens` or
 anything else (tools, `response_format`, images, `n > 1`) with a 400 naming the field. Bodies
 over 1 MiB get 413. Every response has a server-generated `x-request-id`; the logs for that
 request carry it as `requestId`, and each upstream call is logged once with its `attemptId`.
+A completion also names the deployment that answered in `x-gateway-deployment` and, after a
+fallback, the deployments passed over first in `x-gateway-fallback-from` (they failed, or their
+circuit breaker was open).
+
+Browser pages on other origins may call `/v1` when their origin is listed in `ALLOWED_ORIGINS`
+(comma-separated exact origins, empty by default; ADR 021). They may send `Authorization` and
+read `x-request-id`, the two routing headers, `x-gateway-cache` and `retry-after`. The admin API
+and every other path never answer other origins.
 
 ### Errors
 
@@ -302,6 +311,33 @@ one on Groq), Grok, DeepSeek and further Qwen models through a free tier. GitHub
 offered them free, was retired on 2026-07-30, and OpenRouter's free (`:free`) models include none
 of these families today; all four are paid there. A free one can be added later as another
 `openai-compatible` deployment.
+
+## Playground
+
+[apps/playground](apps/playground) is a small chat app that uses the gateway exactly as any
+client would: `GET /v1/models` for the model list and streaming `POST /v1/chat/completions`, with
+a gateway API key (ADR 021). It is a separate static site, not part of the gateway or dashboard.
+
+- **Settings:** the gateway URL (default `https://ai-gateway-8var.onrender.com`) and a `gw_` key.
+  The key stays in the browser tab (sessionStorage), or on the device (localStorage) with
+  "remember on this device". It is sent only to the gateway URL, in the Authorization header.
+- **Chat:** streamed replies, Stop, New chat. Under each reply: the model, the deployment that
+  served it and any fallback, latency (first text and total, measured in the browser), tokens
+  and the request ID. The conversation is kept in the page only.
+- **Errors:** a rejected key (401), a model the project may not use (403), a rate limit or a
+  spent budget (429, with the retry time), and a gateway that is unreachable or still waking up
+  on free hosting each get their own message.
+
+Run it against a local gateway started with `ALLOWED_ORIGINS=http://localhost:5174`:
+
+```bash
+pnpm --filter @ai-gateway/playground dev   # http://localhost:5174
+```
+
+To deploy it on Vercel, create a project from this repository with the root directory
+`apps/playground`; [apps/playground/vercel.json](apps/playground/vercel.json) sets the build and
+strict security headers (CSP, no referrer). Then add the site's origin (e.g.
+`https://<project>.vercel.app`) to the gateway's `ALLOWED_ORIGINS`.
 
 ## Limits and budgets
 
@@ -574,6 +610,7 @@ message naming each problem. [.env.example](.env.example) lists them all with th
 apps/gateway     Fastify API: /v1 proxy, providers, routing, limits, cache, /admin API
 apps/worker      usage-event consumer (also runs inside the gateway with RUN_WORKER_IN_PROCESS)
 apps/dashboard   React + Vite + TanStack Query/Table + Recharts; e2e/ holds browser checks
+apps/playground  React + Vite chat client for /v1, deployable as a static site (ADR 021)
 packages/shared  config, clock, logger, ids, trace context, token estimates, Postgres/Redis
                  clients, metrics registry and listener
 db/migrations    numbered plain-SQL migrations

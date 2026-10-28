@@ -23,8 +23,9 @@ has enough detail to start work from the repository alone: read this file, then
 - M9 (benchmarks) is done: the mock provider over HTTP, k6 scenarios that `pnpm bench` runs
   against a two-instance Compose stack, results committed in `bench/results/`, and
   `docs/benchmarks.md` generated from them and checked in CI. The owner tags `m9-done`.
-- Accepted decisions are ADR 001–020; ADR 020 is the dashboard design system (tokens, shell,
-  shared components and the "not measured" rule).
+- Accepted decisions are ADR 001–021; ADR 020 is the dashboard design system (tokens, shell,
+  shared components and the "not measured" rule), ADR 021 the Playground client and CORS for
+  `/v1`.
 
 ## How to work on a milestone
 
@@ -219,8 +220,8 @@ destroy cheaply, plus a README that alone explains the project and how to run it
 - [ ] Applying and destroying real AWS resources is done by the account owner, or with the
       owner's explicit go-ahead for each run.
 
-**ADRs to write.** ADR 021 — AWS deployment layout (single-instance data tier for the demo, ALB
-settings for SSE, secrets, alarms, cost bound). ADR 022 — SQS event bus adapter (standard queue,
+**ADRs to write.** ADR 022 — AWS deployment layout (single-instance data tier for the demo, ALB
+settings for SSE, secrets, alarms, cost bound). ADR 023 — SQS event bus adapter (standard queue,
 visibility timeout, redrive to the DLQ, dedupe by `event_id`). Every row of the decision table
 then has an ADR file.
 
