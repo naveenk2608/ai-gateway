@@ -45,6 +45,11 @@ export interface AttemptContext {
   trace?: RequestTrace;
   /** The routing policy and why this deployment was tried (M5), stored on the attempt. */
   routing?: { policy: string; reason: string };
+  /**
+   * Deployments the request moved on from before this one, in order: each failed, or was skipped
+   * while its circuit was open. Empty when this is the first choice (retries on it included).
+   */
+  passedOver?: readonly string[];
   /** Told how the attempt ended, once: feeds circuit breakers and latency tracking. */
   onEnd?: (outcome: AttemptOutcome) => void;
 }

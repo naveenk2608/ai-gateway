@@ -28,6 +28,7 @@ import {
   type ChatCompletion,
   type ChatCompletionRequest,
 } from './schema.js';
+import { routingHeaders } from './routing-headers.js';
 import { RequestTrace } from './trace.js';
 import { toGatewayError } from './upstream-errors.js';
 
@@ -307,12 +308,16 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           maxTokens: clientMaxTokens ?? Math.max(...deployments.map((d) => d.maxOutputTokens)),
         };
         // Each deployment gets its own model name and, unless the client set one, output cap.
-        const requestFor = (ctx: AttemptContext) =>
-          toProviderRequest(
+        // The last attempt started is the one that answered when runRouted resolves.
+        let served: AttemptContext | undefined;
+        const requestFor = (ctx: AttemptContext) => {
+          served = ctx;
+          return toProviderRequest(
             body,
             ctx.deployment.providerModel,
             clientMaxTokens ?? ctx.deployment.maxOutputTokens,
           );
+        };
         const meta: ResponseMeta = {
           id: `chatcmpl-${request.id}`,
           created: Math.floor(clock.now() / 1000),
@@ -354,6 +359,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         if (body.stream !== true) {
           try {
             const result = await runRouted(routing, routed, (ctx) => runChat(ctx, requestFor(ctx)));
+            routingHeaders(reply, served);
             trace.setUsage(result.usage);
             trace.addCompletionText(result.content);
             store?.(result);
@@ -370,6 +376,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           throw upstreamFailure(err);
         }
         trace.markFirstToken();
+        routingHeaders(reply, served);
         const write = chunkWriter(meta, body.stream_options?.include_usage === true);
         void reply
           .header('content-type', 'text/event-stream; charset=utf-8')

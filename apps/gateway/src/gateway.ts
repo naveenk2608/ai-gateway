@@ -36,6 +36,7 @@ import { databasePriceLoader, PriceBook } from './limits/prices.js';
 import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
 import { registerChatCompletions } from './proxy/chat-completions.js';
+import { registerModels } from './proxy/models.js';
 import { BreakerBoard } from './routing/breaker.js';
 import { HealthChecker, HealthReporter } from './routing/health.js';
 import type { RoutingDeps } from './routing/routed.js';
@@ -233,6 +234,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     trustProxy: config.TRUST_PROXY,
     metrics,
     metricsToken: config.METRICS_TOKEN,
+    allowedOrigins: config.ALLOWED_ORIGINS,
     readiness: {
       checks,
       timeoutMs: config.READY_CHECK_TIMEOUT_MS,
@@ -249,6 +251,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       cache,
       metrics,
     });
+    registerModels(instance, { registry, verifier, clock });
     done();
   });
   void app.register((instance) =>

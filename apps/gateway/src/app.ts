@@ -22,6 +22,7 @@ import {
   validatorCompiler,
   type ZodFastifySchemaValidationError,
 } from 'fastify-type-provider-zod';
+import { registerV1Cors } from './cors.js';
 import { GatewayError } from './errors.js';
 import { registerHealthRoutes, type ReadinessOptions } from './health.js';
 import type { GatewayMetrics } from './metrics.js';
@@ -42,6 +43,8 @@ export interface AppOptions {
   metrics?: GatewayMetrics;
   /** Bearer token for `GET /metrics` on this port. Unset, the route does not exist (404). */
   metricsToken?: string;
+  /** Browser origins allowed to call /v1 (ALLOWED_ORIGINS); none by default. */
+  allowedOrigins?: readonly string[];
 }
 
 const shuttingDown = new GatewayError('shutting_down', 'Server is shutting down, retry shortly', {
@@ -100,7 +103,14 @@ function sendError(reply: FastifyReply, error: GatewayError) {
   return reply.code(error.httpStatus).send(error.toBody());
 }
 
-export function buildApp({ logger, readiness, trustProxy = 0, metrics, metricsToken }: AppOptions) {
+export function buildApp({
+  logger,
+  readiness,
+  trustProxy = 0,
+  metrics,
+  metricsToken,
+  allowedOrigins = [],
+}: AppOptions) {
   // Typed as Fastify's base logger so routes and plugins use the standard instance type.
   const loggerInstance: FastifyBaseLogger = logger;
   // Spans are made with each request's logger, so its first log line already carries them.
@@ -146,6 +156,8 @@ export function buildApp({ logger, readiness, trustProxy = 0, metrics, metricsTo
     // for the client's keep-alive timeout.
     if (closing) void reply.header('connection', 'close');
   });
+
+  registerV1Cors(app, allowedOrigins);
 
   app.addHook('onResponse', (request, reply, done) => {
     // A stream whose headers went out before the drain began has no `Connection: close`, so close

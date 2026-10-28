@@ -84,6 +84,12 @@ describe('OpenAI Node SDK against the gateway', () => {
     expect(final.choices[0]?.finish_reason).toBe('stop');
   });
 
+  it("lists the key's models with models.list()", async () => {
+    const ids: string[] = [];
+    for await (const model of client.models.list()) ids.push(model.id);
+    expect(ids).toEqual(['mock-1', 'mock-limited', 'mock-drop']);
+  });
+
   it('raises NotFoundError for an unknown model', async () => {
     const error = await client.chat.completions
       .create({ model: 'no-such-model', messages })

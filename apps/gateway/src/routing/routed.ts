@@ -76,6 +76,8 @@ export async function runRouted<T>(
   /** The previous failure, named in the next deployment's reason. */
   let failed: { id: string; kind: ProviderErrorKind } | undefined;
   const skipped: string[] = [];
+  /** Deployments left behind so far, for the answering attempt's `passedOver`. */
+  const passedOver: string[] = [];
 
   for (const candidate of candidates) {
     const id = candidate.deployment.id;
@@ -102,6 +104,7 @@ export async function runRouted<T>(
         log: req.log,
         trace: req.trace,
         routing: { policy: route.policy, reason },
+        passedOver: [...passedOver],
         onEnd: (outcome) => settleHealth(deps, id, outcome),
       };
       try {
@@ -127,6 +130,8 @@ export async function runRouted<T>(
         }
       }
     }
+    // Reached only when this deployment did not answer: it failed, or its circuit was open.
+    passedOver.push(id);
     if (attempts >= maxAttempts) break;
   }
 

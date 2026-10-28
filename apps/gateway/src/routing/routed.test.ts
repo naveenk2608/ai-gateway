@@ -60,9 +60,12 @@ function setup(
     retry: { maxAttempts: 3, perDeployment: 2, baseDelayMs: 100, maxDelayMs: 2_000, ...retry },
   };
   const calls: { id: string; reason: string }[] = [];
+  /** Each attempt's `passedOver`, by deployment. */
+  const passed: [string, readonly string[] | undefined][] = [];
   const start = (ctx: AttemptContext): Promise<string> => {
     const id = ctx.deployment.id;
     calls.push({ id, reason: ctx.routing?.reason ?? '' });
+    passed.push([id, ctx.passedOver]);
     const next = outcomes[id]!.shift() ?? 'ok';
     const error =
       next === 'ok'
@@ -91,7 +94,7 @@ function setup(
       start,
     );
   };
-  return { run, calls, sleeps, breakers };
+  return { run, calls, sleeps, breakers, passed };
 }
 
 describe('runRouted', () => {
@@ -164,6 +167,33 @@ describe('runRouted', () => {
     expect(t.calls).toEqual([
       { id: 'secondary', reason: 'priority 2 of 2; skipped primary (circuit open)' },
     ]);
+  });
+
+  it('tells each attempt which deployments were passed over before it, retries excluded', async () => {
+    const t = setup(
+      { a: ['server_error', 'server_error'], b: ['auth'], c: ['ok'] },
+      {
+        retry: { maxAttempts: 5 },
+      },
+    );
+    expect(await t.run()).toBe('served by c');
+    expect(t.passed).toEqual([
+      ['a', []],
+      ['a', []],
+      ['b', ['a']],
+      ['c', ['a', 'b']],
+    ]);
+  });
+
+  it('counts a deployment skipped while its circuit is open as passed over', async () => {
+    const t = setup(
+      { primary: ['server_error', 'server_error'], secondary: ['ok', 'ok'] },
+      { failureThreshold: 2 },
+    );
+    await t.run();
+    t.passed.length = 0;
+    await t.run();
+    expect(t.passed).toEqual([['secondary', ['primary']]]);
   });
 
   it('fails fast with 503 when every breaker is open', async () => {

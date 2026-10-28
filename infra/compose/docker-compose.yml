@@ -52,6 +52,8 @@ services:
       # Optional: enable the hosted deployments in config/models.json.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Browser origins allowed to call /v1, e.g. the playground's (ADR 021).
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       # Required: set it in .env (`openssl rand -hex 32`); the gateway exits without it.
       API_KEY_PEPPER: ${API_KEY_PEPPER:-}
       # Plain HTTP on localhost, so the session cookie cannot be HTTPS-only.

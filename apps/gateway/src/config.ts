@@ -5,6 +5,22 @@ import { API_KEY_PATTERN } from './auth/api-keys.js';
 
 const flag = z.stringbool();
 
+const listItems = (value: string) =>
+  value
+    .split(',')
+    .map((item) => item.trim().replace(/\/$/, ''))
+    .filter((item) => item !== '');
+
+/** An exact web origin: http(s), host and optional port, nothing else (no path, no wildcard). */
+function isOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
 export const gatewayConfigSchema = z
   .object({
     ...commonConfigShape,
@@ -28,6 +44,19 @@ export const gatewayConfigSchema = z
     MODELS_CONFIG_PATH: z.string().min(1).optional(),
     /** Default server for Ollama deployments that do not set baseUrl. */
     OLLAMA_BASE_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:11434'),
+    /**
+     * Browser origins allowed to call /v1 across origins (CORS, ADR 021), comma-separated, e.g.
+     * `https://playground.example.com`. Empty: none. The admin API never allows other origins.
+     */
+    ALLOWED_ORIGINS: z
+      .string()
+      .default('')
+      .refine((value) => listItems(value).every(isOrigin), {
+        message:
+          'use comma-separated origins such as https://app.example.com (scheme, host and an ' +
+          'optional port; no path and no *)',
+      })
+      .transform(listItems),
 
     /**
      * Run the usage consumer inside the gateway process, for hosts with no background workers

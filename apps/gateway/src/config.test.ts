@@ -51,6 +51,26 @@ describe('gatewayConfigSchema', () => {
     expect(short.join()).not.toContain('short-secret-value');
   });
 
+  it('allows no cross-origin browser calls unless ALLOWED_ORIGINS lists origins', () => {
+    expect(parseConfig(gatewayConfigSchema, required).ALLOWED_ORIGINS).toEqual([]);
+    const config = parseConfig(gatewayConfigSchema, {
+      ...required,
+      ALLOWED_ORIGINS: ' https://playground.example.com/ , http://localhost:5174',
+    });
+    expect(config.ALLOWED_ORIGINS).toEqual([
+      'https://playground.example.com',
+      'http://localhost:5174',
+    ]);
+  });
+
+  it('rejects ALLOWED_ORIGINS entries that are not exact origins', () => {
+    for (const value of ['*', 'https://app.example.com/path', 'app.example.com', 'ftp://x.com']) {
+      expect(problems({ ...required, ALLOWED_ORIGINS: value })[0]).toMatch(
+        /^ALLOWED_ORIGINS: use comma-separated origins/,
+      );
+    }
+  });
+
   it('leaves metrics off by default, with any listener on loopback', () => {
     const config = parseConfig(gatewayConfigSchema, required);
     expect(config.METRICS_TOKEN).toBeUndefined();
