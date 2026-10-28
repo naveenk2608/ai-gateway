@@ -21,7 +21,7 @@ import type {
 } from './types.js';
 
 export interface OpenAICompatibleOptions {
-  /** API root, e.g. https://api.openai.com/v1; `/chat/completions` is appended. */
+  /** API root, e.g. https://api.groq.com/openai/v1; `/chat/completions` is appended. */
   baseUrl: string;
   apiKey: string;
   clock: Clock;

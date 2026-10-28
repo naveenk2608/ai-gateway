@@ -24,13 +24,6 @@ describe('identifyProvider', () => {
         model: 'gemini-3.5-flash-lite',
       }),
     ).toBe('Gemini');
-    expect(
-      name({
-        provider: 'openai-compatible',
-        deployment: 'openai-gpt-4o-mini',
-        model: 'gpt-4o-mini',
-      }),
-    ).toBe('OpenAI');
     expect(name({ provider: 'ollama', deployment: 'ollama-llama3.2', model: 'llama3.2:1b' })).toBe(
       'Ollama',
     );
@@ -59,6 +52,12 @@ describe('identifyProvider', () => {
   it('does not match a provider name inside another word', () => {
     expect(name({ provider: 'openai-compatible', deployment: 'groqish-proxy' })).toBe(
       'OpenAI-compatible',
+    );
+  });
+
+  it('names a provider that is not configured yet, such as an added OpenAI deployment', () => {
+    expect(name({ provider: 'openai-compatible', deployment: 'openai-chat', model: 'gpt-x' })).toBe(
+      'OpenAI',
     );
   });
 

@@ -50,7 +50,6 @@ services:
       # Ollama running on the host machine.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       # Optional: enable the hosted deployments in config/models.json.
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # Required: set it in .env (`openssl rand -hex 32`); the gateway exits without it.

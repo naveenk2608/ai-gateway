@@ -69,7 +69,6 @@ describe('the default models file', () => {
     expect(models.route('gpt-oss-20b')).toBeUndefined();
     expect(models.route('qwen3')).toBeUndefined();
     expect(models.route('gemini-3.5-flash-lite')).toBeUndefined();
-    expect(models.route('gpt-4o-mini')).toBeUndefined();
     await models.close();
   });
 

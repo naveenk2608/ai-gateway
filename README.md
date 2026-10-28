@@ -243,7 +243,6 @@ The default file has these models:
 | `gpt-oss-20b` | Groq, `openai/gpt-oss-20b` | `GROQ_API_KEY` |
 | `qwen3` | Groq, `qwen/qwen3.8-27b` (a preview model on Groq) | `GROQ_API_KEY` |
 | `gemini-3.5-flash-lite` | Google Gemini API (OpenAI-compatible endpoint) | `GEMINI_API_KEY` |
-| `gpt-4o-mini` | OpenAI | `OPENAI_API_KEY` |
 | `llama3.2` | Ollama, `llama3.2:1b` | a running Ollama |
 
 A deployment whose key variable is empty is disabled at startup (the log says which), and a
