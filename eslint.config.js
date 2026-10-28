@@ -31,7 +31,7 @@ export default defineConfig(
     languageOptions: { globals: { __ENV: 'readonly', __VU: 'readonly', __ITER: 'readonly' } },
   },
   {
-    files: ['apps/dashboard/**/*.{ts,tsx}'],
+    files: ['apps/{dashboard,playground}/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat.recommended],
   },
   prettier,

@@ -20,6 +20,7 @@ COPY packages/shared/package.json packages/shared/
 COPY apps/gateway/package.json apps/gateway/
 COPY apps/worker/package.json apps/worker/
 COPY apps/dashboard/package.json apps/dashboard/
+COPY apps/playground/package.json apps/playground/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lockfile
 # Only what the build needs: shared TS config and the workspace packages.
 COPY tsconfig.base.json ./

@@ -1,0 +1,262 @@
+/* The playground's layout, on the dashboard's tokens and components (ADR 020, ADR 021). */
+
+.pg {
+  min-height: 100vh;
+}
+
+/* --- Top bar --- */
+
+.pg-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--topbar-height);
+  padding: var(--space-2) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-sidebar);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text);
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.brand-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-solid);
+  color: var(--color-on-accent);
+}
+
+.pg-host {
+  margin-left: auto;
+  overflow-wrap: anywhere;
+}
+
+/* --- Layout: settings beside the chat; stacked on narrow screens --- */
+
+.pg-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+
+.pg-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.pg-settings {
+  margin-top: var(--space-4);
+}
+
+.pg-settings input[type='url'],
+.pg-settings input[type='password'] {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.form label.pg-check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+}
+
+.pg-model {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.pg-model select {
+  width: 100%;
+}
+
+.pg-hint {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.pg-problem {
+  align-items: flex-start;
+}
+
+.pg-problem p {
+  margin-top: var(--space-1);
+  color: var(--color-text);
+}
+
+/* --- Chat --- */
+
+.pg-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: calc(100vh - var(--topbar-height) - 2 * var(--space-6));
+}
+
+.pg-chat h1 {
+  font-size: var(--text-md);
+}
+
+.pg-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  margin-top: 0;
+}
+
+.pg-turns {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pg-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: min(100%, 760px);
+  min-width: 0;
+}
+
+.pg-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.pg-user .pg-text {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-soft);
+}
+
+.pg-reply {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.pg-reply .pg-text {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+}
+
+.pg-text {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pg-waiting {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Reply details: one row of label/value pairs that wraps. */
+.pg-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.pg-meta > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.pg-meta dt {
+  color: var(--color-text-subtle);
+}
+
+.pg-meta dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.pg-fallback {
+  white-space: normal;
+  height: auto;
+  min-height: 22px;
+}
+
+button.pg-copy {
+  height: 22px;
+  padding: 0 var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.pg-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.pg-composer textarea {
+  flex: 1;
+  min-height: 64px;
+  max-height: 240px;
+  resize: vertical;
+}
+
+.pg-composer button {
+  flex: none;
+}
+
+.pg-footnote {
+  margin: 0;
+}
+
+@media (max-width: 860px) {
+  .pg-layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-4);
+    gap: var(--space-4);
+  }
+
+  .pg-topbar {
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .pg-chat {
+    min-height: 60vh;
+  }
+}
