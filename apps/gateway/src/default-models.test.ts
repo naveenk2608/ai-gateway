@@ -38,6 +38,13 @@ describe('the default models file', () => {
       baseUrl: 'https://api.groq.com/openai/v1',
       apiKeyEnv: 'GROQ_API_KEY',
     });
+    expect(config.deployments['groq-qwen3.8-27b']).toMatchObject({
+      provider: 'openai-compatible',
+      model: 'qwen/qwen3.8-27b',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      apiKeyEnv: 'GROQ_API_KEY',
+    });
+    expect(config.models.qwen3).toEqual({ deployment: 'groq-qwen3.8-27b' });
     expect(config.deployments['gemini-3.5-flash-lite']).toMatchObject({
       provider: 'openai-compatible',
       model: 'gemini-3.5-flash-lite',
@@ -60,6 +67,7 @@ describe('the default models file', () => {
     const models = registry({});
     expect(models.route('chat-default')?.targets.map((t) => t.deployment.id)).toEqual(['mock']);
     expect(models.route('gpt-oss-20b')).toBeUndefined();
+    expect(models.route('qwen3')).toBeUndefined();
     expect(models.route('gemini-3.5-flash-lite')).toBeUndefined();
     expect(models.route('gpt-4o-mini')).toBeUndefined();
     await models.close();
@@ -82,6 +90,8 @@ describe('the default models file', () => {
     expect(both.route('gpt-oss-20b')?.targets[0]?.deployment.providerModel).toBe(
       'openai/gpt-oss-20b',
     );
+    // Qwen uses the Groq key too, but is a preview model and stays out of chat-default.
+    expect(both.route('qwen3')?.targets[0]?.deployment.providerModel).toBe('qwen/qwen3.8-27b');
     await both.close();
   });
 
@@ -122,7 +132,7 @@ describe('the default models file', () => {
   );
 
   it('has a seed price for every Groq and Gemini deployment, keyed like cost rows', () => {
-    for (const id of ['groq-gpt-oss-20b', 'gemini-3.5-flash-lite']) {
+    for (const id of ['groq-gpt-oss-20b', 'groq-qwen3.8-27b', 'gemini-3.5-flash-lite']) {
       const deployment = config.deployments[id]!;
       const price = SEED_PRICES.find(
         (p) => p.provider === deployment.provider && p.model === deployment.model,

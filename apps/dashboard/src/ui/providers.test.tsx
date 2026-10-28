@@ -62,6 +62,16 @@ describe('identifyProvider', () => {
     );
   });
 
+  it('names Qwen served by Groq as Groq, from the deployment id', () => {
+    expect(
+      name({
+        provider: 'openai-compatible',
+        deployment: 'groq-qwen3.8-27b',
+        model: 'qwen/qwen3.8-27b',
+      }),
+    ).toBe('Groq');
+  });
+
   it('treats an openai-compatible mock server as the mock', () => {
     expect(name({ provider: 'openai-compatible', deployment: 'mock-http', model: 'mock' })).toBe(
       'Mock',

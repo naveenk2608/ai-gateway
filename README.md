@@ -241,6 +241,7 @@ The default file has these models:
 | `mock-balanced` | `weighted`: `mock` ×3, `mock-flaky` ×1 | nothing |
 | `chat-default` | `priority`: Groq `openai/gpt-oss-20b`, then Gemini `gemini-3.5-flash-lite`, then `mock` | nothing; each provider joins once its key is set |
 | `gpt-oss-20b` | Groq, `openai/gpt-oss-20b` | `GROQ_API_KEY` |
+| `qwen3` | Groq, `qwen/qwen3.8-27b` (a preview model on Groq) | `GROQ_API_KEY` |
 | `gemini-3.5-flash-lite` | Google Gemini API (OpenAI-compatible endpoint) | `GEMINI_API_KEY` |
 | `gpt-4o-mini` | OpenAI | `OPENAI_API_KEY` |
 | `llama3.2` | Ollama, `llama3.2:1b` | a running Ollama |
@@ -267,7 +268,7 @@ provider; no provider code is specific to them.
 2. Put it in `.env` (never commit it) as `GROQ_API_KEY=` or `GEMINI_API_KEY=`, then restart
    `pnpm dev`. With Compose, the `full` profile passes both through to the gateway. On a host such
    as Render, set them as environment variables of the gateway service.
-3. Call `chat-default` (or `gpt-oss-20b` / `gemini-3.5-flash-lite` directly):
+3. Call `chat-default` (or `gpt-oss-20b`, `qwen3` or `gemini-3.5-flash-lite` directly):
 
 ```bash
 curl -s http://127.0.0.1:8080/v1/chat/completions   -H "Authorization: Bearer $GATEWAY_KEY" -H 'content-type: application/json'   -d '{"model":"chat-default","messages":[{"role":"user","content":"Say hi"}]}'
@@ -276,8 +277,8 @@ curl -s http://127.0.0.1:8080/v1/chat/completions   -H "Authorization: Bearer $G
 If Groq fails or is rate-limited, the request falls back to Gemini, then to the mock; the
 request's routing history in the dashboard shows each attempt and why.
 
-`pnpm db:seed` adds prices for both models (from the providers' pricing pages, checked
-2026-10-21, with the sources in
+`pnpm db:seed` adds prices for these models (from the providers' pricing pages, checked
+2026-10-21 and, for `qwen3`, 2026-10-28, with the sources in
 [apps/gateway/src/cli/seed-prices.ts](apps/gateway/src/cli/seed-prices.ts)), so their requests
 show a cost and count against budgets. A database the seed never ran on (such as the Render demo)
 needs the rows inserted; prices are versioned and never edited (ADR 016). Any unique UUID works
@@ -286,12 +287,22 @@ as the `id`:
 ```sql
 INSERT INTO model_prices (id, provider, model, input_micro_usd_per_mtok, output_micro_usd_per_mtok, effective_from)
 VALUES (gen_random_uuid(), 'openai-compatible', 'openai/gpt-oss-20b', 75000, 300000, '2026-10-21'),
+       (gen_random_uuid(), 'openai-compatible', 'qwen/qwen3.8-27b', 800000, 4000000, '2026-10-28'),
        (gen_random_uuid(), 'openai-compatible', 'gemini-3.5-flash-lite', 300000, 2500000, '2026-10-21');
 ```
 
 Free tiers have low request limits, and Google's pricing page says content sent on the Gemini
 free tier is used to improve its products (on the paid tier it is not); check each provider's
 terms before sending real data.
+
+`qwen3` is a preview model on Groq: Groq offers previews for evaluation only and may withdraw
+them at short notice, so it is not in `chat-default`. It is billed at Groq's listed price.
+
+Not configured, as checked on 2026-10-28: GPT (including OpenAI's open gpt-oss models, beyond the
+one on Groq), Grok, DeepSeek and further Qwen models through a free tier. GitHub Models, which
+offered them free, was retired on 2026-07-30, and OpenRouter's free (`:free`) models include none
+of these families today; all four are paid there. A free one can be added later as another
+`openai-compatible` deployment.
 
 ## Limits and budgets
 

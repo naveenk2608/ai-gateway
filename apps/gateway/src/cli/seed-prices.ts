@@ -21,6 +21,16 @@ export const SEED_PRICES = [
     output_micro_usd_per_mtok: 300_000,
     effective_from: new Date('2026-10-21T00:00:00Z'),
   },
+  // Groq, qwen/qwen3.8-27b: $0.80 input, $4.00 output per 1M tokens. A preview model on Groq
+  // (for evaluation; may be discontinued at short notice). Checked 2026-10-28 on
+  // https://console.groq.com/docs/models
+  {
+    provider: 'openai-compatible',
+    model: 'qwen/qwen3.8-27b',
+    input_micro_usd_per_mtok: 800_000,
+    output_micro_usd_per_mtok: 4_000_000,
+    effective_from: new Date('2026-10-28T00:00:00Z'),
+  },
   // Google Gemini API, gemini-3.5-flash-lite, paid tier: $0.30 input (text, image, video), $2.50
   // output per 1M tokens. Checked 2026-10-21 on https://ai.google.dev/gemini-api/docs/pricing
   // (page last updated 2026-10-19).

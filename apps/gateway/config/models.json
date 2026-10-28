@@ -61,6 +61,12 @@
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY"
     },
+    "groq-qwen3.8-27b": {
+      "provider": "openai-compatible",
+      "model": "qwen/qwen3.8-27b",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "apiKeyEnv": "GROQ_API_KEY"
+    },
     "gemini-3.5-flash-lite": {
       "provider": "openai-compatible",
       "model": "gemini-3.5-flash-lite",
@@ -95,6 +101,9 @@
     },
     "gpt-oss-20b": {
       "deployment": "groq-gpt-oss-20b"
+    },
+    "qwen3": {
+      "deployment": "groq-qwen3.8-27b"
     },
     "gemini-3.5-flash-lite": {
       "deployment": "gemini-3.5-flash-lite"
