@@ -11,7 +11,7 @@ export function formatWait(seconds: number): string {
 /** What went wrong, for people: a title and what to do about it. */
 export function describeProblem(
   problem: GatewayProblem,
-  context: { model?: string } = {},
+  context: { model?: string; ownKey?: boolean } = {},
 ): { title: string; detail: string } {
   const retry =
     problem.retryAfterSeconds === null
@@ -19,10 +19,17 @@ export function describeProblem(
       : ` Try again in ${formatWait(problem.retryAfterSeconds)}.`;
   switch (problem.kind) {
     case 'auth':
-      return {
-        title: "The Playground's key was rejected",
-        detail: `${problem.message} It may have expired or been revoked in Settings; start a new key.`,
-      };
+      return context.ownKey
+        ? {
+            title: 'Your key was rejected',
+            detail:
+              `${problem.message} Check that you pasted the whole key and that it has not been ` +
+              'revoked or expired, or use the automatic key.',
+          }
+        : {
+            title: "The Playground's key was rejected",
+            detail: `${problem.message} It may have expired or been revoked in Settings; start a new key.`,
+          };
     case 'forbidden':
       return {
         title: 'This project may not use this model',

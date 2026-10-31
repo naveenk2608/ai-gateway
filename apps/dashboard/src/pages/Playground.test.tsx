@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PROJECT_ID } from '../../e2e/fixtures.js';
-import type { ModelCatalog, RequestDetail, Role } from '../api.js';
+import type { ApiKey, ModelCatalog, RequestDetail, Role } from '../api.js';
 import { Playground } from './Playground.js';
 
 afterEach(() => {
@@ -13,6 +13,14 @@ afterEach(() => {
 });
 
 const KEY = `gw_${'a1'.repeat(8)}_${'b2'.repeat(32)}`;
+/** A key the user pastes, and how this project lists it. */
+const OWN_KEY = `gw_${'c3'.repeat(8)}_${'d4'.repeat(32)}`;
+const OWN_KEY_ROW = {
+  id: '0192f5a0-0000-7000-8000-0000000000dd',
+  name: 'ci-bot',
+  maskedKey: `gw_${'c3'.repeat(8)}_…`,
+  status: 'active',
+} as ApiKey;
 const API_KEY_ID = '0192f5a0-0000-7000-8000-0000000000aa';
 const REQUEST_ID = '0192f5a0-0000-7000-8000-0000000000cc';
 const KEYS_PATH = `/admin/projects/${PROJECT_ID}/api-keys`;
@@ -64,7 +72,14 @@ function stubGateway({
   hold = false,
   chatStatus = 200,
   recorded = detail,
-}: { pieces?: string[]; hold?: boolean; chatStatus?: number; recorded?: RequestDetail } = {}) {
+  listed = [],
+}: {
+  pieces?: string[];
+  hold?: boolean;
+  chatStatus?: number;
+  recorded?: RequestDetail;
+  listed?: ApiKey[];
+} = {}) {
   let keys = 0;
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = urlOf(input);
@@ -86,6 +101,7 @@ function stubGateway({
         ),
       );
     }
+    if (path === KEYS_PATH) return Promise.resolve(Response.json({ data: listed }));
     if (method === 'POST' && path.endsWith('/revoke')) return Promise.resolve(Response.json({}));
     if (path === '/admin/models') return Promise.resolve(Response.json(catalog));
     if (path === `/admin/requests/${REQUEST_ID}`) return Promise.resolve(Response.json(recorded));
@@ -152,6 +168,11 @@ const callsTo = (fetchMock: ReturnType<typeof stubGateway>, path: string) =>
   (fetchMock.mock.calls as Call[]).filter(([url]) => urlOf(url) === path);
 const bearer = (init: RequestInit | undefined) =>
   (init?.headers as Record<string, string> | undefined)?.authorization;
+
+async function paste(key: string) {
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Use my own API key' }));
+  fireEvent.change(screen.getByLabelText('API key'), { target: { value: key } });
+}
 
 async function send(message: string) {
   const box = await screen.findByRole('textbox', { name: 'Message' });
@@ -263,6 +284,94 @@ describe('the Playground page', () => {
         1,
       ),
     );
+  });
+
+  it('uses a pasted key instead of the automatic one, and says which key is in use', async () => {
+    const fetchMock = stubGateway({ listed: [OWN_KEY_ROW] });
+    show();
+    await screen.findByRole('combobox', { name: 'Model' });
+    expect(screen.getByRole('status').textContent).toMatch(
+      new RegExp(`automatic key gw_${'a1'.repeat(8)}_…, named "playground"`),
+    );
+
+    // Surrounding white space, as a paste often brings, is ignored.
+    await paste(` ${OWN_KEY}\n`);
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toMatch(
+        new RegExp(`your key gw_${'c3'.repeat(8)}_…, named "ci-bot" in this project`),
+      ),
+    );
+    expect(screen.getByRole('status').textContent).not.toContain(OWN_KEY);
+    await send('Hi');
+    await screen.findByText('9 in · 2 out');
+    const [chatCall] = callsTo(fetchMock, '/v1/chat/completions');
+    expect(bearer(chatCall![1])).toBe(`Bearer ${OWN_KEY}`);
+    expect(callsTo(fetchMock, '/v1/models').map(([, init]) => bearer(init))).toContain(
+      `Bearer ${OWN_KEY}`,
+    );
+    // Held in memory only.
+    for (const storage of [localStorage, sessionStorage]) {
+      for (let i = 0; i < storage.length; i += 1) {
+        expect(storage.getItem(storage.key(i)!)).not.toContain('d4d4');
+      }
+    }
+    expect(window.location.href).not.toContain('d4d4');
+    // The automatic key stays ready for when the field is cleared.
+    expect(fetchMock.mock.calls.some(([url]) => urlOf(url).endsWith('/revoke'))).toBe(false);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Use my own API key' }));
+    expect(screen.queryByLabelText('API key')).toBeNull();
+    expect(screen.getByRole('status').textContent).toMatch(/automatic key/);
+    await send('Again');
+    await waitFor(() => expect(callsTo(fetchMock, '/v1/chat/completions')).toHaveLength(2));
+    expect(bearer(callsTo(fetchMock, '/v1/chat/completions')[1]![1])).toBe(`Bearer ${KEY}`);
+
+    // Turned on again, the field starts empty: the key was forgotten.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Use my own API key' }));
+    expect(screen.getByLabelText<HTMLInputElement>('API key').value).toBe('');
+    expect(screen.getByRole('status').textContent).toMatch(/automatic key/);
+  });
+
+  it("says when a pasted key is not one of this project's keys", async () => {
+    stubGateway({ listed: [] });
+    show();
+    await paste(OWN_KEY);
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toMatch(
+        /not one of this project's keys, so its own project's limits, budget and models apply/,
+      ),
+    );
+  });
+
+  it('sends nothing with text that is not a gateway key', async () => {
+    const fetchMock = stubGateway();
+    show();
+    await screen.findByRole('combobox', { name: 'Model' });
+    await paste('sk-not-a-gateway-key');
+    const field = screen.getByLabelText('API key');
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText(/This is not a gateway API key/)).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toMatch(/^No key in use/);
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' }).disabled).toBe(
+      true,
+    );
+    expect(
+      (fetchMock.mock.calls as Call[]).some(([, init]) => bearer(init)?.includes('sk-not')),
+    ).toBe(false);
+  });
+
+  it('offers the automatic key when the gateway rejects a pasted one', async () => {
+    stubGateway({ chatStatus: 401, listed: [OWN_KEY_ROW] });
+    show();
+    await paste(OWN_KEY);
+    await send('Hi');
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Your key was rejected');
+    fireEvent.click(within(alert).getByRole('button', { name: 'Use the automatic key' }));
+    expect(
+      screen.getByRole<HTMLInputElement>('checkbox', { name: 'Use my own API key' }).checked,
+    ).toBe(false);
+    expect(screen.getByRole('status').textContent).toMatch(/automatic key/);
   });
 
   it('revokes its key when the page goes away, even as the tab closes', async () => {

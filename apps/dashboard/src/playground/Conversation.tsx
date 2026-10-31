@@ -169,16 +169,18 @@ export function ReplyMeta({
 function Problem({
   turn,
   last,
+  ownKey,
   onRetry,
   onRenewKey,
 }: {
   turn: ReplyTurn;
   last: boolean;
+  ownKey: boolean;
   onRetry: () => void;
   onRenewKey: () => void;
 }) {
   const problem = turn.problem!;
-  const { title, detail } = describeProblem(problem, { model: turn.model });
+  const { title, detail } = describeProblem(problem, { model: turn.model, ownKey });
   return (
     <div className="state error pg-problem" role="alert">
       <div>
@@ -193,7 +195,7 @@ function Problem({
       {last &&
         (problem.kind === 'auth' ? (
           <button type="button" onClick={onRenewKey}>
-            Start a new key
+            {ownKey ? 'Use the automatic key' : 'Start a new key'}
           </button>
         ) : (
           <button type="button" onClick={onRetry}>
@@ -207,12 +209,14 @@ function Problem({
 function Reply({
   turn,
   last,
+  ownKey,
   onRetry,
   onRenewKey,
   providerOf,
 }: {
   turn: ReplyTurn;
   last: boolean;
+  ownKey: boolean;
   onRetry: () => void;
   onRenewKey: () => void;
   providerOf: DeploymentProvider;
@@ -226,21 +230,33 @@ function Reply({
         <span className="badge tone-warning">cut off at the output limit</span>
       )}
       {turn.status === 'failed' && turn.problem && (
-        <Problem turn={turn} last={last} onRetry={onRetry} onRenewKey={onRenewKey} />
+        <Problem
+          turn={turn}
+          last={last}
+          ownKey={ownKey}
+          onRetry={onRetry}
+          onRenewKey={onRenewKey}
+        />
       )}
       {turn.status !== 'waiting' && <ReplyMeta turn={turn} providerOf={providerOf} />}
     </li>
   );
 }
 
+/**
+ * The chat so far. When the gateway rejects the key, `onRenewKey` makes a new automatic key, or,
+ * with `ownKey` (the user pasted the key), goes back to the automatic one.
+ */
 export function Conversation({
   turns,
   busy,
+  ownKey,
   onRetry,
   onRenewKey,
 }: {
   turns: Turn[];
   busy: boolean;
+  ownKey: boolean;
   onRetry: () => void;
   onRenewKey: () => void;
 }) {
@@ -258,6 +274,7 @@ export function Conversation({
             key={turn.id}
             turn={turn}
             last={i === turns.length - 1}
+            ownKey={ownKey}
             onRetry={onRetry}
             onRenewKey={onRenewKey}
             providerOf={providerOf}

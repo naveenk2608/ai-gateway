@@ -8,6 +8,17 @@ export const KEY_LIFETIME_SECONDS = 3600;
 /** A new key is made this long before the current one expires, so a chat never meets it expired. */
 export const RENEW_BEFORE_MS = 5 * 60_000;
 
+/**
+ * The public part of a gateway key (`gw_<keyId>_<secret>`), or null for text not shaped like one.
+ * Whether the key works is the gateway's call.
+ */
+export function keyIdOf(value: string): string | null {
+  return /^gw_([0-9A-Za-z]+)_[0-9A-Za-z]+$/.exec(value)?.[1] ?? null;
+}
+
+/** A key as the API key list shows it: the public part only. */
+export const maskedKey = (keyId: string) => `gw_${keyId}_…`;
+
 export type PlaygroundKey =
   | { status: 'creating' }
   | { status: 'ready'; key: string; apiKeyId: string; expiresAt: number }

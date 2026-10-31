@@ -53,6 +53,36 @@ test.describe('the Playground at 375 px', () => {
     expect(await overflow(page)).toBeLessThanOrEqual(0);
   });
 
+  test('calls /v1 with a pasted key, says which key it is, and fits the screen', async ({
+    page,
+  }) => {
+    await serveApi(page, sampleResponses('owner'));
+    // The fixtures list a key named "backend" with this public part; the secret is a placeholder.
+    const ownKey = `gw_0123456789abcdef_${'0'.repeat(64)}`;
+    let authorization: string | undefined;
+    await page.route('**/v1/chat/completions', (route) => {
+      authorization = route.request().headers().authorization;
+      return route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'text/event-stream', 'x-request-id': REQUEST_ID },
+        body: stream,
+      });
+    });
+
+    await page.goto('/dashboard/#playground');
+    await expect(page.getByRole('status')).toContainText('automatic key');
+    await page.getByRole('checkbox', { name: 'Use my own API key' }).check();
+    await page.getByLabel('API key', { exact: true }).fill(ownKey);
+    await expect(page.getByRole('status')).toContainText(
+      'your key gw_0123456789abcdef_…, named "backend" in this project',
+    );
+    await page.getByRole('textbox', { name: 'Message' }).fill('Hi');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByText('Hello from the gateway.')).toBeVisible();
+    expect(authorization).toBe(`Bearer ${ownKey}`);
+    expect(await overflow(page)).toBeLessThanOrEqual(0);
+  });
+
   test('explains to a viewer why it is not available', async ({ page }) => {
     await serveApi(page, sampleResponses('viewer'));
     await page.goto('/dashboard/#playground');
