@@ -39,14 +39,14 @@ afterEach(() => {
 
 type Mode = 'loading' | 'error' | 'empty' | 'data';
 
-/** Answers /api/... from fixtures; `loading` never answers, `error` fails every call. */
+/** Answers the admin API from fixtures; `loading` never answers, `error` fails every call. */
 function stubApi(mode: Mode, role: Role = 'owner') {
   const responses = mode === 'data' ? sampleResponses(role) : emptyResponses(role);
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     if (mode === 'loading') return new Promise<Response>(() => undefined);
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href, 'http://dashboard.test');
-    const path = url.pathname.replace(/^\/api/, '');
+    const path = url.pathname;
     if (mode === 'error') {
       return Promise.resolve(
         Response.json(

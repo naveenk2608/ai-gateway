@@ -27,7 +27,7 @@ for (const [dataset, responses] of [
     for (const { hash, title } of PAGES) {
       test(`${hash} fits the screen`, async ({ page }) => {
         await serveApi(page, responses);
-        await page.goto(`/#${hash}`);
+        await page.goto(`/dashboard/#${hash}`);
         await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
         if (dataset === 'with data') {
           await expect(page.getByText(MARKERS[hash]).first()).toBeVisible();
@@ -49,7 +49,7 @@ for (const [dataset, responses] of [
     for (const tab of ['project', 'limits', 'members', 'keys', 'routing']) {
       test(`settings tab ${tab} fits the screen`, async ({ page }) => {
         await serveApi(page, responses);
-        await page.goto(`/#settings/${tab}`);
+        await page.goto(`/dashboard/#settings/${tab}`);
         const selected = page.getByRole('tab', { selected: true });
         await expect(selected).toHaveAttribute('href', `#settings/${tab}`);
         await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
@@ -59,7 +59,7 @@ for (const [dataset, responses] of [
 
     test('a settings tab opens from the tab row and keeps its hash', async ({ page }) => {
       await serveApi(page, responses);
-      await page.goto('/#settings');
+      await page.goto('/dashboard/#settings');
       await page.getByRole('tab', { name: 'API keys' }).click();
       await expect(page.getByRole('tab', { selected: true })).toHaveText('API keys');
       expect(new URL(page.url()).hash).toBe('#settings/keys');
@@ -68,7 +68,7 @@ for (const [dataset, responses] of [
 
     test('the navigation drawer opens another page and closes', async ({ page }) => {
       await serveApi(page, responses);
-      await page.goto('/#overview');
+      await page.goto('/dashboard/#overview');
       await page.getByRole('button', { name: 'Open navigation' }).click();
       await page
         .getByRole('dialog', { name: 'Navigation' })
@@ -81,7 +81,7 @@ for (const [dataset, responses] of [
 
     test('the request detail side panel fits the screen and closes', async ({ page }) => {
       await serveApi(page, responses);
-      await page.goto('/#requests');
+      await page.goto('/dashboard/#requests');
       if (dataset === 'empty') return;
       await page.getByText('mock-failover').first().click();
       const panel = page.getByRole('dialog', { name: 'Request detail' });

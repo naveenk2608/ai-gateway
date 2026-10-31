@@ -20,7 +20,7 @@ const VIEWPORTS = {
 async function open(page: Page, theme: string, hash: string) {
   await page.addInitScript((value) => localStorage.setItem('ai-gateway.theme', value), theme);
   await serveApi(page, sampleResponses('owner'));
-  await page.goto(`/#${hash}`);
+  await page.goto(`/dashboard/#${hash}`);
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
 }
 

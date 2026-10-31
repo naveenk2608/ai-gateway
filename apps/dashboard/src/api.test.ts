@@ -23,7 +23,7 @@ describe('api', () => {
     expect(await api('/admin/projects', { method: 'POST', body: { name: 'x' } }, f.fn)).toEqual({
       ok: true,
     });
-    expect(f.calls[0]?.url).toBe('/api/admin/projects');
+    expect(f.calls[0]?.url).toBe('/admin/projects');
     expect(f.calls[0]?.init).toMatchObject({
       method: 'POST',
       credentials: 'same-origin',

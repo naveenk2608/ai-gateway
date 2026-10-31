@@ -8,17 +8,15 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, repoRoot, '');
   const gatewayUrl = env.GATEWAY_URL ?? 'http://localhost:8080';
 
+  // The gateway serves the build at /dashboard/ (DASHBOARD_DIR). In development the gateway's
+  // paths are proxied, so the API is same-origin there too and session cookies just work.
+  const toGateway = { target: gatewayUrl };
   return {
+    base: '/dashboard/',
     plugins: [react()],
     server: {
       port: 5173,
-      // Same-origin /api in dev and in the nginx container, so session cookies (M5) just work.
-      proxy: {
-        '/api': {
-          target: gatewayUrl,
-          rewrite: (path) => path.replace(/^\/api/, ''),
-        },
-      },
+      proxy: { '/admin': toGateway, '/v1': toGateway, '/ready': toGateway },
     },
   };
 });

@@ -1,6 +1,6 @@
 /**
- * The admin API, reached at /api (proxied to the gateway by Vite in development and by nginx in
- * the container), so the session cookie is same-origin.
+ * The admin API, on the origin that serves the dashboard: the gateway itself (/dashboard/), or
+ * Vite's proxy to it in development. So the session cookie is same-origin.
  */
 
 export type Role = 'owner' | 'admin' | 'viewer';
@@ -318,19 +318,22 @@ export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
+  /** Lets the call finish after the page is gone (revoking a key when the tab closes). */
+  keepalive?: boolean;
 }
 
 /** Calls the admin API; resolves with the JSON body (null for 204), rejects with ApiError. */
 export async function api<T>(
   path: string,
-  { method = 'GET', body, signal }: RequestOptions = {},
+  { method = 'GET', body, signal, keepalive }: RequestOptions = {},
   fetchFn: typeof fetch = fetch,
 ): Promise<T> {
   let res: Response;
   try {
-    res = await fetchFn(`/api${path}`, {
+    res = await fetchFn(path, {
       method,
       signal,
+      keepalive,
       credentials: 'same-origin',
       headers: {
         accept: 'application/json',

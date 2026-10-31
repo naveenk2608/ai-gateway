@@ -7,7 +7,7 @@ test.describe('the app shell at 1440 px', () => {
 
   test('opens dark, switches to light and keeps the choice after a reload', async ({ page }) => {
     await serveApi(page, sampleResponses('owner'));
-    await page.goto('/#overview');
+    await page.goto('/dashboard/#overview');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await page.getByRole('button', { name: 'Switch to light theme' }).click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
@@ -18,7 +18,7 @@ test.describe('the app shell at 1440 px', () => {
 
   test('collapses the sidebar to icons and keeps it collapsed', async ({ page }) => {
     await serveApi(page, sampleResponses('owner'));
-    await page.goto('/#overview');
+    await page.goto('/dashboard/#overview');
     const sidebar = page.locator('.sidebar');
     const wide = (await sidebar.boundingBox())?.width ?? 0;
     await page.getByRole('button', { name: 'Collapse sidebar' }).click();
@@ -38,7 +38,7 @@ test.describe('the app shell at 1440 px', () => {
       const url = new URL(request.url());
       if (url.pathname.endsWith('/analytics/overview')) ranges.push(url.searchParams.get('range')!);
     });
-    await page.goto('/#overview');
+    await page.goto('/dashboard/#overview');
     await expect.poll(() => ranges).toContain('24h');
     await page.getByRole('radio', { name: '7d' }).click();
     await expect.poll(() => ranges).toContain('7d');
@@ -47,11 +47,11 @@ test.describe('the app shell at 1440 px', () => {
   test('logs out from the account menu', async ({ page }) => {
     await serveApi(page, sampleResponses('owner'));
     let loggedOut = false;
-    await page.route('**/api/admin/auth/logout', (route) => {
+    await page.route('**/admin/auth/logout', (route) => {
       loggedOut = true;
       return route.fulfill({ status: 204 });
     });
-    await page.route('**/api/admin/me', (route) =>
+    await page.route('**/admin/me', (route) =>
       loggedOut
         ? route.fulfill({
             status: 401,
@@ -59,7 +59,7 @@ test.describe('the app shell at 1440 px', () => {
           })
         : route.fulfill({ json: sampleResponses('owner')['/admin/me'] }),
     );
-    await page.goto('/#overview');
+    await page.goto('/dashboard/#overview');
     await page.getByRole('button', { name: 'Account' }).click();
     await page.getByRole('button', { name: 'Log out' }).click();
     await expect(page.getByRole('heading', { level: 1, name: 'Log in' })).toBeVisible();

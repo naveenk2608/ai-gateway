@@ -25,6 +25,7 @@ import { bootstrap } from './auth/bootstrap.js';
 import { AuthInvalidation } from './auth/invalidation.js';
 import { databaseKeyLoader, KeyVerifier } from './auth/key-verifier.js';
 import type { GatewayConfig } from './config.js';
+import type { DashboardFiles } from './dashboard.js';
 import type { EventBus } from './events/bus.js';
 import { RedisStreamBus } from './events/redis-stream.js';
 import { AdmissionControl } from './limits/admission.js';
@@ -87,6 +88,8 @@ export interface GatewayDeps {
   invalidationChannel?: string;
   /** Randomness for weighted routing and retry jitter; tests make it repeatable. */
   random?: () => number;
+  /** The built dashboard to serve at /dashboard/ (read from DASHBOARD_DIR by main). */
+  dashboard?: DashboardFiles;
 }
 
 export function createGateway(config: GatewayConfig, logger: Logger, deps: GatewayDeps): Gateway {
@@ -235,6 +238,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     metrics,
     metricsToken: config.METRICS_TOKEN,
     allowedOrigins: config.ALLOWED_ORIGINS,
+    dashboard: deps.dashboard,
     readiness: {
       checks,
       timeoutMs: config.READY_CHECK_TIMEOUT_MS,

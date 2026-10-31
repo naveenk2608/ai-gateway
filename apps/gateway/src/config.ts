@@ -42,11 +42,16 @@ export const gatewayConfigSchema = z
     TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
     /** JSON file mapping logical model names to deployments; defaults to config/models.json. */
     MODELS_CONFIG_PATH: z.string().min(1).optional(),
+    /**
+     * The built dashboard (`apps/dashboard/dist`), served at /dashboard/ on the gateway's origin;
+     * GET / then redirects there. Unset: not served (use the Vite dev server). The image sets it.
+     */
+    DASHBOARD_DIR: z.string().min(1).optional(),
     /** Default server for Ollama deployments that do not set baseUrl. */
     OLLAMA_BASE_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:11434'),
     /**
      * Browser origins allowed to call /v1 across origins (CORS, ADR 021), comma-separated, e.g.
-     * `https://playground.example.com`. Empty: none. The admin API never allows other origins.
+     * `https://app.example.com`. Empty: none. The admin API never allows other origins.
      */
     ALLOWED_ORIGINS: z
       .string()

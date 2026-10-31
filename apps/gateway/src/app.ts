@@ -23,6 +23,7 @@ import {
   type ZodFastifySchemaValidationError,
 } from 'fastify-type-provider-zod';
 import { registerV1Cors } from './cors.js';
+import { DASHBOARD_PATH, registerDashboard, type DashboardFiles } from './dashboard.js';
 import { GatewayError } from './errors.js';
 import { registerHealthRoutes, type ReadinessOptions } from './health.js';
 import type { GatewayMetrics } from './metrics.js';
@@ -45,6 +46,8 @@ export interface AppOptions {
   metricsToken?: string;
   /** Browser origins allowed to call /v1 (ALLOWED_ORIGINS); none by default. */
   allowedOrigins?: readonly string[];
+  /** The built dashboard, served at /dashboard/ (DASHBOARD_DIR); not served when absent. */
+  dashboard?: DashboardFiles;
 }
 
 const shuttingDown = new GatewayError('shutting_down', 'Server is shutting down, retry shortly', {
@@ -110,6 +113,7 @@ export function buildApp({
   metrics,
   metricsToken,
   allowedOrigins = [],
+  dashboard,
 }: AppOptions) {
   // Typed as Fastify's base logger so routes and plugins use the standard instance type.
   const loggerInstance: FastifyBaseLogger = logger;
@@ -227,8 +231,11 @@ export function buildApp({
   });
   void app.register(swaggerUi, { routePrefix: '/docs' });
   void app.register((instance, _opts, done) => {
-    // The bare host has no page of its own; send visitors to the API docs.
-    instance.get('/', { schema: { hide: true } }, (_request, reply) => reply.redirect('/docs'));
+    // The bare host has no page of its own; send visitors to the dashboard, or the API docs.
+    instance.get('/', { schema: { hide: true } }, (_request, reply) =>
+      reply.redirect(dashboard ? DASHBOARD_PATH : '/docs'),
+    );
+    if (dashboard) registerDashboard(instance, dashboard);
     registerHealthRoutes(instance, readiness);
     if (metrics && metricsToken !== undefined) {
       // Prometheus scrapes every few seconds; keep its requests out of the info log.

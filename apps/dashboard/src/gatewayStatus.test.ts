@@ -25,7 +25,7 @@ describe('fetchGatewayStatus', () => {
         { name: 'redis', ok: true, latencyMs: 1 },
       ],
     });
-    expect(fetchFn).toHaveBeenCalledWith('/api/ready', expect.anything());
+    expect(fetchFn).toHaveBeenCalledWith('/ready', expect.anything());
   });
 
   it('maps a 503 /ready response to not_ready, marking failed checks', async () => {

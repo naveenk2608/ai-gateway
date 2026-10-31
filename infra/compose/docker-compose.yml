@@ -1,5 +1,6 @@
 # Local stack. `docker compose up` starts Postgres and Redis for development and integration
-# tests; `docker compose --profile full up --build` adds the gateway, worker and dashboard.
+# tests; `docker compose --profile full up --build` adds the gateway (serving the
+# dashboard at /dashboard/) and the worker.
 # `--profile observability` adds Prometheus and Grafana, scraping the gateway and worker (ADR 017):
 # `docker compose --profile full --profile observability up -d --build`.
 #
@@ -102,18 +103,6 @@ services:
       redis:
         condition: service_healthy
     stop_grace_period: 15s
-
-  dashboard:
-    profiles: [full]
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      target: dashboard
-    ports:
-      - 127.0.0.1:${DASHBOARD_PORT:-3000}:80
-    depends_on:
-      gateway:
-        condition: service_healthy
 
   prometheus:
     profiles: [observability]

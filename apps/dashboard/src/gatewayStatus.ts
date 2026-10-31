@@ -28,7 +28,7 @@ function parseChecks(body: unknown): CheckStatus[] | null {
 }
 
 /**
- * Reads GET /api/ready (proxied to the gateway's /ready). Never throws: network errors and
+ * Reads the gateway's GET /ready. Never throws: network errors and
  * unexpected responses become `unreachable`.
  */
 export async function fetchGatewayStatus(
@@ -37,7 +37,7 @@ export async function fetchGatewayStatus(
 ): Promise<GatewayStatus> {
   let res: Response;
   try {
-    res = await fetchFn('/api/ready', { headers: { accept: 'application/json' }, signal });
+    res = await fetchFn('/ready', { headers: { accept: 'application/json' }, signal });
   } catch {
     return { kind: 'unreachable', httpStatus: null };
   }

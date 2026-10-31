@@ -42,19 +42,18 @@ COPY --chown=node:node db/migrations ./db/migrations
 USER node
 CMD ["node", "dist/main.js"]
 
-FROM nginx:1.31.7-alpine3.24 AS dashboard
-COPY apps/dashboard/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /repo/apps/dashboard/dist /usr/share/nginx/html
-
 FROM ${NODE_IMAGE} AS gateway
 # Listen on all interfaces inside the container. PORT is a default: platforms that inject their
 # own PORT at runtime (Render does) override it.
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8080 \
-    MIGRATIONS_DIR=/app/db/migrations
+    MIGRATIONS_DIR=/app/db/migrations \
+    DASHBOARD_DIR=/app/dashboard
 WORKDIR /app
 COPY --from=build --chown=node:node /out/gateway ./
+# The built dashboard, served by the gateway at /dashboard/ on its own origin (ADR 021).
+COPY --from=build --chown=node:node /repo/apps/dashboard/dist ./dashboard
 # Applied at startup under an advisory lock (MIGRATE_ON_START).
 COPY --chown=node:node db/migrations ./db/migrations
 USER node
