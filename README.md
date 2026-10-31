@@ -1,7 +1,8 @@
 # AI Gateway
 
-**Live demo: <https://ai-gateway-8var.onrender.com/docs>.** It runs on free hosting that sleeps
-when idle, so the first request can take about a minute.
+**Live demo: <https://ai-gateway-8var.onrender.com>** (the dashboard; the API docs are at
+[/docs](https://ai-gateway-8var.onrender.com/docs)). It runs on free hosting that sleeps when
+idle, so the first request can take about a minute.
 
 A self-hostable, OpenAI-compatible AI gateway. It sits between your apps and model providers and
 adds per-project API keys, rate and token limits, budgets, routing with retries and failover,
@@ -26,7 +27,8 @@ Architecture decisions are in [docs/adr/](docs/adr/).
   comparison, reliability, rejections and pipeline health, for 1 h to 30 days.
 - A dashboard on that API: overview, requests with filters and routing history, cost and budgets,
   model comparison, reliability, security, infrastructure, and settings (project, limits and
-  budget, members, API keys, deployments and routing). Usable on a phone.
+  budget, members, API keys, deployments and routing), and a Playground that chats through
+  `/v1` with a short-lived key. Served by the gateway at `/dashboard/`; usable on a phone.
 - Prometheus metrics from the gateway and the worker (token-protected `/metrics`), W3C trace IDs
   on every log line from the request to the worker's insert, and a local Prometheus and Grafana
   stack with a provisioned dashboard.
@@ -53,7 +55,7 @@ cp .env.example .env
 openssl rand -hex 32
 docker compose up -d   # Postgres 16 and Redis 7, on 127.0.0.1 only
 pnpm db:seed           # migrations, a demo project, an admin and an API key (printed once)
-pnpm dev               # gateway on :8080, worker, dashboard on :5173
+pnpm dev               # gateway on :8080, worker, dashboard on :5173/dashboard/
 ```
 
 On Windows, run `pnpm` from PowerShell (pnpm scripts can fail from Git Bash). Without `openssl`,
@@ -78,7 +80,10 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
 
 Add `"stream": true` for server-sent events. Then:
 
-- Open the dashboard at <http://127.0.0.1:5173> and log in with the seeded admin.
+- Open the dashboard at <http://127.0.0.1:5173/dashboard/> and log in with the seeded admin.
+  The Vite dev server proxies `/admin`, `/v1` and `/ready` to the gateway (`GATEWAY_URL`). To
+  have the gateway serve a built dashboard instead, run `pnpm build` and set
+  `DASHBOARD_DIR=../dashboard/dist`; it is then at <http://127.0.0.1:8080/dashboard/>.
 - Open the API docs at <http://127.0.0.1:8080/docs>; **Authorize** with the key to try `/v1`.
 
 ### The two-minute demo
@@ -106,8 +111,9 @@ point it elsewhere.
 docker compose --profile full up -d --build
 ```
 
-This adds the gateway (:8080), the worker and the dashboard (<http://127.0.0.1:3000>, which proxies
-the API under `/api`). Compose reads `API_KEY_PEPPER` from `.env`. For a first admin and key,
+This adds the gateway (:8080) and the worker. The gateway image includes the built dashboard
+and serves it at <http://127.0.0.1:8080/dashboard/> (`/` redirects there), on the same origin as
+the admin API. Compose reads `API_KEY_PEPPER` from `.env`. For a first admin and key,
 either set `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` and `BOOTSTRAP_API_KEY` (from
 `pnpm key:generate`) in `.env`, or run `pnpm db:seed` on the host, which reaches the same Postgres.
 In Compose the gateway reaches Ollama on the host at `host.docker.internal:11434`. Add
@@ -148,6 +154,7 @@ for await (const chunk of stream) process.stdout.write(chunk.choices[0]?.delta.c
 | `POST /v1/chat/completions` | OpenAI chat completions. `stream: true` returns SSE chunks ending with `data: [DONE]`; `stream_options.include_usage` adds a usage chunk. |
 | `GET /v1/models` | OpenAI model list: the models this key's project may use that have an enabled deployment. `created` is when the gateway loaded its models file. |
 | `/admin/...` | Admin API used by the dashboard; see [Admin API](#admin-api). |
+| `GET /dashboard/` | The dashboard, when the gateway has a built one (`DASHBOARD_DIR`, set in the image); `GET /` redirects to it, or to `/docs` without one. |
 | `GET /docs` | Swagger UI; the OpenAPI 3.1 spec is at `/docs/json`. |
 | `GET /health` | The process is up. |
 | `GET /ready` | 200 when Postgres and Redis answer within `READY_CHECK_TIMEOUT_MS`, else 503 naming the failing check. |
@@ -314,30 +321,27 @@ of these families today; all four are paid there. A free one can be added later 
 
 ## Playground
 
-[apps/playground](apps/playground) is a small chat app that uses the gateway exactly as any
-client would: `GET /v1/models` for the model list and streaming `POST /v1/chat/completions`, with
-a gateway API key (ADR 021). It is a separate static site, not part of the gateway or dashboard.
+The dashboard's Playground page chats with the project's models through the public
+OpenAI-compatible API, so a reply goes through everything a client's request does: limits, the
+budget, routing with retries and fallback, the cache, and usage and cost tracking (ADR 021).
 
-- **Settings:** the gateway URL (default `https://ai-gateway-8var.onrender.com`) and a `gw_` key.
-  The key stays in the browser tab (sessionStorage), or on the device (localStorage) with
-  "remember on this device". It is sent only to the gateway URL, in the Authorization header.
-- **Chat:** streamed replies, Stop, New chat. Under each reply: the model, the deployment that
-  served it and any fallback, latency (first text and total, measured in the browser), tokens
-  and the request ID. The conversation is kept in the page only.
-- **Errors:** a rejected key (401), a model the project may not use (403), a rate limit or a
-  spent budget (429, with the retry time), and a gateway that is unreachable or still waking up
-  on free hosting each get their own message.
+- **Key:** when the page opens, the dashboard creates an API key named `playground` for the
+  selected project through the admin API (`expiresInSeconds: 3600`). The key is held only in
+  the page's memory and sent only to `/v1` on the same origin. It is revoked when you leave the
+  page, switch project or close the tab, replaced five minutes before it expires, and the gateway
+  refuses it after the hour in any case. Its requests appear under that key on every page.
+- **Who:** creating keys needs the `admin` or `owner` role, so viewers see an explanation instead.
+- **Chat:** the model list comes from `GET /v1/models`; replies stream in, with Stop and New
+  chat. Under each reply: the model, the provider and deployment that served it, any deployments
+  it fell back from, latency (first text and total, measured in the browser), tokens, the cost
+  the worker recorded for it, and a link that opens the request on the Requests page in a new tab.
+  The conversation is kept in the page only.
+- **Errors:** a rejected or expired key (with "Start a new key"), a model the project may not use,
+  a rate limit or spent budget (with the retry time) and an unavailable gateway each get their
+  own message.
 
-Run it against a local gateway started with `ALLOWED_ORIGINS=http://localhost:5174`:
-
-```bash
-pnpm --filter @ai-gateway/playground dev   # http://localhost:5174
-```
-
-To deploy it on Vercel, create a project from this repository with the root directory
-`apps/playground`; [apps/playground/vercel.json](apps/playground/vercel.json) sets the build and
-strict security headers (CSP, no referrer). Then add the site's origin (e.g.
-`https://<project>.vercel.app`) to the gateway's `ALLOWED_ORIGINS`.
+`ALLOWED_ORIGINS` (empty by default) still lets browser apps on other origins call `/v1` with
+their own keys; the Playground does not need it.
 
 ## Limits and budgets
 
@@ -396,7 +400,7 @@ settings, `owner` also manages members.
 | `GET /admin/projects/:projectId/members` | viewer |
 | `POST`, `PATCH`, `DELETE /admin/projects/:projectId/members[/:userId]` | owner |
 | `GET /admin/projects/:projectId/api-keys` | viewer |
-| `POST .../api-keys`, `PATCH .../api-keys/:apiKeyId` (name, `limits`), `.../revoke`, `.../rotate` | admin |
+| `POST .../api-keys` (name, `limits`, optional `expiresInSeconds`), `PATCH .../api-keys/:apiKeyId` (name, `limits`), `.../revoke`, `.../rotate` | admin |
 | `GET /admin/projects/:projectId/audit-logs` | admin |
 
 Another project's resources answer 404, exactly like ones that do not exist. Every change writes
@@ -406,8 +410,8 @@ an `audit_logs` row in the same transaction. Logins are limited per email and pe
 
 ## Dashboard
 
-Eight pages, all read from the admin and analytics APIs; nothing is computed or filled in by the
-dashboard, and a page with no data says so. The top bar picks the project and the time range
+Nine pages, read from the admin and analytics APIs (the Playground also calls `/v1`); nothing is
+computed or filled in by the dashboard, and a page with no data says so. The top bar picks the project and the time range
 (1 h, 24 h, 7 d, 30 d); pages live in the URL hash (`#cost`, `#settings/keys`), so links and
 reloads keep them. Dark is the default theme, with a light one in the top bar.
 
@@ -420,6 +424,7 @@ reloads keep them. Dark is the default theme, with a light one in the top bar.
 | Reliability | KPI cards for failures, retries, fallbacks and attempts; their trend; errors by code; each deployment's numbers; breaker states per instance and their changes |
 | Security | Rejections by kind (limits, budget, model policy), over time, by reason and by key with shares |
 | Infrastructure | Worker lag, pending events, dead letters and dependency checks, the pipeline in detail, and the answering instance's process readings |
+| Playground | A chat through `/v1` with a short-lived key for the project; see [Playground](#playground) |
 | Settings | Tabs: Project (name, ID, allowed models), Limits and budget (each limit with the busiest minute of the last hour as a meter, the month's spend against the budget), Members, API keys, Routing (read-only, from the models file) |
 
 Some things are shown as "not measured" or "not tracked" because the gateway does not record
@@ -586,7 +591,7 @@ host with no background workers, run the usage consumer inside the gateway.
 | --- | --- | --- |
 | `DATABASE_URL`, `REDIS_URL` | Postgres and Redis | from your provider |
 | `API_KEY_PEPPER` | Secret for API-key hashes (required; changing it invalidates every key) | `openssl rand -hex 32`, or the host's *Generate* |
-| `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` | First owner, to log in to `/admin` | your email; 12+ characters |
+| `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` | First owner, to log in to the dashboard | your email; 12+ characters |
 | `BOOTSTRAP_API_KEY` | First API key | `pnpm key:generate` on your machine |
 | `RUN_WORKER_IN_PROCESS` | Run the usage consumer in the gateway | `true` |
 | `TRUST_PROXY` | Proxies in front, for the client IP in login limits | how many your host puts in front (0 trusts none) |
@@ -596,7 +601,9 @@ A Redis without persistence (Render's free plan) is fine: rate limits restart, b
 rebuilt from Postgres, and the usage stream and consumer group are recreated. Events in the
 stream at the moment of a restart are lost.
 
-Then open `/docs`, **Authorize** with the key, and call `POST /v1/chat/completions`.
+Then open the host's URL: it redirects to the dashboard (`/dashboard/`, built into the image), where
+the bootstrap owner logs in and the Playground chats through `/v1`. Or open `/docs`, **Authorize**
+with the key, and call `POST /v1/chat/completions`.
 
 ## Configuration
 
@@ -609,8 +616,9 @@ message naming each problem. [.env.example](.env.example) lists them all with th
 ```text
 apps/gateway     Fastify API: /v1 proxy, providers, routing, limits, cache, /admin API
 apps/worker      usage-event consumer (also runs inside the gateway with RUN_WORKER_IN_PROCESS)
-apps/dashboard   React + Vite + TanStack Query/Table + Recharts; e2e/ holds browser checks
-apps/playground  React + Vite chat client for /v1, deployable as a static site (ADR 021)
+apps/dashboard   React + Vite + TanStack Query/Table + Recharts, served by the gateway at
+                 /dashboard/; src/playground/ is the Playground's /v1 client; e2e/ holds
+                 browser checks
 packages/shared  config, clock, logger, ids, trace context, token estimates, Postgres/Redis
                  clients, metrics registry and listener
 db/migrations    numbered plain-SQL migrations

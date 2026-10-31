@@ -24,8 +24,8 @@ has enough detail to start work from the repository alone: read this file, then
   against a two-instance Compose stack, results committed in `bench/results/`, and
   `docs/benchmarks.md` generated from them and checked in CI. The owner tags `m9-done`.
 - Accepted decisions are ADR 001–021; ADR 020 is the dashboard design system (tokens, shell,
-  shared components and the "not measured" rule), ADR 021 the Playground client and CORS for
-  `/v1`.
+  shared components and the "not measured" rule), ADR 021 the Playground page (in the
+  dashboard, which the gateway serves at `/dashboard/`) and CORS for `/v1`.
 
 ## How to work on a milestone
 
