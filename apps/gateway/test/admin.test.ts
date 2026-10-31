@@ -569,6 +569,58 @@ describe('API key lifecycle through the admin API', () => {
     expect(JSON.stringify(list.body)).not.toContain(created.body.key.slice(20));
   });
 
+  it('creates a key that expires after expiresInSeconds, on every instance', async () => {
+    const owner = await createUser(db);
+    const cookie = await login(owner);
+    const p = (await api<{ id: string }>('POST', '/admin/projects', cookie, { name: 'expiry' }))
+      .body.id;
+    const before = clock.now();
+    const created = await api<{
+      key: string;
+      apiKey: { id: string; status: string; expiresAt: string };
+    }>('POST', `/admin/projects/${p}/api-keys`, cookie, {
+      name: 'playground',
+      expiresInSeconds: 3600,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.apiKey.status).toBe('expiring');
+    const expiresAt = Date.parse(created.body.apiKey.expiresAt);
+    expect(expiresAt - before).toBeGreaterThanOrEqual(3_600_000);
+    expect(expiresAt - clock.now()).toBeLessThanOrEqual(3_600_000);
+    const audit = await db
+      .selectFrom('audit_logs')
+      .select('details')
+      .where('target_id', '=', created.body.apiKey.id)
+      .executeTakeFirstOrThrow();
+    expect(audit.details).toMatchObject({ expiresAt: created.body.apiKey.expiresAt });
+
+    // Cached on both instances while valid; refused on both once the hour is up.
+    for (const base of [url, otherUrl])
+      expect((await chat(base, created.body.key)).status).toBe(200);
+    offset = 3_600_000;
+    try {
+      for (const base of [url, otherUrl]) {
+        expect((await chat(base, created.body.key)).status).toBe(401);
+      }
+      const list = await api<{ data: { id: string; status: string }[] }>(
+        'GET',
+        `/admin/projects/${p}/api-keys`,
+        cookie,
+      );
+      expect(list.body.data.find((k) => k.id === created.body.apiKey.id)?.status).toBe('expired');
+    } finally {
+      offset = 0;
+    }
+
+    for (const expiresInSeconds of [59, 366 * 24 * 3600, 1.5]) {
+      const refused = await api('POST', `/admin/projects/${p}/api-keys`, cookie, {
+        name: 'x',
+        expiresInSeconds,
+      });
+      expect(refused.status).toBe(400);
+    }
+  });
+
   it('revocation applies at once here and reaches another instance through pub/sub', async () => {
     const owner = await createUser(db);
     const cookie = await login(owner);

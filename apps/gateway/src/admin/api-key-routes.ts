@@ -21,6 +21,8 @@ import {
 } from './schemas.js';
 
 const keyParams = projectParams.extend({ apiKeyId: z.uuid() });
+/** The longest lifetime a new key may be given: one year. */
+const MAX_KEY_LIFETIME_SECONDS = 365 * 24 * 3600;
 const security = [{ session: [] }];
 const keyColumns = [
   'id',
@@ -82,6 +84,7 @@ async function insertKey(
   userId: string,
   pepper: string,
   limits: Partial<LimitColumns> = {},
+  expiresAt: Date | null = null,
 ) {
   const key = generateApiKey();
   const row = await trx
@@ -93,6 +96,7 @@ async function insertKey(
       secret_hash: hashSecret(key.secret, pepper),
       name,
       created_by: userId,
+      expires_at: expiresAt,
       ...limits,
     })
     .returning(keyColumns)
@@ -148,10 +152,17 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
       schema: {
         tags: ['admin'],
         summary: 'Create an API key (admin); the full key is returned only in this response',
+        description:
+          'With `expiresInSeconds`, the key stops working that long after it is created (the ' +
+          'dashboard Playground uses one-hour keys); without it, the key never expires.',
         security,
         params: projectParams,
         body: z
-          .object({ name: z.string().trim().min(1).max(100), limits: limitsPatchSchema.optional() })
+          .object({
+            name: z.string().trim().min(1).max(100),
+            limits: limitsPatchSchema.optional(),
+            expiresInSeconds: z.number().int().min(60).max(MAX_KEY_LIFETIME_SECONDS).optional(),
+          })
           .strict(),
         response: {
           201: z.object({ apiKey: apiKeySchema, key: z.string() }),
@@ -163,8 +174,10 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
       const { projectId } = request.params;
       const user = currentUser(request);
       await requireProjectRole(db, request, projectId, 'admin');
+      const { name, limits, expiresInSeconds } = request.body;
+      const expiresAt =
+        expiresInSeconds === undefined ? null : new Date(clock.now() + expiresInSeconds * 1000);
       const created = await db.transaction().execute(async (trx) => {
-        const { name, limits } = request.body;
         const result = await insertKey(
           trx,
           projectId,
@@ -172,6 +185,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
           user.id,
           pepper,
           limitUpdates(limits ?? {}),
+          expiresAt,
         );
         await writeAudit(trx, {
           projectId,
@@ -183,6 +197,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
             keyId: result.row.key_id,
             name: result.row.name,
             limits: toLimits(result.row),
+            expiresAt: isoOrNull(result.row.expires_at),
           },
           requestId: request.id,
         });
