@@ -1,0 +1,20 @@
+dnf install -y docker git jq
+systemctl enable --now docker
+
+plugins=/usr/local/lib/docker/cli-plugins
+mkdir -p "$plugins"
+curl -fsSL -o "$plugins/docker-compose" \
+  "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-x86_64"
+echo "${compose_sha256}  $plugins/docker-compose" | sha256sum -c -
+curl -fsSL -o "$plugins/docker-buildx" \
+  "https://github.com/docker/buildx/releases/download/${buildx_version}/buildx-${buildx_version}.linux-amd64"
+echo "${buildx_sha256}  $plugins/docker-buildx" | sha256sum -c -
+chmod +x "$plugins/docker-compose" "$plugins/docker-buildx"
+
+if [ ! -f /swapfile ]; then
+  fallocate -l ${swap_gb}G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi

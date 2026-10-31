@@ -1,0 +1,23 @@
+# Layered on docker-compose.yml by the demo EC2 instance (infra/terraform/demo, never applied
+# yet): the gateway on the instance's port 80, and every service restarting with the machine.
+# Postgres and Redis stay on loopback and the Compose network.
+#
+#   docker compose --env-file .env -f infra/compose/docker-compose.yml \
+#     -f infra/compose/aws-demo.yml --profile full up -d --build
+
+services:
+  postgres:
+    restart: unless-stopped
+  redis:
+    restart: unless-stopped
+  gateway:
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # The demo serves plain HTTP, so the session cookie cannot be HTTPS-only. Put HTTPS in
+      # front (the full setup's ALB takes a certificate) before using it for anything real.
+      SESSION_COOKIE_SECURE: 'false'
+    ports:
+      - 80:8080
+  worker:
+    restart: unless-stopped

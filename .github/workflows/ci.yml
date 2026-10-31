@@ -92,6 +92,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: docker compose --profile full --profile observability --profile aws-local config --quiet
+      # The demo instance's override (infra/terraform/demo).
+      - run: >-
+          docker compose -f infra/compose/docker-compose.yml -f infra/compose/aws-demo.yml
+          --profile full config --quiet
       # The benchmark stack (M9); pnpm bench supplies these per run.
       - run: docker compose -f bench/compose.yaml --profile tools config --quiet
         env:
@@ -103,3 +107,38 @@ jobs:
           -v "$PWD/infra/compose/observability:/etc/prometheus:ro"
           prom/prometheus:v3.15.0 check config /etc/prometheus/prometheus.yml
       - run: docker compose --profile full build
+
+  terraform:
+    name: Terraform (fmt, validate, tests with a mocked AWS provider)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # No AWS credentials exist in this workflow and none are needed: the tests use
+    # mock_provider "aws", so nothing is sent to AWS. These settings also stop anything from
+    # looking for credentials in files or instance metadata.
+    env:
+      AWS_CONFIG_FILE: /dev/null
+      AWS_SHARED_CREDENTIALS_FILE: /dev/null
+      AWS_EC2_METADATA_DISABLED: 'true'
+      TF_IN_AUTOMATION: '1'
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugins
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+      - run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+      - run: terraform fmt -check -recursive infra/terraform
+      - name: Init, validate and test each setup (never plan or apply against AWS)
+        run: |
+          for dir in modules/network demo full; do
+            echo "::group::$dir"
+            terraform -chdir="infra/terraform/$dir" init -backend=false -input=false
+            terraform -chdir="infra/terraform/$dir" validate
+            terraform -chdir="infra/terraform/$dir" test
+            echo "::endgroup::"
+          done
+      - name: Every taggable resource tagged; no NAT gateway; no load balancer in the demo
+        run: |
+          terraform -chdir=infra/terraform/full providers schema -json > "$RUNNER_TEMP/schema.json"
+          node infra/terraform/scripts/check.mjs "$RUNNER_TEMP/schema.json"

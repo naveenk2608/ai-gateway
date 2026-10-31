@@ -22,8 +22,13 @@ export default defineConfig(
     },
   },
   {
-    files: ['**/*.js'],
+    files: ['**/*.{js,mjs}'],
     extends: [tseslint.configs.disableTypeChecked],
+  },
+  {
+    // Plain Node scripts CI runs without installing anything (the Terraform checks).
+    files: ['infra/terraform/scripts/*.mjs'],
+    languageOptions: { globals: { console: 'readonly', process: 'readonly' } },
   },
   {
     // k6 scripts run inside k6, which provides these globals.

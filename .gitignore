@@ -16,12 +16,13 @@ playwright-report/
 .env.*.local
 *.pem
 
-# terraform
-infra/terraform/.terraform/
-infra/terraform/*.tfstate
-infra/terraform/*.tfstate.*
-infra/terraform/*.tfvars
-!infra/terraform/example.tfvars
+# terraform (state and variable files can hold secrets; the lock files are committed)
+infra/terraform/**/.terraform/
+infra/terraform/**/*.tfstate
+infra/terraform/**/*.tfstate.*
+infra/terraform/**/*.tfplan
+infra/terraform/**/*.tfvars
+!infra/terraform/**/example.tfvars
 
 # os / editor
 .DS_Store
