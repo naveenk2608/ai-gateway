@@ -28,6 +28,7 @@ import type { GatewayConfig } from './config.js';
 import type { DashboardFiles } from './dashboard.js';
 import type { EventBus } from './events/bus.js';
 import { RedisStreamBus } from './events/redis-stream.js';
+import { SqsBus } from './events/sqs.js';
 import { AdmissionControl } from './limits/admission.js';
 import { databaseSpendLoader, ReservationSweeper } from './limits/ledger.js';
 import { Limiter } from './limits/limiter.js';
@@ -46,8 +47,12 @@ import { drainAndClose, type DrainOutcome } from './shutdown.js';
 import {
   createUsageConsumer,
   readPipelineState,
+  readSqsPipelineState,
+  sqsFromSettings,
+  sqsQueues,
   watchPipeline,
-  type UsageConsumer,
+  type EventConsumer,
+  type PipelineReader,
 } from '@ai-gateway/worker';
 
 /** src/ and dist/ both sit three levels below the repository root, where db/migrations lives. */
@@ -72,7 +77,7 @@ export interface Gateway {
   /** The private metrics listener's port once started, when METRICS_PORT is set. */
   metricsPort(): number | undefined;
   /** The in-process usage consumer, when RUN_WORKER_IN_PROCESS is on. */
-  consumer: UsageConsumer | undefined;
+  consumer: EventConsumer | undefined;
   /** Applies pending migrations (if enabled), then listens. */
   start(): Promise<void>;
   /** Drains in-flight requests, then closes the Postgres pool and Redis client. */
@@ -129,14 +134,37 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     channel: deps.invalidationChannel,
   });
 
-  const events = new RedisStreamBus({
-    redis,
-    logger,
-    clock,
-    stream: config.EVENTS_STREAM,
-    bufferMax: config.EVENTS_BUFFER_MAX,
-    streamMaxLen: config.EVENTS_STREAM_MAXLEN,
-  });
+  // Usage events go to a Redis Stream, or to SQS on AWS (ADR 023); the pipeline state shown on
+  // the Infrastructure page and in metrics is read from the same place.
+  const sqs = config.EVENT_BUS === 'sqs' ? sqsFromSettings(config) : undefined;
+  let events: EventBus;
+  let readPipeline: PipelineReader;
+  if (sqs) {
+    const queues = sqsQueues(config);
+    events = new SqsBus({
+      sqs: sqs.sqs,
+      queueUrl: queues.queueUrl,
+      logger,
+      clock,
+      bufferMax: config.EVENTS_BUFFER_MAX,
+    });
+    readPipeline = () => readSqsPipelineState(sqs.sqs, queues);
+  } else {
+    events = new RedisStreamBus({
+      redis,
+      logger,
+      clock,
+      stream: config.EVENTS_STREAM,
+      bufferMax: config.EVENTS_BUFFER_MAX,
+      streamMaxLen: config.EVENTS_STREAM_MAXLEN,
+    });
+    readPipeline = () =>
+      readPipelineState(redis, clock, {
+        stream: config.EVENTS_STREAM,
+        dlqStream: config.EVENTS_DLQ_STREAM,
+        group: config.EVENTS_CONSUMER_GROUP,
+      });
+  }
 
   const prices = new PriceBook({
     load: databasePriceLoader(db),
@@ -213,18 +241,13 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
   metrics.watch({ breakers, events, pool, checks, timeoutMs: config.READY_CHECK_TIMEOUT_MS });
   const processProbe = processInstanceProbe(() => events.stats());
   // The pipeline state stays visible here while the worker is down (stream lag rising).
-  watchPipeline(metrics.registry, () =>
-    readPipelineState(redis, clock, {
-      stream: config.EVENTS_STREAM,
-      dlqStream: config.EVENTS_DLQ_STREAM,
-      group: config.EVENTS_CONSUMER_GROUP,
-    }),
-  );
+  watchPipeline(metrics.registry, readPipeline);
 
   const inProcess = config.RUN_WORKER_IN_PROCESS
     ? createUsageConsumer({
         settings: config,
         redisUrl: config.REDIS_URL,
+        sqs: sqs?.sqs,
         db,
         logger,
         clock,
@@ -275,10 +298,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       }),
       infra: redisInfraProbe({
         redis,
-        clock,
-        stream: config.EVENTS_STREAM,
-        dlqStream: config.EVENTS_DLQ_STREAM,
-        group: config.EVENTS_CONSUMER_GROUP,
+        pipeline: readPipeline,
         deployments: deployments.map((d) => d.id),
         checks,
         instance: () => processProbe.read(),
@@ -299,6 +319,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       await inProcess.consumer.stop();
       await inProcess.close();
     }
+    sqs?.close();
     await Promise.allSettled([
       pool.end(),
       closeRedis(redis),

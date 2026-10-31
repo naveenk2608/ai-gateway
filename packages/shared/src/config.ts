@@ -36,6 +36,47 @@ export const metricsConfigShape = {
   METRICS_HOST: z.string().min(1).default('127.0.0.1'),
 };
 
+/**
+ * Which EventBus carries usage events (ADR 005, ADR 023): a Redis Stream (the default, and the
+ * only option without AWS) or an SQS queue with a dead-letter queue. Read by the gateway, which
+ * publishes, and by whatever consumes: the worker, or the gateway with RUN_WORKER_IN_PROCESS.
+ */
+export const eventBusConfigShape = {
+  EVENT_BUS: z.enum(['redis', 'sqs']).default('redis'),
+  /** The usage queue (EVENT_BUS=sqs). */
+  SQS_QUEUE_URL: z.url({ protocol: /^https?$/ }).optional(),
+  /** Where the consumer moves events it could not process (EVENT_BUS=sqs). */
+  SQS_DLQ_URL: z.url({ protocol: /^https?$/ }).optional(),
+  /**
+   * The queues' region (EVENT_BUS=sqs). Credentials come from the AWS SDK's default chain: the
+   * instance role on EC2, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+   */
+  AWS_REGION: z
+    .string()
+    .regex(/^[a-z]{2}(-[a-z]+)+-\d+$/, 'must be an AWS region such as us-east-1')
+    .optional(),
+  /** A non-AWS SQS endpoint, such as LocalStack's (`docker compose --profile aws-local`). */
+  SQS_ENDPOINT: z.url({ protocol: /^https?$/ }).optional(),
+};
+
+/** With EVENT_BUS=sqs, the queues and region are required. For a schema's superRefine. */
+export function checkEventBusConfig(
+  config: {
+    EVENT_BUS: 'redis' | 'sqs';
+    SQS_QUEUE_URL?: string | undefined;
+    SQS_DLQ_URL?: string | undefined;
+    AWS_REGION?: string | undefined;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (config.EVENT_BUS !== 'sqs') return;
+  for (const name of ['SQS_QUEUE_URL', 'SQS_DLQ_URL', 'AWS_REGION'] as const) {
+    if (config[name] === undefined) {
+      ctx.addIssue({ code: 'custom', path: [name], message: 'is required when EVENT_BUS=sqs' });
+    }
+  }
+}
+
 export class ConfigError extends Error {
   readonly problems: readonly string[];
 

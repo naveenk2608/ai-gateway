@@ -11,8 +11,22 @@ export {
   UsageConsumer,
   type ConsumerOptions,
   type ConsumerStats,
+  type EventConsumer,
 } from './consumer.js';
+export { SqsUsageConsumer, type SqsConsumerOptions } from './sqs-consumer.js';
 export { ingestEvents } from './ingest.js';
 export { watchPipeline, WorkerMetrics } from './metrics.js';
-export { readPipelineState, type PipelineNames, type PipelineState } from './pipeline.js';
-export { createUsageConsumer, createWorker, type UsageConsumerDeps } from './worker.js';
+export {
+  readPipelineState,
+  readSqsPipelineState,
+  type PipelineNames,
+  type PipelineReader,
+  type PipelineState,
+} from './pipeline.js';
+export {
+  createUsageConsumer,
+  createWorker,
+  sqsFromSettings,
+  sqsQueues,
+  type UsageConsumerDeps,
+} from './worker.js';

@@ -1,23 +1,29 @@
 import type { Clock } from '@ai-gateway/shared';
-import type { Redis } from '@ai-gateway/shared/node';
+import type { Redis, SqsApi } from '@ai-gateway/shared/node';
 
 /**
- * The usage pipeline's state in Redis, measured when asked: the admin API's infra endpoint and
- * the worker's metrics both read it. Use a connection no blocking read holds.
+ * The usage pipeline's state, measured when asked: the admin API's infra endpoint and the
+ * worker's metrics both read it. For Redis, use a connection no blocking read holds.
  */
 export interface PipelineState {
-  /** Entries in the usage stream (processed ones are trimmed periodically). */
+  /** What carries the events (ADR 005, ADR 023). */
+  transport: 'redis-stream' | 'sqs';
+  /** Entries in the usage stream or queue (processed ones are trimmed or deleted). */
   streamLength: number;
   /** Entries no consumer has read yet: the worker's lag. Null when Redis does not report it. */
   unreadEvents: number | null;
   /** Entries read but not yet acknowledged (being processed, or left by a crashed consumer). */
   pendingEvents: number;
-  /** Age of the oldest pending entry; null when none is pending. */
+  /** Age of the oldest pending entry; null when none is pending or SQS (which does not say). */
   oldestPendingAgeMs: number | null;
-  consumers: number;
-  /** Entries in the dead-letter stream. */
+  /** Consumers in the group; null for SQS, which has no consumer groups. */
+  consumers: number | null;
+  /** Entries in the dead-letter stream or queue. */
   deadLetterLength: number;
 }
+
+/** Reads the pipeline state now; throws when the transport is unreachable. */
+export type PipelineReader = () => Promise<PipelineState>;
 
 export interface PipelineNames {
   stream: string;
@@ -61,11 +67,32 @@ export async function readPipelineState(
     if (Number.isFinite(oldest)) oldestPendingAgeMs = Math.max(0, clock.now() - oldest);
   }
   return {
+    transport: 'redis-stream',
     streamLength,
     unreadEvents: group === undefined ? streamLength : lag == null ? null : Number(lag),
     pendingEvents,
     oldestPendingAgeMs,
     consumers: Number(group?.get('consumers') ?? 0),
     deadLetterLength,
+  };
+}
+
+/**
+ * The same state for SQS (ADR 023), from the queues' approximate counts (SQS updates them within
+ * about a minute). SQS does not report the age of in-flight messages or who is consuming.
+ */
+export async function readSqsPipelineState(
+  sqs: SqsApi,
+  queues: { queueUrl: string; dlqUrl: string },
+): Promise<PipelineState> {
+  const [queue, dlq] = await Promise.all([sqs.depth(queues.queueUrl), sqs.depth(queues.dlqUrl)]);
+  return {
+    transport: 'sqs',
+    streamLength: queue.visible + queue.inFlight + queue.delayed,
+    unreadEvents: queue.visible + queue.delayed,
+    pendingEvents: queue.inFlight,
+    oldestPendingAgeMs: null,
+    consumers: null,
+    deadLetterLength: dlq.visible + dlq.inFlight + dlq.delayed,
   };
 }

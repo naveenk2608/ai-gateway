@@ -309,6 +309,7 @@ export function emptyResponses(role: Role): Responses {
       window,
       measuredAt: '2026-10-21T00:00:00.000Z',
       pipeline: {
+        transport: 'redis-stream',
         streamLength: 0,
         unreadEvents: 0,
         pendingEvents: 0,
@@ -487,6 +488,7 @@ export function sampleResponses(role: Role): Responses {
       window,
       measuredAt: '2026-10-21T00:00:00.000Z',
       pipeline: {
+        transport: 'redis-stream',
         streamLength: 42,
         unreadEvents: 3,
         pendingEvents: 1,

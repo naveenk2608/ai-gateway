@@ -1,7 +1,9 @@
 export {
+  checkEventBusConfig,
   ConfigError,
   commonConfigShape,
   describeIssue,
+  eventBusConfigShape,
   logLevelSchema,
   metricsConfigShape,
   parseConfig,

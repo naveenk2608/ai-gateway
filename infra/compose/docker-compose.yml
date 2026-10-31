@@ -104,6 +104,28 @@ services:
         condition: service_healthy
     stop_grace_period: 15s
 
+  # A local SQS for the SQS event bus (ADR 023): `docker compose --profile aws-local up -d`.
+  # SQS only, no persistence, nothing leaves the machine. Pinned to 4.14.0, the last LocalStack
+  # release that runs without an account token; later images require one.
+  localstack:
+    profiles: [aws-local]
+    image: localstack/localstack:4.14.0@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
+    environment:
+      SERVICES: sqs
+      # Queue URLs as http://localhost:4566/queue/<region>/<account>/<name>.
+      SQS_ENDPOINT_STRATEGY: path
+      # No usage analytics sent to LocalStack, no certificate download at start-up.
+      DISABLE_EVENTS: '1'
+      SKIP_SSL_CERT_DOWNLOAD: '1'
+    ports:
+      - 127.0.0.1:${LOCALSTACK_PORT:-4566}:4566
+    healthcheck:
+      test: [CMD, curl, -fs, http://127.0.0.1:4566/_localstack/health]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 768m
+
   prometheus:
     profiles: [observability]
     image: prom/prometheus:v3.15.0

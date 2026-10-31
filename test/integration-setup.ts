@@ -2,6 +2,7 @@ import { Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../packages/shared/src/node/logger.js';
 import { migrateDatabase } from '../packages/shared/src/node/migrate.js';
+import { localstackAvailable } from './localstack.js';
 
 /** Defaults match the Compose stack (local-only, no password). CI sets its own values. */
 export const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://gateway@localhost:5432/gateway';
@@ -26,9 +27,14 @@ export default async function setup(): Promise<void> {
   const down: string[] = [];
   if (!(await reachable(DATABASE_URL))) down.push('Postgres');
   if (!(await reachable(REDIS_URL))) down.push('Redis');
+  // SQS tests skip without LocalStack locally; CI sets REQUIRE_LOCALSTACK so they cannot.
+  if (process.env.REQUIRE_LOCALSTACK === 'true' && !(await localstackAvailable())) {
+    down.push('LocalStack');
+  }
   if (down.length > 0) {
     throw new Error(
       `${down.join(' and ')} not reachable. Start them with \`docker compose up -d\` ` +
+        '(LocalStack: `docker compose --profile aws-local up -d`) ' +
         'or set DATABASE_URL / REDIS_URL.',
     );
   }

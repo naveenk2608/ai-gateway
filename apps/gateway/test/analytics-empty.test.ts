@@ -176,6 +176,7 @@ describe('analytics on an empty database', () => {
 
         expect(await get(`/admin/analytics/infra?${q}`, cookie)).toMatchObject({
           pipeline: {
+            transport: 'redis-stream',
             streamLength: 0,
             unreadEvents: 0,
             pendingEvents: 0,

@@ -4,6 +4,7 @@ import { watchPipeline, WorkerMetrics } from './metrics.js';
 import type { PipelineState } from './pipeline.js';
 
 const STATE: PipelineState = {
+  transport: 'redis-stream',
   streamLength: 12,
   unreadEvents: 7,
   pendingEvents: 2,

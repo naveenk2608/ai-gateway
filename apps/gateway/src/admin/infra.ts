@@ -1,26 +1,28 @@
-import type { Clock } from '@ai-gateway/shared';
 import type { Redis } from '@ai-gateway/shared/node';
-import { readPipelineState } from '@ai-gateway/worker';
+import type { PipelineReader } from '@ai-gateway/worker';
 import { z } from 'zod';
 import type { InstanceState } from './instance.js';
 
 /**
- * Operational state read on demand for the analytics API: the usage event pipeline in Redis,
+ * Operational state read on demand for the analytics API: the usage event pipeline (Redis or SQS),
  * circuit-breaker states, dependency round trips and the answering process itself. Values are measured when asked, never stored
  * or estimated. History is kept by Prometheus (ADR 017), not here.
  */
 
 export const pipelineSchema = z.object({
-  /** Entries in the usage stream (processed ones are trimmed periodically). */
+  /** What carries the events: a Redis Stream, or SQS on AWS (ADR 023). */
+  transport: z.enum(['redis-stream', 'sqs']),
+  /** Entries in the usage stream or queue (processed ones are trimmed or deleted). */
   streamLength: z.number(),
   /** Entries no consumer has read yet: the worker's lag. Null when Redis does not report it. */
   unreadEvents: z.number().nullable(),
   /** Entries read but not yet acknowledged (being processed, or left by a crashed consumer). */
   pendingEvents: z.number(),
-  /** Age of the oldest pending entry; null when none is pending. */
+  /** Age of the oldest pending entry; null when none is pending, or with SQS (not reported). */
   oldestPendingAgeMs: z.number().nullable(),
-  consumers: z.number(),
-  /** Entries in the dead-letter stream. */
+  /** Consumers in the group; null with SQS, which has none. */
+  consumers: z.number().nullable(),
+  /** Entries in the dead-letter stream or queue. */
   deadLetterLength: z.number(),
 });
 export type PipelineState = z.output<typeof pipelineSchema>;
@@ -40,7 +42,7 @@ export const breakerSchema = z.object({
 export type BreakerState = z.output<typeof breakerSchema>;
 
 export interface InfraProbe {
-  /** Throws when Redis is unreachable. */
+  /** Throws when the event transport is unreachable. */
   pipeline(): Promise<PipelineState>;
   /** Throws when Redis is unreachable. */
   breakers(): Promise<BreakerState[]>;
@@ -52,21 +54,19 @@ export interface InfraProbe {
 
 export function redisInfraProbe(options: {
   redis: Redis;
-  clock: Clock;
-  stream: string;
-  dlqStream: string;
-  group: string;
+  /** The usage pipeline's state, from whichever bus carries the events. */
+  pipeline: PipelineReader;
   deployments: readonly string[];
   /** Key prefix of the breaker hashes written by HealthReporter. */
   prefix?: string;
   checks: Record<string, () => Promise<void>>;
   instance: () => InstanceState;
 }): InfraProbe {
-  const { redis, clock, prefix = 'gw:' } = options;
+  const { redis, prefix = 'gw:' } = options;
   return {
     checks: options.checks,
     instance: options.instance,
-    pipeline: () => readPipelineState(redis, clock, options),
+    pipeline: options.pipeline,
     async breakers() {
       return Promise.all(
         options.deployments.map(async (deployment) => {

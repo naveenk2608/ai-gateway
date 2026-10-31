@@ -1,5 +1,7 @@
 import {
+  checkEventBusConfig,
   commonConfigShape,
+  eventBusConfigShape,
   metricsConfigShape,
   USAGE_CONSUMER_GROUP,
   USAGE_DLQ_STREAM,
@@ -14,17 +16,25 @@ const positiveInt = z.coerce.number().int().positive();
  * (RUN_WORKER_IN_PROCESS) on hosts without background workers.
  */
 export const consumerSettingsShape = {
+  /** Redis Stream (default) or SQS (ADR 023); the SQS_* settings apply to the latter. */
+  ...eventBusConfigShape,
   /** Stream the gateway writes usage events to. */
   EVENTS_STREAM: z.string().min(1).default(USAGE_STREAM),
   /** Where events go after WORKER_MAX_DELIVERIES failed deliveries (also stored in failed_events). */
   EVENTS_DLQ_STREAM: z.string().min(1).default(USAGE_DLQ_STREAM),
   EVENTS_CONSUMER_GROUP: z.string().min(1).default(USAGE_CONSUMER_GROUP),
-  /** Events read and inserted per transaction. */
+  /** Events read and inserted per transaction (SQS hands them over 10 at a time). */
   WORKER_BATCH_SIZE: positiveInt.max(1_000).default(100),
-  /** How long one read waits for new events; also how quickly a stop is noticed. */
+  /**
+   * How long one read waits for new events; also how quickly a stop is noticed. SQS long polls
+   * for whole seconds (at most 20) and a stop cancels the wait.
+   */
   WORKER_BLOCK_MS: positiveInt.max(60_000).default(2_000),
-  /** An event unacknowledged this long (its consumer died or failed) is claimed again. */
-  WORKER_CLAIM_IDLE_MS: positiveInt.default(60_000),
+  /**
+   * An event unacknowledged this long (its consumer died or failed) is delivered again: claimed
+   * from the stream, or visible again on the SQS queue (its visibility timeout, in whole seconds).
+   */
+  WORKER_CLAIM_IDLE_MS: positiveInt.max(43_200_000).default(60_000),
   /** Deliveries before an event is moved to the dead-letter stream. */
   WORKER_MAX_DELIVERIES: positiveInt.max(100).default(5),
   /** How often fully processed events are trimmed from the stream. */
@@ -43,18 +53,27 @@ export const consumerSettingsShape = {
 export const consumerSettingsSchema = z.object(consumerSettingsShape);
 export type ConsumerSettings = z.output<typeof consumerSettingsSchema>;
 
-export const workerConfigSchema = z.object({
-  ...commonConfigShape,
-  ...consumerSettingsShape,
-  /** Apply pending migrations at startup, under the same advisory lock as the gateway. */
-  MIGRATE_ON_START: z.stringbool().default(true),
-  MIGRATIONS_DIR: z.string().min(1).optional(),
-  /**
-   * Prometheus metrics (ADR 017) on WORKER_METRICS_PORT, bound to METRICS_HOST (loopback by
-   * default); scrapes need METRICS_TOKEN as a bearer token when it is set.
-   */
-  ...metricsConfigShape,
-  WORKER_METRICS_PORT: z.coerce.number().int().min(0).max(65_535).default(9465),
-});
+export const workerConfigSchema = z
+  .object({
+    ...commonConfigShape,
+    /** Not needed when SQS carries the events (EVENT_BUS=sqs). */
+    REDIS_URL: commonConfigShape.REDIS_URL.optional(),
+    ...consumerSettingsShape,
+    /** Apply pending migrations at startup, under the same advisory lock as the gateway. */
+    MIGRATE_ON_START: z.stringbool().default(true),
+    MIGRATIONS_DIR: z.string().min(1).optional(),
+    /**
+     * Prometheus metrics (ADR 017) on WORKER_METRICS_PORT, bound to METRICS_HOST (loopback by
+     * default); scrapes need METRICS_TOKEN as a bearer token when it is set.
+     */
+    ...metricsConfigShape,
+    WORKER_METRICS_PORT: z.coerce.number().int().min(0).max(65_535).default(9465),
+  })
+  .superRefine((config, ctx) => {
+    checkEventBusConfig(config, ctx);
+    if (config.EVENT_BUS === 'redis' && config.REDIS_URL === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['REDIS_URL'], message: 'is required' });
+    }
+  });
 
 export type WorkerConfig = z.output<typeof workerConfigSchema>;

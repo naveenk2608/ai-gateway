@@ -9,8 +9,8 @@ export interface EventBusStats {
 }
 
 /**
- * The event seam (ADR 005): Redis Streams now, SQS in M10. `publish` never blocks and never
- * throws, so emitting usage cannot slow or fail a client request.
+ * The event seam (ADR 005): a Redis Stream by default, SQS on AWS (ADR 023). `publish` never
+ * blocks and never throws, so emitting usage cannot slow or fail a client request.
  */
 export interface EventBus {
   publish(event: UsageEvent): void;

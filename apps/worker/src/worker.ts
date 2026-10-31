@@ -7,17 +7,21 @@ import {
   createMetricsRegistry,
   createPgPool,
   createRedis,
+  createSqsClient,
   migrateDatabase,
+  sqsApi,
   startMetricsServer,
   type Db,
   type Logger,
   type MetricsServer,
   type Registry,
+  type SqsApi,
 } from '@ai-gateway/shared/node';
 import type { ConsumerSettings, WorkerConfig } from './config.js';
-import { UsageConsumer, type ConsumerOptions } from './consumer.js';
+import { UsageConsumer, type ConsumerOptions, type EventConsumer } from './consumer.js';
 import { watchPipeline, WorkerMetrics } from './metrics.js';
-import { readPipelineState } from './pipeline.js';
+import { readPipelineState, readSqsPipelineState, type PipelineReader } from './pipeline.js';
+import { SqsUsageConsumer } from './sqs-consumer.js';
 
 /** src/ and dist/ both sit three levels below the repository root, where db/migrations lives. */
 export const DEFAULT_MIGRATIONS_DIR = fileURLToPath(
@@ -27,7 +31,7 @@ export const DEFAULT_MIGRATIONS_DIR = fileURLToPath(
 export type StopOutcome = 'stopped' | 'timeout';
 
 export interface Worker {
-  consumer: UsageConsumer;
+  consumer: EventConsumer;
   /** The metrics listener's port once started. */
   metricsPort(): number | undefined;
   /** Applies migrations (if enabled), then starts consuming. */
@@ -38,7 +42,10 @@ export interface Worker {
 
 export interface UsageConsumerDeps {
   settings: ConsumerSettings;
-  redisUrl: string;
+  /** Needed when Redis carries the events (EVENT_BUS=redis). */
+  redisUrl?: string;
+  /** The SQS calls (EVENT_BUS=sqs); made from the settings when omitted. */
+  sqs?: SqsApi;
   db: Db;
   logger: Logger;
   clock?: Clock;
@@ -47,15 +54,62 @@ export interface UsageConsumerDeps {
   metricsRegistry?: Registry;
 }
 
-/** A consumer on its own Redis connection, named uniquely for this process. */
+/** The SQS calls for EVENT_BUS=sqs, with a function that releases the client's sockets. */
+export function sqsFromSettings(settings: ConsumerSettings): {
+  sqs: SqsApi;
+  close: () => void;
+} {
+  if (settings.AWS_REGION === undefined) throw new Error('AWS_REGION is required for SQS');
+  const client = createSqsClient({ region: settings.AWS_REGION, endpoint: settings.SQS_ENDPOINT });
+  return { sqs: sqsApi(client), close: () => client.destroy() };
+}
+
+/** The queues of EVENT_BUS=sqs; the config schema has already required them. */
+export function sqsQueues(settings: ConsumerSettings): { queueUrl: string; dlqUrl: string } {
+  if (settings.SQS_QUEUE_URL === undefined || settings.SQS_DLQ_URL === undefined) {
+    throw new Error('SQS_QUEUE_URL and SQS_DLQ_URL are required for SQS');
+  }
+  return { queueUrl: settings.SQS_QUEUE_URL, dlqUrl: settings.SQS_DLQ_URL };
+}
+
+/**
+ * The usage consumer for the configured bus: on SQS, or on its own Redis connection, named
+ * uniquely for this process.
+ */
 export function createUsageConsumer(deps: UsageConsumerDeps): {
-  consumer: UsageConsumer;
+  consumer: EventConsumer;
   close: () => Promise<void>;
 } {
   const { settings, logger } = deps;
   const clock = deps.clock ?? systemClock;
-  const redis = createRedis(deps.redisUrl, logger, { offlineQueue: true, role: 'usage-consumer' });
   const metrics = deps.metricsRegistry ? new WorkerMetrics(deps.metricsRegistry) : undefined;
+  const retention = {
+    minuteHours: settings.ROLLUP_RETENTION_MINUTE_HOURS,
+    hourDays: settings.ROLLUP_RETENTION_HOUR_DAYS,
+    dayDays: settings.ROLLUP_RETENTION_DAY_DAYS,
+    intervalMs: settings.ROLLUP_RETENTION_INTERVAL_MS,
+  };
+  if (settings.EVENT_BUS === 'sqs') {
+    const own = deps.sqs ? undefined : sqsFromSettings(settings);
+    const consumer = new SqsUsageConsumer({
+      sqs: deps.sqs ?? own!.sqs,
+      ...sqsQueues(settings),
+      db: deps.db,
+      logger: logger.child({ component: 'usage-consumer' }),
+      clock,
+      batchSize: settings.WORKER_BATCH_SIZE,
+      // SQS long polls for whole seconds, at most 20.
+      waitSeconds: Math.min(20, Math.ceil(settings.WORKER_BLOCK_MS / 1000)),
+      visibilitySeconds: Math.ceil(settings.WORKER_CLAIM_IDLE_MS / 1000),
+      maxDeliveries: settings.WORKER_MAX_DELIVERIES,
+      retention,
+      metrics,
+      faults: deps.faults,
+    });
+    return { consumer, close: () => Promise.resolve(own?.close()) };
+  }
+  if (deps.redisUrl === undefined) throw new Error('REDIS_URL is required for the Redis consumer');
+  const redis = createRedis(deps.redisUrl, logger, { offlineQueue: true, role: 'usage-consumer' });
   const consumer = new UsageConsumer({
     redis,
     db: deps.db,
@@ -70,12 +124,7 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
     claimIdleMs: settings.WORKER_CLAIM_IDLE_MS,
     maxDeliveries: settings.WORKER_MAX_DELIVERIES,
     trimIntervalMs: settings.WORKER_TRIM_INTERVAL_MS,
-    retention: {
-      minuteHours: settings.ROLLUP_RETENTION_MINUTE_HOURS,
-      hourDays: settings.ROLLUP_RETENTION_HOUR_DAYS,
-      dayDays: settings.ROLLUP_RETENTION_DAY_DAYS,
-      intervalMs: settings.ROLLUP_RETENTION_INTERVAL_MS,
-    },
+    retention,
     metrics,
     faults: deps.faults,
   });
@@ -88,18 +137,31 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
   const pool = createPgPool(config.DATABASE_URL, logger, { max: 5, queryTimeoutMs: 30_000 });
   const db = createDb(pool);
   const registry = createMetricsRegistry();
-  // The consumer's own connection is held by its blocking read; scrapes read on this one.
-  const stateRedis = createRedis(config.REDIS_URL, logger, { role: 'metrics' });
-  watchPipeline(registry, () =>
-    readPipelineState(stateRedis, systemClock, {
-      stream: config.EVENTS_STREAM,
-      dlqStream: config.EVENTS_DLQ_STREAM,
-      group: config.EVENTS_CONSUMER_GROUP,
-    }),
-  );
+  let readPipeline: PipelineReader;
+  let closeState: () => Promise<void>;
+  let sqs: SqsApi | undefined;
+  if (config.EVENT_BUS === 'sqs') {
+    const own = sqsFromSettings(config);
+    const queues = sqsQueues(config);
+    sqs = own.sqs;
+    readPipeline = () => readSqsPipelineState(own.sqs, queues);
+    closeState = () => Promise.resolve(own.close());
+  } else {
+    // The consumer's own connection is held by its blocking read; scrapes read on this one.
+    const stateRedis = createRedis(config.REDIS_URL!, logger, { role: 'metrics' });
+    readPipeline = () =>
+      readPipelineState(stateRedis, systemClock, {
+        stream: config.EVENTS_STREAM,
+        dlqStream: config.EVENTS_DLQ_STREAM,
+        group: config.EVENTS_CONSUMER_GROUP,
+      });
+    closeState = () => closeRedis(stateRedis);
+  }
+  watchPipeline(registry, readPipeline);
   const { consumer, close } = createUsageConsumer({
     settings: config,
     redisUrl: config.REDIS_URL,
+    sqs,
     db,
     logger,
     metricsRegistry: registry,
@@ -135,9 +197,7 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
       const stopped = consumer
         .stop()
         .catch((err: unknown) => logger.error({ err }, 'usage consumer stop failed'))
-        .then(() =>
-          Promise.allSettled([pool.end(), close(), closeRedis(stateRedis), metricsServer?.close()]),
-        )
+        .then(() => Promise.allSettled([pool.end(), close(), closeState(), metricsServer?.close()]))
         .then(() => 'stopped' as const);
       const outcome = await Promise.race([stopped, timedOut]);
       clearTimeout(timer);

@@ -124,7 +124,7 @@ export function Infrastructure({
               </p>
               {data.pipeline === null ? (
                 <p className="error-text">
-                  The pipeline state is unavailable: Redis did not answer.
+                  The pipeline state is unavailable: the event bus (Redis or SQS) did not answer.
                 </p>
               ) : (
                 <div className="stats">
@@ -138,8 +138,15 @@ export function Infrastructure({
                     label="Oldest pending"
                     value={formatAge(data.pipeline.oldestPendingAgeMs)}
                   />
-                  <Stat label="Consumers" value={formatCount(data.pipeline.consumers)} />
-                  <Stat label="Stream length" value={formatCount(data.pipeline.streamLength)} />
+                  <Stat
+                    label="Consumers"
+                    value={formatCount(data.pipeline.consumers)}
+                    note={data.pipeline.transport === 'sqs' ? 'not reported by SQS' : undefined}
+                  />
+                  <Stat
+                    label={data.pipeline.transport === 'sqs' ? 'Queue length' : 'Stream length'}
+                    value={formatCount(data.pipeline.streamLength)}
+                  />
                   <Stat label="Dead letters" value={formatCount(data.pipeline.deadLetterLength)} />
                   <Stat
                     label="Failed events"

@@ -1,4 +1,4 @@
-import { commonConfigShape, metricsConfigShape } from '@ai-gateway/shared';
+import { checkEventBusConfig, commonConfigShape, metricsConfigShape } from '@ai-gateway/shared';
 import { consumerSettingsShape } from '@ai-gateway/worker';
 import { z } from 'zod';
 import { API_KEY_PATTERN } from './auth/api-keys.js';
@@ -163,6 +163,7 @@ export const gatewayConfigSchema = z
     BOOTSTRAP_PROJECT_NAME: z.string().min(1).max(100).default('Default project'),
   })
   .superRefine((config, ctx) => {
+    checkEventBusConfig(config, ctx);
     if (
       (config.BOOTSTRAP_ADMIN_EMAIL === undefined) !==
       (config.BOOTSTRAP_ADMIN_PASSWORD === undefined)

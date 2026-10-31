@@ -58,8 +58,12 @@ jobs:
     env:
       DATABASE_URL: postgres://gateway@localhost:5432/gateway
       REDIS_URL: redis://localhost:6379
+      # The SQS tests (ADR 023) must run here, not skip: the setup fails without LocalStack.
+      REQUIRE_LOCALSTACK: 'true'
     steps:
       - uses: actions/checkout@v7
+      # A local SQS, started the same way as on a developer machine. No AWS account is involved.
+      - run: docker compose --profile aws-local up -d --wait localstack
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -87,7 +91,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - run: docker compose --profile full --profile observability config --quiet
+      - run: docker compose --profile full --profile observability --profile aws-local config --quiet
       # The benchmark stack (M9); pnpm bench supplies these per run.
       - run: docker compose -f bench/compose.yaml --profile tools config --quiet
         env:

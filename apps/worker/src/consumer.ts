@@ -35,6 +35,17 @@ export interface ConsumerOptions {
   faults?: { crash?(point: 'before-commit' | 'after-commit'): void };
 }
 
+/** What the worker runs: the Redis Streams consumer, or the SQS one (ADR 023). */
+export interface EventConsumer {
+  readonly stats: ConsumerStats;
+  /** Starts the loop; resolves once it can read. */
+  start(): Promise<void>;
+  /** Finishes the batch in hand, then stops; unfinished work is delivered again later. */
+  stop(): Promise<void>;
+  /** Resolves when the loop ends (after stop() or a simulated crash). */
+  readonly done: Promise<void>;
+}
+
 /** Thrown by fault injection: the consumer stops on the spot, acknowledging nothing more. */
 export class SimulatedCrash extends Error {
   constructor(point: string) {
@@ -43,18 +54,21 @@ export class SimulatedCrash extends Error {
   }
 }
 
-interface Entry {
+/** A delivered event: a stream entry or an SQS message. */
+export interface Entry {
+  /** The stream entry ID or SQS message ID. */
   id: string;
-  /** The raw `event` field, or null if the entry has none. */
+  /** The raw `event` field (stream) or message body (SQS), or null if there is none. */
   raw: string | null;
 }
 
-type Parsed =
+export type Parsed =
   { ok: true; entry: Entry; event: UsageEvent } | { ok: false; entry: Entry; error: string };
 
 export interface ConsumerStats {
   processed: number;
   deadLettered: number;
+  /** Events delivered again: claimed from another consumer, or redelivered by SQS. */
   reclaimed: number;
 }
 
@@ -92,7 +106,7 @@ function toEntries(items: unknown): Entry[] {
   });
 }
 
-function parse(entry: Entry): Parsed {
+export function parse(entry: Entry): Parsed {
   if (entry.raw === null) return { ok: false, entry, error: 'entry has no event field' };
   let json: unknown;
   try {
@@ -112,13 +126,32 @@ function parse(entry: Entry): Parsed {
   return { ok: true, entry, event: result.data };
 }
 
-function eventIdOf(raw: string | null): string | null {
+export function eventIdOf(raw: string | null): string | null {
   if (raw === null) return null;
   try {
     const id = (JSON.parse(raw) as { eventId?: unknown }).eventId;
     return typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id) ? id : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * One line per stored event, in the request's trace (ADR 017): the batch insert is a child span
+ * of each request that emitted an event.
+ */
+export function logStored(logger: Logger, events: UsageEvent[]): void {
+  const spanId = newSpanId();
+  for (const event of events) {
+    logger.info(
+      {
+        requestId: event.request.id,
+        ...(event.trace
+          ? { traceId: event.trace.traceId, spanId, parentSpanId: event.trace.spanId }
+          : {}),
+      },
+      'usage event stored',
+    );
   }
 }
 
@@ -134,7 +167,7 @@ function eventIdOf(raw: string | null): string | null {
  * - retries in place while Postgres is unreachable, so an outage does not use up deliveries;
  * - trims entries every consumer has acknowledged, so the stream does not grow without bound.
  */
-export class UsageConsumer {
+export class UsageConsumer implements EventConsumer {
   readonly #o: ConsumerOptions;
   readonly #stop = new AbortController();
   readonly #lastErrors = new Map<string, string>();
@@ -321,20 +354,10 @@ export class UsageConsumer {
     for (const id of ids) this.#lastErrors.delete(id);
     this.#stats.processed += ids.length;
     this.#o.metrics?.consumed(ids.length);
-    // One line per event, in the request's trace (ADR 017): the batch insert is a child span of
-    // each request that emitted an event.
-    const spanId = newSpanId();
-    for (const { event } of batch) {
-      this.#o.logger.info(
-        {
-          requestId: event.request.id,
-          ...(event.trace
-            ? { traceId: event.trace.traceId, spanId, parentSpanId: event.trace.spanId }
-            : {}),
-        },
-        'usage event stored',
-      );
-    }
+    logStored(
+      this.#o.logger,
+      batch.map((p) => p.event),
+    );
   }
 
   /** Retries `work` while Postgres is unreachable; other errors are thrown at once. */

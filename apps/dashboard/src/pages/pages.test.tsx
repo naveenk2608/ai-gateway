@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import type { ReactElement } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { emptyResponses, PROJECT_ID, sampleResponses } from '../../e2e/fixtures.js';
-import type { AnalyticsFilters, Role } from '../api.js';
+import type { AnalyticsFilters, InfraResponse, Role } from '../api.js';
 import { Cost } from './Cost.js';
 import { Infrastructure } from './Infrastructure.js';
 import { Models } from './Models.js';
@@ -39,9 +39,17 @@ afterEach(() => {
 
 type Mode = 'loading' | 'error' | 'empty' | 'data';
 
-/** Answers the admin API from fixtures; `loading` never answers, `error` fails every call. */
-function stubApi(mode: Mode, role: Role = 'owner') {
+/**
+ * Answers the admin API from fixtures; `loading` never answers, `error` fails every call.
+ * `patch` changes the fixtures first.
+ */
+function stubApi(
+  mode: Mode,
+  role: Role = 'owner',
+  patch?: (responses: ReturnType<typeof sampleResponses>) => void,
+) {
   const responses = mode === 'data' ? sampleResponses(role) : emptyResponses(role);
+  patch?.(responses);
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     if (mode === 'loading') return new Promise<Response>(() => undefined);
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -494,6 +502,25 @@ describe('Infrastructure KPI cards', () => {
     expect(within(card('Dead letters')).getByText('0')).toBeTruthy();
     expect(within(card('Dependencies')).getByText('2 of 2')).toBeTruthy();
     expect(screen.getAllByText('current reading')).toHaveLength(4);
+  });
+
+  it('names the queue, and leaves consumers unreported, when SQS carries the events', async () => {
+    stubApi('data', 'owner', (responses) => {
+      const infra = responses['/admin/analytics/infra'] as InfraResponse;
+      responses['/admin/analytics/infra'] = {
+        ...infra,
+        pipeline: {
+          ...infra.pipeline!,
+          transport: 'sqs',
+          consumers: null,
+          oldestPendingAgeMs: null,
+        },
+      };
+    });
+    show(page());
+    expect(await screen.findByText('Queue length')).toBeTruthy();
+    expect(screen.queryByText('Stream length')).toBeNull();
+    expect(screen.getByText('not reported by SQS')).toBeTruthy();
   });
 });
 

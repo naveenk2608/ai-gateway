@@ -22,6 +22,13 @@ export default defineConfig({
     ],
   },
   test: {
+    // Tests never touch a real AWS account: the AWS SDK gets no shared config or credentials
+    // files to read and no instance metadata to ask; SQS tests run against LocalStack.
+    env: {
+      AWS_CONFIG_FILE: fromRoot('./test/no-aws-config'),
+      AWS_SHARED_CREDENTIALS_FILE: fromRoot('./test/no-aws-credentials'),
+      AWS_EC2_METADATA_DISABLED: 'true',
+    },
     projects: [
       {
         extends: true,

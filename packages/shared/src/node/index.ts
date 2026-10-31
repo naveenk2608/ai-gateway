@@ -11,6 +11,15 @@ export { createPgPool, pingPostgres, type PgPoolOptions } from './postgres.js';
 export { closeRedis, createRedis, pingRedis, type Redis, type RedisOptions } from './redis.js';
 export { loadConfigOrExit, onShutdownSignal } from './process.js';
 export {
+  createSqsClient,
+  SQS_MAX_BATCH,
+  sqsApi,
+  type QueueDepth,
+  type SqsApi,
+  type SqsClientOptions,
+  type SqsMessage,
+} from './sqs.js';
+export {
   createDb,
   type Database,
   type Db,

@@ -255,11 +255,14 @@ export interface InfraResponse {
   window: Window;
   measuredAt: string;
   pipeline: {
+    /** What carries the events: a Redis Stream, or SQS on AWS. */
+    transport: 'redis-stream' | 'sqs';
     streamLength: number;
     unreadEvents: number | null;
     pendingEvents: number;
     oldestPendingAgeMs: number | null;
-    consumers: number;
+    /** Null with SQS, which has no consumer groups. */
+    consumers: number | null;
     deadLetterLength: number;
   } | null;
   failedEvents: { total: number; inWindow: number };

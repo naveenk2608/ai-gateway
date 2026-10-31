@@ -3,7 +3,7 @@ import { uuidv7 } from '@ai-gateway/shared';
 import { closeRedis } from '@ai-gateway/shared/node';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { ConsumerSettings } from '../src/config.js';
-import { SimulatedCrash, type UsageConsumer } from '../src/consumer.js';
+import { SimulatedCrash, type EventConsumer } from '../src/consumer.js';
 import { createUsageConsumer } from '../src/worker.js';
 import {
   captureLogger,
@@ -16,7 +16,7 @@ import {
 } from './fixtures.js';
 
 const { pool, db, redis } = connect();
-const running: { consumer: UsageConsumer; close(): Promise<void> }[] = [];
+const running: { consumer: EventConsumer; close(): Promise<void> }[] = [];
 
 afterAll(async () => {
   for (const r of running) {

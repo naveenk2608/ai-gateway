@@ -22,10 +22,12 @@
     "key:generate": "pnpm --silent --filter @ai-gateway/gateway key:generate",
     "mock:serve": "pnpm --filter @ai-gateway/gateway mock:serve",
     "demo": "tsx scripts/demo.ts",
+    "sqs:local": "tsx scripts/localstack-queues.ts",
     "bench": "tsx bench/run.ts",
     "bench:report": "tsx bench/report.ts"
   },
   "devDependencies": {
+    "@aws-sdk/client-sqs": "3.1152.0",
     "@eslint/js": "10.0.1",
     "@types/node": "22.20.5",
     "eslint": "10.13.0",

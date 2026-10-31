@@ -23,6 +23,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "3.1152.0",
     "ioredis": "6.0.0",
     "kysely": "0.29.6",
     "node-pg-migrate": "9.0.0",
