@@ -330,13 +330,21 @@ budget, routing with retries and fallback, the cache, and usage and cost trackin
   the page's memory and sent only to `/v1` on the same origin. It is revoked when you leave the
   page, switch project or close the tab, replaced five minutes before it expires, and the gateway
   refuses it after the hour in any case. Its requests appear under that key on every page.
+- **Your own key:** tick "Use my own API key" and paste a `gw_` key to call `/v1` with it
+  instead; the automatic key stays the default and is used again when the field is empty. The
+  pasted key is held only in the page's state (never in browser storage or the URL) and forgotten
+  when you untick the option, leave the page or switch project. The line above the chat always
+  says which key is in use, by its public part (`gw_<keyId>_…`) and its name when it is one of
+  the project's keys; a key of another project is used with that project's limits, budget and
+  models.
 - **Who:** creating keys needs the `admin` or `owner` role, so viewers see an explanation instead.
 - **Chat:** the model list comes from `GET /v1/models`; replies stream in, with Stop and New
   chat. Under each reply: the model, the provider and deployment that served it, any deployments
   it fell back from, latency (first text and total, measured in the browser), tokens, the cost
   the worker recorded for it, and a link that opens the request on the Requests page in a new tab.
   The conversation is kept in the page only.
-- **Errors:** a rejected or expired key (with "Start a new key"), a model the project may not use,
+- **Errors:** a rejected or expired key (with "Start a new key", or "Use the automatic key" for
+  a pasted one), a model the project may not use,
   a rate limit or spent budget (with the retry time) and an unavailable gateway each get their
   own message.
 

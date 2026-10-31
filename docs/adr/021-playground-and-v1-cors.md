@@ -1,7 +1,7 @@
 # ADR 021: The Playground in the dashboard, and CORS for /v1 only
 
 - Status: accepted (revised 2026-10-31: the Playground moved from a separate static site into
-  the dashboard, which the gateway now serves)
+  the dashboard, which the gateway now serves; later that day, an optional pasted key)
 - Date: 2026-10-28
 - Milestone: after M9 (feature work)
 
@@ -42,6 +42,17 @@ origin.
   the old), and makes a new one when restored from the back/forward cache. The gateway refuses
   the key after the hour whatever the page does. Key creation needs the `admin` role, so only
   owners and admins can use the page; viewers see why.
+- **Own key:** "Use my own API key" shows a field for a `gw_` key. While it holds one, the page
+  calls `/v1` with that key instead; empty, it uses the automatic key, which is still created
+  when the page opens and stays ready meanwhile. The pasted key lives only in the page's React
+  state: not in browser storage, the URL or a query cache key (the model list is cached under
+  its public part, `gw_<keyId>_…`), and it is dropped when the option is unticked or the page
+  goes away. The field is a password input outside any form, with autocomplete off. Text that is
+  not shaped like a key (`gw_<id>_<secret>`) sends nothing; whether a key works is left to the
+  gateway, and a rejected one offers the automatic key. A line above the chat names the key in
+  use: the automatic one with its expiry, or the pasted one by its public part, with its name if
+  the project lists it, or a note that it is another project's key, whose limits, budget and
+  models then apply.
 - **Calls:** the page calls `GET /v1/models` and streaming `POST /v1/chat/completions` with the
   key as a bearer token and `credentials: 'omit'`, so `/v1` sees an ordinary API caller: the
   project's limits, budget, model allow-list, routing, cache and usage accounting all apply, and
@@ -82,8 +93,12 @@ origin.
 - The cost appears a moment after the reply (the worker records it asynchronously), and shows
   "no price for this model" when `model_prices` has no row for it.
 - The gateway holds the dashboard build in memory (about 0.9 MB, plus gzipped copies).
+- A pasted key is the user's own secret: the page never sends it anywhere but `/v1` on the same
+  origin and never shows it, but it is as safe as the browser tab it is pasted into.
 - Tests: dashboard serving (redirects, CSP, caching, gzip, 404s, missing build), key expiry
   through the admin API on two instances, CORS (allowed and other origins, preflight, admin
   routes untouched), the models list and routing headers, the Playground's client and page in
   jsdom (key creation and revocation, models, streaming, stop, fallback, cost, request link,
-  viewers), the deep link to a request, and the page at 375 px in Chromium.
+  viewers), the deep link to a request, the pasted key (used for `/v1`, named, kept out of storage,
+  refused when malformed, replaced by the automatic key when rejected), and the page at 375 px in
+  Chromium, with and without a pasted key.

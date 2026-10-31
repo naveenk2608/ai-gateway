@@ -4,6 +4,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-10-31 | Playground | "Use my own API key" is on the same page as the automatic key, so it is open only to owners and admins; a viewer with a key of their own still sees the explanation. The page could offer viewers the pasted-key mode alone (no key is created), with the cost and request link working only for projects they belong to. | open |
 | 2026-10-31 | Playground | Every visit to the Playground creates a `playground` key and an audit row; revoked and expired ones stay in Settings → API keys, which has no filter or clean-up for them. Hiding revoked keys older than a day, or deleting expired Playground keys, would keep the list short. | open |
 | 2026-10-31 | Playground | The key is revoked on leaving the page and on `pagehide`; a browser that crashes or is killed leaves it working until it expires, at most an hour (`expiresInSeconds: 3600`). | by design |
 | 2026-10-31 | Playground | The cost under a reply is read from `GET /admin/requests/:id`, polled every 1.5 s for up to 30 s until the worker has stored the request; with the worker stopped it says "not recorded yet". Each poll before the record exists is a 404 in the browser console. | by design |
