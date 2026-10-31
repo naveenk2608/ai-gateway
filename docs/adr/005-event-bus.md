@@ -36,4 +36,4 @@ consumer has acknowledged.
 - `MAXLEN ~` caps Redis memory but would trim unprocessed events if the worker were down long
   enough to fall that far behind.
 - Stream trimming assumes one consumer group per stream; with more, the worker does not trim.
-- The SQS adapter (M10) implements the same interface; the worker gets an SQS consumer then.
+- The SQS adapter implements the same interface, with an SQS consumer in the worker (ADR 023, M10).

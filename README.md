@@ -10,9 +10,11 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: MVP (milestones M0-M5), the analytics API (M6), the full dashboard (M7),
-observability (M8) and benchmarks (M9).**
-Architecture decisions are in [docs/adr/](docs/adr/).
+**Status: all milestones (M0-M10) are built.** The MVP (M0-M5), the analytics API (M6), the
+full dashboard (M7), observability (M8), benchmarks (M9) and the AWS deployment code (M10:
+Terraform tested with a mocked provider, [never applied](docs/aws-deployment.md)).
+Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trade-offs in
+[docs/trade-offs.md](docs/trade-offs.md).
 
 - `POST /v1/chat/completions` in OpenAI format, streaming and non-streaming; the official OpenAI
   SDKs work unchanged.
@@ -21,8 +23,8 @@ Architecture decisions are in [docs/adr/](docs/adr/).
 - Routing per model: priority with fallback, weighted, lowest latency or lowest cost; bounded
   retries with jittered backoff (never after the first streamed byte); circuit breakers with
   health checks. Each attempt is stored with the reason it was made.
-- Usage accounting through a Redis Stream into Postgres, exactly once in effect, with a
-  dead-letter path; costs from versioned prices.
+- Usage accounting through a Redis Stream (or SQS on AWS) into Postgres, exactly once in effect,
+  with a dead-letter path; costs from versioned prices.
 - An analytics API over per-minute, hourly and daily rollups: traffic, cost and budgets, model
   comparison, reliability, rejections and pipeline health, for 1 h to 30 days.
 - A dashboard on that API: overview, requests with filters and routing history, cost and budgets,
@@ -32,16 +34,61 @@ Architecture decisions are in [docs/adr/](docs/adr/).
 - Prometheus metrics from the gateway and the worker (token-protected `/metrics`), W3C trace IDs
   on every log line from the request to the worker's insert, and a local Prometheus and Grafana
   stack with a provisioned dashboard.
+- Terraform for AWS: a one-instance demo and a full setup (load balancer, two gateways, a worker,
+  RDS, ElastiCache, SQS, Secrets Manager, CloudWatch, a budget alert), without NAT gateways, tested
+  in CI with a mocked provider. See [Deploying to AWS](#deploying-to-aws).
+
+**Why it exists.** Every app that calls a model API ends up rebuilding the same plumbing: keys
+per client, spending limits, retries when a provider fails, and a record of what each request
+cost. Doing that in each app means every app gets it slightly wrong, and nobody can see the whole
+bill. A gateway does it once, in front of every provider, and its limits have to hold when it
+runs on several machines at once, which is where most of the engineering here goes.
 
 ```mermaid
 flowchart LR
-  C[Client apps / SDKs] --> G[Gateway instances]
+  C[Client apps / SDKs] --> LB[Load balancer, optional]
+  LB --> G[Gateway instances]
   G --> R[(Redis: limits, budgets, cache, health)]
   G --> P[Providers: mock, Ollama, OpenAI-compatible]
-  G -- usage events --> S[[Redis Stream]]
+  G -- usage events --> S[[Redis Stream, or SQS on AWS]]
   S --> W[Worker] --> PG[(PostgreSQL)]
-  D[Dashboard] --> A[Admin API in the gateway] --> PG
+  W -- after 5 failed deliveries --> DLQ[[Dead letters]]
+  D[Dashboard, served by the gateway] --> A[Admin API in the gateway] --> PG
 ```
+
+### How a request flows
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant G as Gateway
+  participant R as Redis
+  participant P as Provider
+  participant B as Event bus
+  participant W as Worker
+  participant DB as Postgres
+  C->>G: POST /v1/chat/completions (Bearer gw_ key)
+  G->>G: verify the key (cached HMAC lookup), validate the body
+  G->>R: one Lua script: RPM, TPM, concurrency, budget reservation
+  R-->>G: admitted (or 429 with retry-after)
+  opt cache on and request cacheable
+    G->>R: look up the exact-match key
+  end
+  G->>P: attempt 1 (policy order, breaker state, timeout)
+  P--xG: retryable failure before the first byte
+  G->>P: retry, or fall back to the next deployment
+  P-->>G: streamed tokens
+  G-->>C: SSE chunks, x-request-id, x-gateway-deployment
+  G->>R: reconcile tokens, release the lease, settle the budget
+  G-)B: usage event (buffered, never blocks)
+  B-)W: delivered at least once
+  W->>DB: one transaction: record, attempts, usage, cost, rollups, budget ledger
+  W-)B: acknowledge after the commit
+```
+
+The client's response never waits on Postgres: the request path touches Redis and the provider
+only, and the worker writes the record afterwards.
 
 ## Run it locally
 
@@ -129,9 +176,33 @@ In Compose the gateway reaches Ollama on the host at `host.docker.internal:11434
 | `pnpm check:dashboard-data` | Fails on hand-written numbers in dashboard chart data |
 | `pnpm bench:report --check` | Fails when [docs/benchmarks.md](docs/benchmarks.md) differs from what the committed benchmark results generate |
 | `pnpm lint`, `pnpm typecheck`, `pnpm format` | ESLint, `tsc`, Prettier |
+| `terraform test` in `infra/terraform/{modules/network,demo,full}` | The AWS Terraform against a mocked provider; see [Deploying to AWS](#deploying-to-aws) |
+
+The SQS tests run against LocalStack and skip without it: start it with
+`docker compose --profile aws-local up -d` before `pnpm test:int` (CI does, and fails if it is
+missing). No test reaches AWS.
 
 CI (GitHub Actions) runs all of them plus the container builds on every push. The SIGTERM
 process tests skip on Windows, where signals do not run handlers; they run in CI.
+
+#### Failure scenarios and their tests
+
+| Scenario | Where it is tested |
+| --- | --- |
+| Authentication and project isolation | `apps/gateway/test/api-key-auth.test.ts`, `admin.test.ts` (another project's resources answer 404), `analytics.test.ts` |
+| Key revocation and rotation grace | `apps/gateway/src/auth/key-verifier.test.ts`, `apps/gateway/test/admin.test.ts` |
+| Provider adapters normalizing success and errors | `apps/gateway/src/providers/*.test.ts` (Ollama, OpenAI-compatible, mock) |
+| Streaming: mid-stream provider drop, client disconnect | `apps/gateway/src/proxy/chat-completions.test.ts`, `apps/gateway/test/chat-completions.test.ts` |
+| Timeouts (per attempt, first token, idle stream) | `apps/gateway/src/proxy/chat-completions.test.ts`, `attempt.test.ts` |
+| Retry and fallback, never after the first byte | `apps/gateway/test/routing-acceptance.test.ts`, `apps/gateway/src/routing/*.test.ts` |
+| Circuit-breaker transitions | `apps/gateway/src/routing/breaker.test.ts`, `routing-acceptance.test.ts` |
+| Rate limits under concurrency across two instances | `apps/gateway/test/limits-acceptance.test.ts` |
+| Budget reservation, reconciliation and expiry | `apps/gateway/test/limits-acceptance.test.ts`, `apps/worker/test/ledger.test.ts` |
+| Duplicate usage events | `apps/worker/test/consumer.test.ts`, `sqs-consumer.test.ts` |
+| Cache keys and cross-project isolation | `apps/gateway/src/cache/*.test.ts`, `apps/gateway/test/cache.test.ts` |
+| Postgres unavailable | `apps/worker/test/postgres-outage.test.ts` (both consumers hold their batch and store it once), `apps/gateway/test/ready.test.ts` |
+| Redis unavailable, both fail modes | `apps/gateway/test/limits-acceptance.test.ts`, `apps/worker/test/worker.test.ts` |
+| Worker restart and stuck messages | `apps/worker/test/consumer.test.ts`, `sqs-consumer.test.ts` (killed before and after the commit) |
 
 ## Using the API
 
@@ -480,6 +551,9 @@ it to a bounded in-memory buffer and returns; a background loop writes it to a R
 Redis is down, events wait in the buffer (`EVENTS_BUFFER_MAX`); past that they are dropped and
 counted in the logs.
 
+On AWS, `EVENT_BUS=sqs` sends the events to an SQS queue instead (ADR 023); the worker then reads
+the queue, with the same guarantees and a dead-letter queue, and needs no Redis.
+
 The worker (ADR 014) reads the stream in a consumer group, writes each batch in one transaction
 with `ON CONFLICT DO NOTHING`, and acknowledges only after the commit: a crash re-delivers, and a
 re-delivery changes nothing. Entries left by a dead worker are claimed after
@@ -495,6 +569,42 @@ the mock provider.
 
 Migrations are plain SQL in [db/migrations](db/migrations) (ADR 003), applied at startup under a
 Postgres advisory lock (`MIGRATE_ON_START`), or by hand with `pnpm db:migrate`.
+
+### Data model
+
+UUIDv7 keys, `timestamptz` everywhere, money as integer micro-dollars, constraints in the
+migrations.
+
+| Tables | Hold |
+| --- | --- |
+| `users`, `user_sessions`, `project_members` | Dashboard users (argon2id passwords), sessions, roles per project |
+| `projects`, `api_keys` | Tenants with their limits, budget and allowed models; keys as `key_id` plus an HMAC of the secret |
+| `model_deployments`, `routing_policies` | What the dashboard shows and edits about routing (the models file is the source) |
+| `model_prices` | Versioned, immutable prices (`effective_from`) |
+| `request_records`, `provider_attempts`, `usage_events` | One row per request, per upstream attempt with its routing reason, and per usage event (`UNIQUE(event_id)`) |
+| `budget_periods`, `budget_reservations` | The monthly spend ledger and the audit of each reservation |
+| `usage_rollups_minute`, `_hour`, `_day` | Analytics with latency histogram buckets (ADR 015) |
+| `provider_health_events`, `audit_logs`, `failed_events` | Breaker transitions, every admin change, dead-lettered events |
+
+### Security decisions
+
+- **API keys** (`gw_<keyId>_<secret>`): high-entropy, so an HMAC-SHA256 with a server pepper is
+  enough and lookups are by `keyId`; the plaintext is shown once (ADR 006).
+- **Dashboard users**: argon2id passwords, an HTTP-only `SameSite=Strict` session cookie
+  (HTTPS-only in production), roles per project, logins limited per email and per IP (ADR 007).
+- **Tenancy**: every query on a project's data filters by the caller's project; another
+  project's resources answer 404, exactly like missing ones.
+- **No prompts or completions stored** by default; the optional cache keeps completions in Redis
+  for its TTL and only a hash of the prompt (ADR 013).
+- **Limits fail closed** when Redis is down, unless `LIMITS_FAIL_MODE=open` (ADR 010).
+- **Untrusted upstreams**: provider errors are normalized and never passed to clients raw; model
+  output never changes policy.
+- **Logs** redact API keys, authorization headers and provider credentials.
+- **The dashboard** is served by the gateway with a strict Content-Security-Policy; `/v1` CORS is
+  off unless `ALLOWED_ORIGINS` lists exact origins (ADR 021).
+- **On AWS**: no SSH (Session Manager), IMDSv2 only, private and encrypted data stores, TLS to
+  Postgres (verified) and Redis, secrets in Secrets Manager read at boot, one IAM role per
+  instance kind with only what it uses (ADR 022).
 
 ## Observability
 
@@ -613,11 +723,40 @@ Then open the host's URL: it redirects to the dashboard (`/dashboard/`, built in
 the bootstrap owner logs in and the Playground chats through `/v1`. Or open `/docs`, **Authorize**
 with the key, and call `POST /v1/chat/completions`.
 
+## Deploying to AWS
+
+[docs/aws-deployment.md](docs/aws-deployment.md) has the architecture, what each resource does,
+the cost, and the steps to deploy and destroy. In short, [infra/terraform/](infra/terraform/)
+holds two setups:
+
+- **demo**: one EC2 instance running the whole Compose stack, no NAT gateway, no load balancer,
+  about $20 a month.
+- **full**: an Application Load Balancer (idle timeout raised for SSE), two gateway instances,
+  one worker, RDS Postgres, ElastiCache Redis, an SQS queue with a dead-letter queue, Secrets
+  Manager, CloudWatch logs and alarms and an AWS Budgets alert, about $113 a month.
+
+**Neither has been applied to a real account.** CI checks formatting, validates them and runs
+`terraform test` against a mocked AWS provider (no credentials anywhere), plus a check that every
+taggable resource is tagged and no NAT gateway exists. The decisions are in ADR 022 (layout) and
+ADR 023 (SQS).
+
 ## Configuration
 
 Every setting is an environment variable, validated at startup; invalid config exits with a
-message naming each problem. [.env.example](.env.example) lists them all with their defaults.
-`pnpm dev` loads `.env`; never commit it.
+message naming each problem. [.env.example](.env.example) lists them all with their defaults and
+an explanation. `pnpm dev` loads `.env`; never commit it.
+
+| Area | Main settings |
+| --- | --- |
+| Connections | `DATABASE_URL`, `REDIS_URL` (the worker needs no Redis with SQS), `HOST`, `PORT` |
+| Secrets and first run | `API_KEY_PEPPER` (required), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_API_KEY` |
+| Event bus | `EVENT_BUS` (`redis` or `sqs`), `SQS_QUEUE_URL`, `SQS_DLQ_URL`, `AWS_REGION`, `SQS_ENDPOINT` (LocalStack only), `EVENTS_*`, `WORKER_*` |
+| Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*` |
+| Routing | `RETRY_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `OLLAMA_BASE_URL`) |
+| Cache | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES` |
+| Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
+| Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |
+| Retention and shutdown | `ROLLUP_RETENTION_*`, `SHUTDOWN_TIMEOUT_MS`, `MIGRATE_ON_START` |
 
 ## Repository layout
 
@@ -631,12 +770,17 @@ packages/shared  config, clock, logger, ids, trace context, token estimates, Pos
                  clients, metrics registry and listener
 db/migrations    numbered plain-SQL migrations
 infra/compose    Docker Compose stack (compose.yaml at the root includes it); observability/
-                 holds the Prometheus config and Grafana provisioning
+                 holds the Prometheus config and Grafana provisioning; profile aws-local adds
+                 LocalStack (SQS); aws-demo.yml is the AWS demo instance's override
+infra/terraform  AWS: demo/ and full/ setups, modules/ (network, Docker host), tests run with
+                 a mocked provider, scripts/check.mjs (tags, no NAT gateway)
 scripts          formatting and the demo
 bench            k6 scenarios, the bench Compose stack, `pnpm bench` and the report generator;
                  results/ holds the committed runs
 docs/adr         architecture decision records
-docs/ROADMAP.md  remaining milestones, with scope and acceptance checks
+docs/aws-deployment.md   the AWS guide (cost, deploy, destroy)
+docs/trade-offs.md       consistency, retries, reservation accuracy, cache correctness
+docs/ROADMAP.md  the milestones, with scope and acceptance checks
 ```
 
 ## Known limitations
@@ -650,4 +794,23 @@ docs/ROADMAP.md  remaining milestones, with scope and acceptance checks
 - Analytics percentiles are approximate (histogram buckets), and days are UTC days.
 - Metrics are per process: Prometheus must scrape every gateway instance. Traces exist only as
   IDs in the logs; there is no trace store.
+- The AWS Terraform has never been applied: its tests use a mocked provider, so the instances'
+  boot scripts and the acceptance checks on a real account (apply, the smoke and two-instance
+  limits tests, destroy with nothing billing) are still to do.
+- With SQS, queue depths are approximate, and the age of in-flight events and the number of
+  consumers are not reported. LocalStack is pinned to 4.14.0, the last release without an
+  account token.
 - More deferred work is listed in [docs/PLAN-NOTES.md](docs/PLAN-NOTES.md).
+
+## Future work
+
+- Run the AWS setups on a real account and close the acceptance checks in
+  [docs/aws-deployment.md](docs/aws-deployment.md).
+- A transactional outbox for usage events, so a long event-bus outage loses nothing.
+- A semantic cache, measured against a false-hit rate before it is trusted.
+- Cost-aware routing evaluated against a labelled prompt set (response quality, not only speed
+  and price).
+- Retention or partitioning for the raw request tables; only rollups expire today.
+- SSE keep-alive comments while waiting for a slow first token, and a pre-stop delay before the
+  listener closes, for proxies stricter than the ALB setup here.
+- Graviton (arm64) instances and a pre-built image registry for faster boots on AWS.

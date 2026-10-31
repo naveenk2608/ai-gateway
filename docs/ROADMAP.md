@@ -4,7 +4,7 @@ What is left to build, milestone by milestone, from M8 to the end of the project
 has enough detail to start work from the repository alone: read this file, then
 [PLAN-NOTES.md](PLAN-NOTES.md) and the ADRs in [adr/](adr/).
 
-## Where the project stands (2026-10-21, after M9)
+## Where the project stands (2026-10-31, after M10)
 
 - M0–M7 are done and tagged `m0-done` … `m7-done`: the OpenAI-compatible proxy (streaming and
   non-streaming), API keys, admin auth and RBAC, the usage pipeline (Redis Stream → worker →
@@ -13,19 +13,27 @@ has enough detail to start work from the repository alone: read this file, then
 - Live demo: <https://ai-gateway-8var.onrender.com> (Render free web service, Docker, deploys
   every commit on `main`). It runs the gateway image with `RUN_WORKER_IN_PROCESS=true` (the
   free plan has no background workers), with Render's free Postgres and Key Value (Redis).
-- CI (`.github/workflows/ci.yml`) has four jobs: `check` (format, lint, dashboard-data check,
+- CI (`.github/workflows/ci.yml`) has five jobs: `check` (format, lint, dashboard-data check,
   benchmark report check, typecheck, unit tests, build), `integration` (Postgres + Redis
-  services), `dashboard-e2e` (Chromium at 375 px) and `images` (all Compose images build, the
-  Prometheus config and the bench stack's Compose file are valid).
+  services, LocalStack for the SQS tests), `dashboard-e2e` (Chromium at 375 px), `images` (all
+  Compose images build; the Prometheus config, the bench stack's and the AWS demo's Compose
+  files are valid) and `terraform` (fmt, validate, `terraform test` with a mocked AWS provider,
+  the tag check; no AWS credentials).
 - M8 (observability) is done: every acceptance check passed, including Render `/metrics`
   answering 401 without the token or with a wrong one once `METRICS_TOKEN` was set. The owner
   tags `m8-done`.
 - M9 (benchmarks) is done: the mock provider over HTTP, k6 scenarios that `pnpm bench` runs
   against a two-instance Compose stack, results committed in `bench/results/`, and
   `docs/benchmarks.md` generated from them and checked in CI. The owner tags `m9-done`.
-- Accepted decisions are ADR 001–021; ADR 020 is the dashboard design system (tokens, shell,
+- M10 (AWS deployment and final docs) is built at zero cost: the SQS event bus and its worker
+  consumer (tested against LocalStack), Terraform for a demo and a full setup (tested with a
+  mocked provider, **never applied**), `docs/aws-deployment.md`, `docs/trade-offs.md`, the README
+  sections and a Postgres-outage test. The acceptance checks that need an AWS account are open
+  in PLAN-NOTES.
+- Accepted decisions are ADR 001–023; ADR 020 is the dashboard design system (tokens, shell,
   shared components and the "not measured" rule), ADR 021 the Playground page (in the
-  dashboard, which the gateway serves at `/dashboard/`) and CORS for `/v1`.
+  dashboard, which the gateway serves at `/dashboard/`) and CORS for `/v1`, ADR 022 the AWS
+  layout and ADR 023 the SQS event bus.
 
 ## How to work on a milestone
 
@@ -223,7 +231,7 @@ destroy cheaply, plus a README that alone explains the project and how to run it
 **ADRs to write.** ADR 022 — AWS deployment layout (single-instance data tier for the demo, ALB
 settings for SSE, secrets, alarms, cost bound). ADR 023 — SQS event bus adapter (standard queue,
 visibility timeout, redrive to the DLQ, dedupe by `event_id`). Every row of the decision table
-then has an ADR file.
+then has an ADR file. (Written 2026-10-31; the trade-off notes are in `docs/trade-offs.md`.)
 
 **PLAN-NOTES rows it closes**
 
