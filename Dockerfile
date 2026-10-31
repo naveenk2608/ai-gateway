@@ -20,14 +20,12 @@ COPY packages/shared/package.json packages/shared/
 COPY apps/gateway/package.json apps/gateway/
 COPY apps/worker/package.json apps/worker/
 COPY apps/dashboard/package.json apps/dashboard/
-COPY apps/playground/package.json apps/playground/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lockfile
 # Only what the build needs: shared TS config and the workspace packages.
 COPY tsconfig.base.json ./
 COPY packages ./packages
 COPY apps ./apps
-# Everything the images ship; the playground is a separate static site (ADR 021) and is skipped.
-RUN pnpm -r --filter '!@ai-gateway/playground' build
+RUN pnpm build
 # Self-contained production installs: compiled app, injected shared package, prod deps only.
 RUN pnpm deploy --legacy --filter=@ai-gateway/gateway --prod /out/gateway \
  && pnpm deploy --legacy --filter=@ai-gateway/worker --prod /out/worker

@@ -1,4 +1,4 @@
-import type { GatewayProblem } from './gateway.js';
+import type { GatewayProblem } from './client.js';
 
 /** A wait in the largest sensible unit: "45 s", "3 min", "2 h", "4 days". */
 export function formatWait(seconds: number): string {
@@ -11,7 +11,7 @@ export function formatWait(seconds: number): string {
 /** What went wrong, for people: a title and what to do about it. */
 export function describeProblem(
   problem: GatewayProblem,
-  context: { model?: string; origin?: string } = {},
+  context: { model?: string } = {},
 ): { title: string; detail: string } {
   const retry =
     problem.retryAfterSeconds === null
@@ -20,20 +20,20 @@ export function describeProblem(
   switch (problem.kind) {
     case 'auth':
       return {
-        title: 'The gateway rejected this API key',
-        detail: `${problem.message} Check the key in Settings: it may be mistyped, revoked or expired.`,
+        title: "The Playground's key was rejected",
+        detail: `${problem.message} It may have expired or been revoked in Settings; start a new key.`,
       };
     case 'forbidden':
       return {
-        title: 'This model is not allowed for this key',
-        detail: `${problem.message} Pick another model, or ask a project admin to allow ${
+        title: 'This project may not use this model',
+        detail: `${problem.message} Pick another model, or allow ${
           context.model ? `\`${context.model}\`` : 'it'
-        }.`,
+        } in Settings.`,
       };
     case 'not_found':
       return {
         title: 'Model not found',
-        detail: `${problem.message} Reload the model list in Settings.`,
+        detail: `${problem.message} Reload the model list.`,
       };
     case 'rate_limit':
       return { title: 'Rate limit reached', detail: `${problem.message}${retry}` };
@@ -41,8 +41,8 @@ export function describeProblem(
       return {
         title: "The project's monthly budget is used up",
         detail:
-          `${problem.message} Requests are refused until the next UTC month starts or an admin ` +
-          `raises the budget.${problem.retryAfterSeconds === null ? '' : ` The month ends in ${formatWait(problem.retryAfterSeconds)}.`}`,
+          `${problem.message} Requests are refused until the next UTC month starts or the ` +
+          `budget is raised in Settings.${problem.retryAfterSeconds === null ? '' : ` The month ends in ${formatWait(problem.retryAfterSeconds)}.`}`,
       };
     case 'bad_request':
       return { title: 'The gateway refused the request', detail: problem.message };
@@ -55,9 +55,8 @@ export function describeProblem(
       return {
         title: 'Could not reach the gateway',
         detail:
-          'If it was idle, it is probably waking up: free hosting sleeps when unused, and waking ' +
-          'takes up to a minute. Try again shortly. If it keeps failing, check the gateway URL ' +
-          `and that the gateway's ALLOWED_ORIGINS includes ${context.origin ?? 'this site'}.`,
+          'The connection failed or the gateway is restarting. Check your connection and try ' +
+          'again shortly.',
       };
     case 'server':
       return { title: 'The request failed', detail: problem.message };

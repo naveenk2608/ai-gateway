@@ -6,10 +6,7 @@ import {
   type Connection,
   type Served,
   type Usage,
-} from './gateway.js';
-
-/** After this long without response headers, the reply says the gateway may be waking up. */
-export const SLOW_AFTER_MS = 4_000;
+} from './client.js';
 
 export interface UserTurn {
   id: number;
@@ -23,10 +20,8 @@ export interface ReplyTurn {
   model: string;
   content: string;
   status: 'waiting' | 'streaming' | 'done' | 'stopped' | 'failed';
-  /** No response headers yet after SLOW_AFTER_MS. */
-  slow: boolean;
   served: Served | null;
-  /** Measured in this browser, from sending: so they include network time (and any wake-up). */
+  /** Measured in this browser, from sending: so they include network time. */
   firstTextMs: number | null;
   totalMs: number | null;
   usage: Usage | null;
@@ -76,7 +71,6 @@ export function useChat(connection: Connection | null, model: string) {
         model,
         content: '',
         status: 'waiting',
-        slow: false,
         served: null,
         firstTextMs: null,
         totalMs: null,
@@ -89,20 +83,13 @@ export function useChat(connection: Connection | null, model: string) {
       running.current = controller;
       const started = performance.now();
       const elapsed = () => performance.now() - started;
-      let served = false;
       let firstText: number | null = null;
-      const slow = setTimeout(() => {
-        if (!served) update(id, { slow: true });
-      }, SLOW_AFTER_MS);
 
       void streamChat(
         connection,
         { model, messages: history(before) },
         {
-          onServed: (info) => {
-            served = true;
-            update(id, { served: info, slow: false, status: 'streaming' });
-          },
+          onServed: (info) => update(id, { served: info, status: 'streaming' }),
           onText: (text) => {
             firstText ??= elapsed();
             setTurns((all) =>
@@ -126,18 +113,17 @@ export function useChat(connection: Connection | null, model: string) {
             }),
           (err: unknown) => {
             if (controller.signal.aborted) {
-              update(id, { status: 'stopped', slow: false, totalMs: elapsed() });
+              update(id, { status: 'stopped', totalMs: elapsed() });
               return;
             }
             const problem =
               err instanceof GatewayProblem
                 ? err
                 : new GatewayProblem('server', 'Something went wrong while reading the reply.');
-            update(id, { status: 'failed', slow: false, totalMs: elapsed(), problem });
+            update(id, { status: 'failed', totalMs: elapsed(), problem });
           },
         )
         .finally(() => {
-          clearTimeout(slow);
           if (running.current === controller) running.current = null;
         });
     },

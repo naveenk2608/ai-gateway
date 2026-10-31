@@ -269,6 +269,23 @@ describe('Requests page', () => {
     expect(screen.queryByRole('dialog', { name: 'Request detail' })).toBeNull();
   });
 
+  it('opens the request a link names (#requests/<id>), and leaves the link on close', async () => {
+    stubApi('data');
+    window.location.hash = '#requests/0192f5a0-0000-7000-8000-0000000000cc';
+    show(
+      <Requests
+        projectId={PROJECT_ID}
+        filters={filters}
+        requestId="0192f5a0-0000-7000-8000-0000000000cc"
+      />,
+    );
+    const panel = await screen.findByRole('dialog', { name: 'Request detail' });
+    expect(await within(panel).findByText('238 ms')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Request detail' })).toBeNull();
+    expect(window.location.hash).toBe('#requests');
+  });
+
   it('shows the error with a retry when the request detail fails', async () => {
     const fetchMock = stubApi('data');
     show(page());

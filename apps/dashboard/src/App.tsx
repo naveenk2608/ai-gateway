@@ -12,6 +12,7 @@ import { Infrastructure } from './pages/Infrastructure.js';
 import { Login } from './pages/Login.js';
 import { Models } from './pages/Models.js';
 import { Overview } from './pages/Overview.js';
+import { Playground } from './pages/Playground.js';
 import { Reliability } from './pages/Reliability.js';
 import { Requests } from './pages/Requests.js';
 import { Security } from './pages/Security.js';
@@ -71,13 +72,23 @@ function Dashboard({ me }: { me: Me }) {
         <>
           {page === 'overview' && <Overview projectId={project.id} filters={filters} />}
           {page === 'requests' && (
-            <Requests key={project.id} projectId={project.id} filters={filters} />
+            // A link to one request (#requests/<id>) opens it; a new link starts afresh.
+            <Requests
+              key={`${project.id}/${section ?? ''}`}
+              projectId={project.id}
+              filters={filters}
+              requestId={section}
+            />
           )}
           {page === 'cost' && <Cost projectId={project.id} filters={filters} />}
           {page === 'models' && <Models projectId={project.id} filters={filters} />}
           {page === 'reliability' && <Reliability projectId={project.id} filters={filters} />}
           {page === 'security' && <Security projectId={project.id} filters={filters} />}
           {page === 'infra' && <Infrastructure projectId={project.id} filters={filters} />}
+          {page === 'playground' && (
+            // A new project gets a new key: the old one is revoked as this unmounts.
+            <Playground key={project.id} projectId={project.id} role={project.role} />
+          )}
           {page === 'settings' && (
             <Settings key={project.id} projectId={project.id} userId={me.user.id} tab={section} />
           )}

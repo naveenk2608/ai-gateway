@@ -108,7 +108,10 @@ describe('AppShell', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Cost' })).toBeTruthy();
     expect(screen.getByText('page content')).toBeTruthy();
     const nav = screen.getByRole('navigation', { name: 'Pages' });
-    expect(within(nav).getAllByRole('link')).toHaveLength(8);
+    expect(within(nav).getAllByRole('link')).toHaveLength(9);
+    expect(within(nav).getByRole('link', { name: 'Playground' }).getAttribute('href')).toBe(
+      '#playground',
+    );
     expect(within(nav).getByRole('link', { name: 'Cost' }).getAttribute('aria-current')).toBe(
       'page',
     );
@@ -168,7 +171,7 @@ describe('AppShell', () => {
     open.focus();
     fireEvent.click(open);
     const drawer = screen.getByRole('dialog', { name: 'Navigation' });
-    expect(within(drawer).getAllByRole('link')).toHaveLength(8);
+    expect(within(drawer).getAllByRole('link')).toHaveLength(9);
     const close = within(drawer).getByRole('button', { name: 'Close navigation' });
     expect(document.activeElement).toBe(close);
     // Shift+Tab from the first control wraps to the last one inside the drawer.

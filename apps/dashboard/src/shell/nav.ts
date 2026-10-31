@@ -4,6 +4,7 @@ import {
   CircleDollarSign,
   LayoutDashboard,
   ListTree,
+  MessagesSquare,
   Server,
   Settings,
   ShieldAlert,
@@ -12,7 +13,15 @@ import {
 import { useEffect, useState } from 'react';
 
 export type PageId =
-  'overview' | 'requests' | 'cost' | 'models' | 'reliability' | 'security' | 'infra' | 'settings';
+  | 'overview'
+  | 'requests'
+  | 'cost'
+  | 'models'
+  | 'reliability'
+  | 'security'
+  | 'infra'
+  | 'playground'
+  | 'settings';
 
 export interface PageInfo {
   id: PageId;
@@ -73,6 +82,13 @@ export const PAGES: PageInfo[] = [
     description: 'The usage pipeline, dependencies and this gateway instance.',
     icon: Server,
     ranged: true,
+  },
+  {
+    id: 'playground',
+    title: 'Playground',
+    description: 'Chat with the models through /v1 and see how each reply was served.',
+    icon: MessagesSquare,
+    ranged: false,
   },
   {
     id: 'settings',

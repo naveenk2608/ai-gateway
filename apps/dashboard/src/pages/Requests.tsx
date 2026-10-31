@@ -383,7 +383,16 @@ function RequestFilters({
   );
 }
 
-export function Requests({ projectId, filters }: { projectId: string; filters: AnalyticsFilters }) {
+export function Requests({
+  projectId,
+  filters,
+  requestId = null,
+}: {
+  projectId: string;
+  filters: AnalyticsFilters;
+  /** A request to open at once, from a link (`#requests/<id>`). */
+  requestId?: string | null;
+}) {
   const [own, setOwn] = useState<PageFilters>({});
   // Cursors of the pages before this one, so "Newer" can go back. They belong to one range: a new
   // range from the top bar starts again from the first page.
@@ -393,7 +402,7 @@ export function Requests({ projectId, filters }: { projectId: string; filters: A
   });
   const cursors = paging.range === filters.range ? paging.cursors : [];
   const setCursors = (next: string[]) => setPaging({ range: filters.range, cursors: next });
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(requestId);
   const query: AnalyticsFilters = { ...filters, ...own };
   const cursor = cursors.at(-1);
   const page = useQuery({
@@ -513,7 +522,16 @@ export function Requests({ projectId, filters }: { projectId: string; filters: A
           </>
         )}
       </section>
-      {selected && <RequestPanel requestId={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <RequestPanel
+          requestId={selected}
+          onClose={() => {
+            setSelected(null);
+            // Leave the link's address, so following it again opens the request again.
+            if (requestId) window.location.hash = 'requests';
+          }}
+        />
+      )}
     </>
   );
 }

@@ -9,6 +9,7 @@ export const PAGES = [
   { hash: 'reliability', title: 'Reliability' },
   { hash: 'security', title: 'Security' },
   { hash: 'infra', title: 'Infrastructure' },
+  { hash: 'playground', title: 'Playground' },
   { hash: 'settings', title: 'Settings' },
 ] as const;
 

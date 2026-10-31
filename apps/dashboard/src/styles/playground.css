@@ -1,0 +1,207 @@
+/* The Playground page (ADR 021), on the dashboard's tokens and components (ADR 020). */
+
+.pg-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: calc(100vh - var(--topbar-height) - 12rem);
+}
+
+.pg-header {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.pg-header h2 {
+  margin-right: auto;
+}
+
+.pg-model {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pg-model label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pg-model select {
+  min-width: 0;
+  max-width: 260px;
+}
+
+.pg-key {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.pg-key svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.pg-problem {
+  align-items: flex-start;
+}
+
+.pg-problem p {
+  margin-top: var(--space-1);
+  color: var(--color-text);
+}
+
+.pg-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  margin-top: 0;
+}
+
+/* --- Conversation --- */
+
+.pg-turns {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pg-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: min(100%, 760px);
+  min-width: 0;
+}
+
+.pg-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.pg-user .pg-text {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-soft);
+}
+
+.pg-reply {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.pg-reply .pg-text {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+}
+
+.pg-text {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Reply details: one row of label/value pairs that wraps. */
+.pg-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.pg-meta > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.pg-meta dt {
+  color: var(--color-text-subtle);
+}
+
+.pg-meta dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.pg-deployment {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.pg-fallback {
+  white-space: normal;
+  height: auto;
+  min-height: 22px;
+}
+
+.pg-request-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* --- Composer --- */
+
+.pg-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.pg-composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 64px;
+  max-height: 240px;
+  resize: vertical;
+}
+
+.pg-composer button {
+  flex: none;
+}
+
+.pg-footnote {
+  margin: 0;
+}
+
+@media (max-width: 767px) {
+  .pg-chat {
+    min-height: 60vh;
+  }
+
+  .pg-model {
+    flex: 1 1 100%;
+  }
+
+  .pg-model label {
+    flex: 1;
+  }
+
+  .pg-model select {
+    flex: 1;
+    max-width: none;
+  }
+}

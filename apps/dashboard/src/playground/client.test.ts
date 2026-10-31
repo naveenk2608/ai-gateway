@@ -7,11 +7,10 @@ import {
   streamChat,
   type Fetch,
   type Served,
-} from './gateway.js';
+} from './client.js';
 import { describeProblem, formatWait } from './problems.js';
-import { providerName, servedBy } from './providers.js';
 
-const conn = { gatewayUrl: 'https://gw.example.com', apiKey: 'gw_test_placeholder' };
+const conn = { apiKey: 'gw_test_placeholder' };
 
 /** An SSE response body from data payloads. */
 function sse(payloads: unknown[], headers: Record<string, string> = {}): Response {
@@ -27,7 +26,7 @@ const errorResponse = (status: number, code: string, message: string, headers = 
   Response.json({ error: { code, message, type: 'x' } }, { status, headers });
 
 describe('listModels', () => {
-  it('asks the gateway, and only the gateway, with the key as a bearer token', async () => {
+  it('asks this origin with the key as a bearer token, and without cookies', async () => {
     const fetchMock = vi.fn<Fetch>(() =>
       Promise.resolve(
         Response.json({ object: 'list', data: [{ id: 'chat-default' }, { id: 'qwen3' }] }),
@@ -36,7 +35,7 @@ describe('listModels', () => {
     expect(await listModels(conn, undefined, fetchMock)).toEqual(['chat-default', 'qwen3']);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('https://gw.example.com/v1/models');
+    expect(url).toBe('/v1/models');
     expect(init).toMatchObject({
       method: 'GET',
       credentials: 'omit',
@@ -45,7 +44,7 @@ describe('listModels', () => {
     });
   });
 
-  it('turns a network or CORS failure into "unreachable"', async () => {
+  it('turns a network failure into "unreachable"', async () => {
     const fetchMock = vi.fn<Fetch>(() => Promise.reject(new TypeError('Failed to fetch')));
     await expect(listModels(conn, undefined, fetchMock)).rejects.toMatchObject({
       kind: 'unreachable',
@@ -136,15 +135,16 @@ describe('streamChat', () => {
 });
 
 describe('problems', () => {
-  it('reads a 401 as a rejected key', async () => {
+  it('reads a 401 as a rejected key, to be replaced', async () => {
     const problem = await problemFrom(
       errorResponse(401, 'invalid_api_key', 'This API key has been revoked.', {
         'x-request-id': 'req-2',
       }),
     );
     expect(problem).toMatchObject({ kind: 'auth', status: 401, requestId: 'req-2' });
-    expect(describeProblem(problem).title).toBe('The gateway rejected this API key');
+    expect(describeProblem(problem).title).toBe("The Playground's key was rejected");
     expect(describeProblem(problem).detail).toContain('This API key has been revoked.');
+    expect(describeProblem(problem).detail).toContain('start a new key');
   });
 
   it('reads a 403 as a model the project may not use', async () => {
@@ -153,8 +153,8 @@ describe('problems', () => {
     );
     const { title, detail } = describeProblem(problem, { model: 'x' });
     expect(problem.kind).toBe('forbidden');
-    expect(title).toBe('This model is not allowed for this key');
-    expect(detail).toContain('ask a project admin to allow `x`');
+    expect(title).toBe('This project may not use this model');
+    expect(detail).toContain('allow `x` in Settings');
   });
 
   it('reads a 429 rate limit with its retry time', async () => {
@@ -184,9 +184,7 @@ describe('problems', () => {
   it('reads a 502/503 without the gateway error body as the gateway not answering yet', async () => {
     const problem = await problemFrom(new Response('<html>Bad gateway</html>', { status: 502 }));
     expect(problem.kind).toBe('unreachable');
-    const { detail } = describeProblem(problem, { origin: 'https://pg.example.com' });
-    expect(detail).toContain('waking up');
-    expect(detail).toContain('ALLOWED_ORIGINS includes https://pg.example.com');
+    expect(describeProblem(problem).detail).toContain('restarting');
   });
 
   it("keeps the gateway's own 503s apart, with their retry time", async () => {
@@ -209,34 +207,5 @@ describe('problems', () => {
 
   it('is an Error, so it can be thrown and caught', () => {
     expect(new GatewayProblem('server', 'x')).toBeInstanceOf(Error);
-  });
-});
-
-describe('providerName', () => {
-  it("names a deployment's provider from its id, and keeps unknown ids as they are", () => {
-    expect(providerName('groq-gpt-oss-20b')).toBe('Groq');
-    expect(providerName('groq-qwen3.8-27b')).toBe('Groq');
-    expect(providerName('gemini-3.5-flash-lite')).toBe('Gemini');
-    expect(providerName('mock')).toBe('Mock');
-    expect(providerName('ollama-llama3.2')).toBe('Ollama');
-    expect(providerName('groqish')).toBe('groqish');
-    expect(providerName('acme-large')).toBe('acme-large');
-  });
-});
-
-describe('servedBy', () => {
-  it("gives the provider's logo, and the model family when it is not the provider's own", () => {
-    const qwen = servedBy('groq-qwen3.8-27b');
-    expect(qwen).toMatchObject({ name: 'Groq', known: true });
-    expect(decodeURIComponent(qwen.logo?.src ?? '')).toContain('<title>Groq</title>');
-    expect(qwen.family?.name).toBe('Qwen');
-    expect(servedBy('groq-gpt-oss-20b').family?.name).toBe('OpenAI');
-    expect(servedBy('ollama-llama3.2').family?.name).toBe('Llama');
-    expect(servedBy('gemini-3.5-flash-lite').family).toBeNull();
-  });
-
-  it('has no logo for the mock (an icon is drawn) or for an unknown deployment', () => {
-    expect(servedBy('mock')).toMatchObject({ name: 'Mock', logo: null, known: true });
-    expect(servedBy('acme-large')).toMatchObject({ name: 'acme-large', logo: null, known: false });
   });
 });

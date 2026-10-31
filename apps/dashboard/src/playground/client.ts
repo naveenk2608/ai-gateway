@@ -1,12 +1,12 @@
 import { sseData } from './sse.js';
 
 /**
- * The gateway's OpenAI-compatible API, called like any client would. The key is sent only to
- * `gatewayUrl`, as a bearer token; no cookies, no referrer.
+ * The gateway's OpenAI-compatible API, called like any client would: on the dashboard's own origin
+ * (the gateway), with the Playground's short-lived key as a bearer token and without the session
+ * cookie, so /v1 sees an API caller and applies its limits, budget and routing.
  */
 
 export interface Connection {
-  gatewayUrl: string;
   apiKey: string;
 }
 
@@ -78,7 +78,7 @@ function kindOf(status: number, code: string | null, fromGateway: boolean): Prob
   if (status === 429) return code === 'budget_exceeded' ? 'budget' : 'rate_limit';
   if (status === 400 || status === 413 || status === 422) return 'bad_request';
   // A 502/503/504 without the gateway's error body came from the host in front of it: the
-  // gateway is starting (or restarting) and not answering yet.
+  // gateway is restarting and not answering yet.
   if (status === 502 || status === 503 || status === 504) {
     return fromGateway ? 'unavailable' : 'unreachable';
   }
@@ -121,7 +121,7 @@ async function call(
 ): Promise<Response> {
   let res: Response;
   try {
-    res = await fetchFn(`${conn.gatewayUrl}${path}`, {
+    res = await fetchFn(path, {
       method: init.method,
       signal: init.signal,
       headers: {
@@ -135,7 +135,6 @@ async function call(
     });
   } catch (err) {
     if (init.signal?.aborted) throw err;
-    // The browser hides why: offline, DNS, a sleeping host, or a CORS refusal all look alike.
     throw new GatewayProblem('unreachable', 'The gateway could not be reached.');
   }
   if (!res.ok) throw await problemFrom(res);

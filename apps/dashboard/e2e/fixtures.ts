@@ -115,6 +115,18 @@ const key: ApiKey = {
   rotatedTo: null,
 };
 
+/** The Playground's short-lived key, as POST .../api-keys answers; the key is a placeholder. */
+const playgroundKey = {
+  apiKey: {
+    ...key,
+    id: '0192f5a0-0000-7000-8000-0000000000dd',
+    name: 'playground',
+    status: 'expiring',
+    expiresAt: '2099-01-01T00:00:00.000Z',
+  } satisfies ApiKey,
+  key: `gw_${'0'.repeat(16)}_${'0'.repeat(64)}`,
+};
+
 const members: Member[] = [
   { userId: USER_ID, email: 'admin@example.com', role: 'owner', createdAt: '2026-10-01T00:00:00Z' },
   {
@@ -225,12 +237,17 @@ const requestDetail: RequestDetail = {
 
 type Responses = Record<string, unknown>;
 
-/** Responses by path (without the query string) for an empty database. */
+/**
+ * Responses by path (without the query string) for an empty database; `POST <path>` keys answer
+ * that method only.
+ */
 export function emptyResponses(role: Role): Responses {
   return {
     '/admin/me': me(role),
     [`/admin/projects/${PROJECT_ID}`]: project(role),
     [`/admin/projects/${PROJECT_ID}/api-keys`]: { data: [] },
+    [`POST /admin/projects/${PROJECT_ID}/api-keys`]: playgroundKey,
+    '/v1/models': { object: 'list', data: [] },
     [`/admin/projects/${PROJECT_ID}/members`]: { data: [] },
     '/admin/models': { deployments: [], models: [] },
     '/ready': { status: 'ready', checks: { postgres: { status: 'ok', latencyMs: 2 } } },
@@ -321,6 +338,10 @@ export function sampleResponses(role: Role): Responses {
   return {
     ...emptyResponses(role),
     [`/admin/projects/${PROJECT_ID}/api-keys`]: { data: [key] },
+    '/v1/models': {
+      object: 'list',
+      data: [{ id: 'mock-1', object: 'model', owned_by: 'gateway' }],
+    },
     [`/admin/projects/${PROJECT_ID}/members`]: { data: members },
     '/admin/models': catalog,
     [`/admin/requests/${REQUEST_ID}`]: requestDetail,

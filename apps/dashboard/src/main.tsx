@@ -6,6 +6,7 @@ import './styles/tokens.css';
 import './styles/base.css';
 import './styles/components.css';
 import './styles/shell.css';
+import './styles/playground.css';
 
 // Before the first render, so a light-theme viewer never sees a dark frame.
 applyTheme(storedTheme());

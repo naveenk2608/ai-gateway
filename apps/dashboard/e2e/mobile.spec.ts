@@ -14,6 +14,7 @@ const MARKERS: Record<(typeof PAGES)[number]['hash'], string> = {
   reliability: 'Circuit breakers',
   security: 'By reason',
   infra: 'Unread events',
+  playground: 'Send a message to mock-1',
   settings: 'Project ID',
 };
 
