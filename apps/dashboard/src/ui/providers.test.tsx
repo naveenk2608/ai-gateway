@@ -9,87 +9,52 @@ afterEach(cleanup);
 const name = (facts: Parameters<typeof identifyProvider>[0]) => identifyProvider(facts).name;
 
 describe('identifyProvider', () => {
-  it('names the shipped deployments from their kind, id and model', () => {
-    expect(
-      name({
-        provider: 'openai-compatible',
-        deployment: 'groq-gpt-oss-20b',
-        model: 'openai/gpt-oss-20b',
-      }),
-    ).toBe('Groq');
-    expect(
-      name({
-        provider: 'openai-compatible',
-        deployment: 'gemini-3.5-flash-lite',
-        model: 'gemini-3.5-flash-lite',
-      }),
-    ).toBe('Gemini');
+  it('names each provider from the name the API returns', () => {
+    expect(name({ provider: 'groq', deployment: 'groq-gpt-oss-20b' })).toBe('Groq');
+    expect(name({ provider: 'gemini', deployment: 'gemini-3.5-flash-lite' })).toBe('Gemini');
+    expect(name({ provider: 'mistral' })).toBe('Mistral');
+    expect(name({ provider: 'nvidia' })).toBe('NVIDIA');
+    expect(name({ provider: 'openrouter' })).toBe('OpenRouter');
+    expect(name({ provider: 'cloudflare' })).toBe('Cloudflare');
+    expect(name({ provider: 'zai' })).toBe('Z.AI');
     expect(name({ provider: 'ollama', deployment: 'ollama-llama3.2', model: 'llama3.2:1b' })).toBe(
       'Ollama',
     );
     expect(name({ provider: 'mock', deployment: 'mock-error' })).toBe('Mock');
   });
 
-  it('goes by the deployment id before the model: an "openai/…" model on Groq is Groq', () => {
-    expect(
-      name({ provider: 'openai-compatible', deployment: 'groq', model: 'openai/gpt-oss-120b' }),
-    ).toBe('Groq');
-  });
-
-  it('falls back to the model name when the id says nothing', () => {
-    expect(
-      name({ provider: 'openai-compatible', deployment: 'fast', model: 'gemini-2.5-pro' }),
-    ).toBe('Gemini');
-    expect(name({ provider: 'openai-compatible', deployment: 'chat', model: 'o4-mini' })).toBe(
-      'OpenAI',
+  it('never guesses from the deployment id or the model name', () => {
+    expect(name({ provider: 'acme', deployment: 'groq-proxy', model: 'gemini-2.5-pro' })).toBe(
+      'acme',
     );
-    // Open-weight models named "openai/…" are served by others: not a guess at OpenAI.
+    // Rows stored before provider names existed carry the adapter kind.
     expect(
-      name({ provider: 'openai-compatible', deployment: 'chat', model: 'openai/gpt-oss-20b' }),
+      name({ provider: 'openai-compatible', deployment: 'groq-x', model: 'gpt-4o-mini' }),
     ).toBe('OpenAI-compatible');
   });
 
-  it('does not match a provider name inside another word', () => {
-    expect(name({ provider: 'openai-compatible', deployment: 'groqish-proxy' })).toBe(
-      'OpenAI-compatible',
-    );
-  });
-
-  it('names a provider that is not configured yet, such as an added OpenAI deployment', () => {
-    expect(name({ provider: 'openai-compatible', deployment: 'openai-chat', model: 'gpt-x' })).toBe(
-      'OpenAI',
-    );
-  });
-
-  it('names Qwen served by Groq as Groq, from the deployment id', () => {
-    expect(
-      name({
-        provider: 'openai-compatible',
-        deployment: 'groq-qwen3.8-27b',
-        model: 'qwen/qwen3.8-27b',
-      }),
-    ).toBe('Groq');
-  });
-
-  it('treats an openai-compatible mock server as the mock', () => {
-    expect(name({ provider: 'openai-compatible', deployment: 'mock-http', model: 'mock' })).toBe(
-      'Mock',
-    );
-  });
-
-  it('gives an unknown openai-compatible deployment or kind a neutral initials tile', () => {
+  it('gives a provider it has no tile for a neutral initials tile', () => {
     const hosted = identifyProvider({ provider: 'openai-compatible', deployment: 'acme-large' });
     expect(hosted).toMatchObject({ id: 'unknown:OpenAI-compatible', initials: 'OP' });
     expect(hosted.logo).toBeUndefined();
     const other = identifyProvider({ provider: 'bedrock' });
     expect(other).toMatchObject({ name: 'bedrock', initials: 'BE' });
+    // A name that is also an Object.prototype key is still just a name.
+    expect(identifyProvider({ provider: 'constructor' })).toMatchObject({ name: 'constructor' });
+  });
+
+  it('uses letter tiles for the providers added in M11', () => {
+    for (const provider of ['mistral', 'nvidia', 'openrouter', 'cloudflare', 'zai']) {
+      expect(identifyProvider({ provider }).logo, provider).toBeUndefined();
+    }
   });
 
   it('keeps every provider on a chart colour token, the same one every time', () => {
     for (const facts of [
       { provider: 'mock' },
       { provider: 'ollama' },
-      { provider: 'openai-compatible', deployment: 'groq-x' },
+      { provider: 'groq' },
+      { provider: 'zai' },
       { provider: 'something-else' },
     ]) {
       expect(identifyProvider(facts).color).toMatch(/^var\(--chart-[1-5]\)$/);
@@ -118,8 +83,8 @@ describe('modelFamily and familyOnHost', () => {
   });
 
   it("adds the family only when it is not the host's own", () => {
-    const groq = identifyProvider({ provider: 'openai-compatible', deployment: 'groq-x' });
-    const gemini = identifyProvider({ provider: 'openai-compatible', deployment: 'gemini-x' });
+    const groq = identifyProvider({ provider: 'groq' });
+    const gemini = identifyProvider({ provider: 'gemini' });
     const ollama = identifyProvider({ provider: 'ollama' });
     expect(familyOnHost(groq, 'qwen/qwen3.8-27b')?.name).toBe('Qwen');
     expect(familyOnHost(groq, 'openai/gpt-oss-20b')?.name).toBe('OpenAI');
@@ -130,11 +95,7 @@ describe('modelFamily and familyOnHost', () => {
 
 describe('ProviderBadge', () => {
   it("shows a known provider's bundled logo, decorative, next to its name", () => {
-    render(
-      <ProviderBadge
-        provider={identifyProvider({ provider: 'openai-compatible', deployment: 'gemini-x' })}
-      />,
-    );
+    render(<ProviderBadge provider={identifyProvider({ provider: 'gemini' })} />);
     const badge = screen.getByTitle('Gemini');
     const img = badge.querySelector('img');
     expect(decodeURIComponent(img?.getAttribute('src') ?? '')).toContain('<title>Gemini</title>');
@@ -144,11 +105,7 @@ describe('ProviderBadge', () => {
   });
 
   it('draws a mono logo in the text colour, so it follows the theme', () => {
-    render(
-      <ProviderBadge
-        provider={identifyProvider({ provider: 'openai-compatible', deployment: 'groq-x' })}
-      />,
-    );
+    render(<ProviderBadge provider={identifyProvider({ provider: 'groq' })} />);
     const mark = screen.getByTitle('Groq').querySelector<HTMLElement>('.logo-mono');
     expect(decodeURIComponent(mark?.style.maskImage ?? '')).toContain('<title>Groq</title>');
     expect(mark?.getAttribute('aria-hidden')).toBe('true');

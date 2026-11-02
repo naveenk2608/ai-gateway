@@ -47,6 +47,12 @@ const KNOWN = {
     logo: LOGOS.ollama,
   },
   mock: { id: 'mock', name: 'Mock', initials: 'MO', color: 'var(--chart-5)', icon: FlaskConical },
+  // Letter tiles: no logo of these is bundled (see ui/logos/NOTICE.md).
+  mistral: { id: 'mistral', name: 'Mistral', initials: 'MI', color: 'var(--chart-4)' },
+  nvidia: { id: 'nvidia', name: 'NVIDIA', initials: 'NV', color: 'var(--chart-2)' },
+  openrouter: { id: 'openrouter', name: 'OpenRouter', initials: 'OR', color: 'var(--chart-1)' },
+  cloudflare: { id: 'cloudflare', name: 'Cloudflare', initials: 'CF', color: 'var(--chart-4)' },
+  zai: { id: 'zai', name: 'Z.AI', initials: 'ZA', color: 'var(--chart-3)' },
 } satisfies Record<string, ProviderInfo>;
 
 /** The model's family when it differs from the provider serving it; null otherwise. */
@@ -58,9 +64,12 @@ export function familyOnHost(
   return family && family.id !== provider.id ? family : null;
 }
 
-/** What the API says about a deployment: its provider kind, and its id and model when known. */
+/** What the API says about a deployment: its provider, and its id and model when known. */
 export interface DeploymentFacts {
-  /** The adapter kind: `mock`, `ollama` or `openai-compatible`. */
+  /**
+   * The provider's name from the models file (`groq`, `gemini`, `mock`, ...). Rows stored before
+   * provider names existed, for deployments that had none, carry the adapter kind instead.
+   */
   provider: string;
   /** The deployment id from the models file, e.g. `groq-gpt-oss-20b`. */
   deployment?: string | null;
@@ -81,25 +90,13 @@ export function unknownProvider(name: string): ProviderInfo {
 }
 
 /**
- * The provider behind a deployment. The admin API returns the adapter kind, the deployment id and
- * the provider's model name, not the base URL, so an `openai-compatible` deployment is named from
- * its id first (the models file names them `groq-…`, `gemini-…`, `openai-…`), then its model.
- * Anything not recognised gets a neutral tile rather than a guess.
+ * The provider behind a deployment, from the name the API returns (set in the models file, never
+ * guessed from ids or model names). Providers the dashboard has no tile for get a neutral one.
  */
-export function identifyProvider({ provider, deployment, model }: DeploymentFacts): ProviderInfo {
-  if (provider === 'mock') return KNOWN.mock;
-  if (provider === 'ollama') return KNOWN.ollama;
-  if (provider !== 'openai-compatible') return unknownProvider(provider);
-
-  const id = (deployment ?? '').toLowerCase();
-  const name = (model ?? '').toLowerCase();
-  for (const key of ['groq', 'gemini', 'openai', 'mock'] as const) {
-    if (id === key || id.startsWith(`${key}-`) || id.startsWith(`${key}.`)) return KNOWN[key];
-  }
-  if (name.startsWith('gemini-')) return KNOWN.gemini;
-  // OpenAI's own model names; "openai/…" names are open-weight models hosted elsewhere.
-  if (/^(gpt-|chatgpt-|o\d)/.test(name)) return KNOWN.openai;
-  return unknownProvider('OpenAI-compatible');
+export function identifyProvider({ provider }: DeploymentFacts): ProviderInfo {
+  if (Object.hasOwn(KNOWN, provider)) return KNOWN[provider as keyof typeof KNOWN];
+  if (provider === 'openai-compatible') return unknownProvider('OpenAI-compatible');
+  return unknownProvider(provider);
 }
 
 /**

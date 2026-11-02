@@ -208,6 +208,10 @@ export function Models({ projectId, filters }: { projectId: string; filters: Ana
                       </div>
                       <DeploymentModel deployment={d} />
                       <dl className="tile-facts">
+                        <dt>Host</dt>
+                        <dd className="mono small">
+                          {d.baseUrlHost ?? (d.adapter === 'mock' ? 'in process' : '—')}
+                        </dd>
                         <dt>Breaker</dt>
                         <dd>
                           {!d.enabled

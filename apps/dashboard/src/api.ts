@@ -102,7 +102,13 @@ export interface Member {
 export interface ModelCatalog {
   deployments: {
     id: string;
+    /** Who serves it (`groq`, `gemini`, `mock`, ...). */
     provider: string;
+    /** The adapter kind: `mock`, `ollama` or `openai-compatible`. */
+    adapter?: string;
+    /** Host of the base URL; null for the mock or when its URL needs an unset variable. */
+    baseUrlHost?: string | null;
+    healthCheck?: 'models' | 'none';
     providerModel: string;
     enabled: boolean;
     timeoutMs: number;
@@ -112,7 +118,7 @@ export interface ModelCatalog {
   models: {
     name: string;
     policy: string;
-    targets: { deployment: string; weight: number }[];
+    targets: { deployment: string; weight: number; lastResort?: boolean }[];
     available: boolean;
   }[];
 }

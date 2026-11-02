@@ -37,8 +37,8 @@ const deployment = (id: string, provider: string, providerModel: string) => ({
 
 const catalog: ModelCatalog = {
   deployments: [
-    deployment('groq-gpt-oss-20b', 'openai-compatible', 'openai/gpt-oss-20b'),
-    deployment('gemini-3.5-flash-lite', 'openai-compatible', 'gemini-3.5-flash-lite'),
+    deployment('groq-gpt-oss-20b', 'groq', 'openai/gpt-oss-20b'),
+    deployment('gemini-3.5-flash-lite', 'gemini', 'gemini-3.5-flash-lite'),
   ],
   models: [],
 };
