@@ -1,6 +1,6 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { CalendarClock, CircleDollarSign, Coins, Receipt } from 'lucide-react';
+import { CalendarClock, CircleDollarSign, Coins, Receipt, Wallet } from 'lucide-react';
 import {
   analyticsPath,
   api,
@@ -21,6 +21,7 @@ import { Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
 import { ModelLabel, ProviderBadge } from '../ui/ProviderBadge.js';
 import { familyOnHost, identifyProvider } from '../ui/providers.js';
+import { listCostText } from '../ui/cost.js';
 import { ShareTable, type ShareRow } from '../ui/ShareTable.js';
 import { ErrorState } from '../ui/states.js';
 
@@ -44,8 +45,13 @@ function spendRows<T extends Spend>(
   return rows.map((row) => ({
     key: key(row),
     name: name(row),
-    cells: [formatCount(row.requests), formatCount(row.totalTokens)],
+    cells: [
+      formatCount(row.requests),
+      formatCount(row.totalTokens),
+      row.billedCostMicroUsd === undefined ? '—' : formatUsd(row.billedCostMicroUsd),
+    ],
     value: row.costMicroUsd,
+    valueText: listCostText(row),
   }));
 }
 
@@ -63,14 +69,45 @@ function CostKpis({ cost, range }: { cost: UseQueryResult<Data>; range: string }
       {!data && <span className="visually-hidden">Loading spend…</span>}
       <KpiCard
         icon={CircleDollarSign}
-        label="Spend"
-        value={totals ? formatUsd(totals.costMicroUsd) : pending}
-        note={totals ? `last ${range}` : undefined}
+        label="List cost"
+        value={totals ? listCostText(totals) : pending}
+        note={
+          totals
+            ? `last ${range} at list prices${
+                totals.unpricedRequests ? ` · ${formatCount(totals.unpricedRequests)} unpriced` : ''
+              }`
+            : undefined
+        }
         trend={
           data && (
             <Sparkline
               values={data.series.map((p) => p.costMicroUsd)}
-              label={`Spend ${per}`}
+              label={`List cost ${per}`}
+              format={formatUsd}
+            />
+          )
+        }
+      />
+      <KpiCard
+        icon={Wallet}
+        label="Billed"
+        value={
+          totals
+            ? totals.billedCostMicroUsd === undefined
+              ? '—'
+              : formatUsd(totals.billedCostMicroUsd)
+            : pending
+        }
+        note={
+          totals && totals.savedMicroUsd !== undefined
+            ? `saved ${formatUsd(totals.savedMicroUsd)}: free tiers bill $0`
+            : undefined
+        }
+        trend={
+          data && (
+            <Sparkline
+              values={data.series.map((p) => p.billedCostMicroUsd ?? p.costMicroUsd)}
+              label={`Billed ${per}`}
               format={formatUsd}
             />
           )
@@ -216,8 +253,8 @@ export function Cost({ projectId, filters }: { projectId: string; filters: Analy
       {(data) => (
         <ShareTable
           label={label}
-          columns={['Requests', 'Tokens']}
-          valueLabel="Cost"
+          columns={['Requests', 'Tokens', 'Billed']}
+          valueLabel="List cost"
           rows={rows(data)}
           total={data.totals.costMicroUsd}
           format={formatUsd}

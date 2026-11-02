@@ -151,7 +151,13 @@ export interface Metrics {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** List cost: tokens at each model's price (ADR 024). */
   costMicroUsd: number;
+  /** What the providers bill: 0 on free tiers. */
+  billedCostMicroUsd?: number;
+  savedMicroUsd?: number;
+  /** Requests with usage whose model has no list price. */
+  unpricedRequests?: number;
   attempts: number;
   retries: number;
   fallbacks: number;
@@ -190,7 +196,11 @@ export interface ModelsResponse {
 export interface Spend {
   requests: number;
   totalTokens: number;
+  /** List cost (ADR 024). */
   costMicroUsd: number;
+  billedCostMicroUsd?: number;
+  savedMicroUsd?: number;
+  unpricedRequests?: number;
 }
 
 export interface BudgetStatus {
@@ -210,7 +220,12 @@ export interface CostResponse {
   byModel: (Spend & { model: string })[];
   byProject: (Spend & { projectId: string; projectName: string })[];
   byApiKey: (Spend & { apiKeyId: string | null; name: string | null })[];
-  series: { start: string; costMicroUsd: number; totalTokens: number }[];
+  series: {
+    start: string;
+    costMicroUsd: number;
+    billedCostMicroUsd?: number;
+    totalTokens: number;
+  }[];
   budgets: BudgetStatus[];
   projection: { monthlyCostMicroUsd: number | null; reason: string | null; daysOfData: number };
 }

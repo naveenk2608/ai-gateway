@@ -24,6 +24,7 @@ import {
   shortId,
 } from '../format.js';
 import { fetchGatewayStatus, type GatewayStatus } from '../gatewayStatus.js';
+import { billedNote, listCostText } from '../ui/cost.js';
 import { KpiCard, NoTrend } from '../ui/KpiCard.js';
 import { budgetUse, Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
@@ -140,14 +141,18 @@ function KpiRow({
       />
       <KpiCard
         icon={CircleDollarSign}
-        label="Cost"
-        value={data ? formatUsd(data.totals.costMicroUsd) : pending}
-        note={data ? `${formatCount(data.totals.totalTokens)} tokens` : undefined}
+        label="List cost"
+        value={data ? listCostText(data.totals) : pending}
+        note={
+          data
+            ? (billedNote(data.totals) ?? `${formatCount(data.totals.totalTokens)} tokens`)
+            : undefined
+        }
         trend={
           cost.data ? (
             <Sparkline
               values={cost.data.series.map((p) => p.costMicroUsd)}
-              label={`Cost per ${formatStep(cost.data.window.stepSeconds)}`}
+              label={`List cost per ${formatStep(cost.data.window.stepSeconds)}`}
               format={formatUsd}
             />
           ) : (

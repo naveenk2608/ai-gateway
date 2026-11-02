@@ -7,6 +7,8 @@ export interface ShareRow {
   /** The row's other columns, in the order of `columns`. */
   cells: ReactNode[];
   value: number;
+  /** Shown instead of the formatted value, e.g. "no list price". */
+  valueText?: ReactNode;
 }
 
 /**
@@ -56,7 +58,7 @@ export function ShareTable({
                     {cell}
                   </td>
                 ))}
-                <td className="num">{format(row.value)}</td>
+                <td className="num">{row.valueText ?? format(row.value)}</td>
                 <td className="share-col">
                   <div className="share-cell">
                     <span className="share-track" aria-hidden="true">

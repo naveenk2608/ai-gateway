@@ -172,7 +172,10 @@ describe('Overview KPI cards', () => {
     expect(await within(card('Requests')).findByText('120')).toBeTruthy();
     expect(within(card('Error rate')).getByText('7.3%')).toBeTruthy();
     expect(within(card('Latency p95')).getByText('2.10 s')).toBeTruthy();
-    expect(within(card('Cost')).getByText('$0.18')).toBeTruthy();
+    expect(within(card('List cost')).getByText('$0.18')).toBeTruthy();
+    expect(
+      within(card('List cost')).getByText('billed $0.05 · saved $0.14 · 4 with no list price'),
+    ).toBeTruthy();
     expect(within(card('Cache-hit ratio')).getByText('4.5%')).toBeTruthy();
   });
 
@@ -187,8 +190,8 @@ describe('Overview KPI cards', () => {
     stubApi('data');
     show(page());
     expect(
-      await within(card('Cost')).findByRole('img', {
-        name: /^Cost per 15 min: low/,
+      await within(card('List cost')).findByRole('img', {
+        name: /^List cost per 15 min: low/,
       }),
     ).toBeTruthy();
     await within(card('Requests')).findByText('120');
@@ -322,8 +325,12 @@ describe('Cost page', () => {
   it('shows spend, cost per request, tokens and the projection in KPI cards', async () => {
     stubApi('data');
     show(page());
-    expect(await within(card('Spend')).findByText('$0.18')).toBeTruthy();
-    expect(within(card('Spend')).getByRole('img', { name: /^Spend per 15 min: low/ })).toBeTruthy();
+    expect(await within(card('List cost')).findByText('$0.18')).toBeTruthy();
+    expect(
+      within(card('List cost')).getByRole('img', { name: /^List cost per 15 min: low/ }),
+    ).toBeTruthy();
+    expect(within(card('Billed')).getByText('$0.05')).toBeTruthy();
+    expect(within(card('Billed')).getByText('saved $0.14: free tiers bill $0')).toBeTruthy();
     expect(within(card('Cost per request')).getByText('$0.001533')).toBeTruthy();
     expect(within(card('Tokens')).getByText('52,000')).toBeTruthy();
     expect(within(card('Tokens')).getByText('40,000 in · 12,000 out')).toBeTruthy();
@@ -369,7 +376,7 @@ describe('Cost page', () => {
   it('compares nothing with a previous period', async () => {
     stubApi('data');
     show(page());
-    await within(card('Spend')).findByText('$0.18');
+    await within(card('List cost')).findByText('$0.18');
     expect(screen.queryByText(/previous|vs\.? last|[↑↓▲▼]/i)).toBeNull();
   });
 });
@@ -743,5 +750,22 @@ describe('provider badges', () => {
     await waitFor(() => expect(badge(byProvider, 'Mock')).toHaveLength(1));
     const byModel = screen.getByRole('heading', { name: 'By model' }).closest('section')!;
     await waitFor(() => expect(badge(byModel, 'Mock')).toHaveLength(1));
+  });
+
+  it('shows list and billed cost per row, and "no list price" for a model without one', async () => {
+    stubApi('data');
+    show(<Cost projectId={PROJECT_ID} filters={filters} />);
+    const byProvider = (await screen.findByRole('heading', { name: 'By provider' })).closest(
+      'section',
+    )!;
+    await waitFor(() => expect(badge(byProvider, 'Groq')).toHaveLength(1));
+    const groq = within(byProvider).getByTitle('Groq').closest('tr')!;
+    // A free tier: $0.14 at list price, nothing billed.
+    expect(within(groq).getByText('$0.14')).toBeTruthy();
+    expect(within(groq).getByText('$0.00')).toBeTruthy();
+    const byModel = screen.getByRole('heading', { name: 'By model' }).closest('section')!;
+    const unpriced = within(byModel).getByText('gemma-4-31b').closest('tr')!;
+    expect(within(unpriced).getByText('no list price')).toBeTruthy();
+    expect(within(unpriced).queryByText(/^\$0\.00$/)).toBeTruthy();
   });
 });
