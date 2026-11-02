@@ -1,6 +1,6 @@
 # Roadmap
 
-What is left to build, milestone by milestone, from M8 to the end of the project. Each section
+What is left to build, milestone by milestone, from M8 on. Each section
 has enough detail to start work from the repository alone: read this file, then
 [PLAN-NOTES.md](PLAN-NOTES.md) and the ADRs in [adr/](adr/).
 
@@ -244,9 +244,213 @@ then has an ADR file. (Written 2026-10-31; the trade-off notes are in `docs/trad
 - 2026-10-20 M0 "Local Compose Postgres uses trust auth… Production must supply credentials"
   (by design): credentials come from Secrets Manager.
 
-## After M10
+## Next milestones (M11–M17)
 
-Future work, not scheduled: a semantic cache with a measured false-hit rate; cost-aware routing
-evaluated against a labelled prompt set; a transactional outbox for usage events (closes the
-event-loss rows from M3 and M4); multi-region deployment notes. PLAN-NOTES rows marked `open`
-that no milestone above closes stay open until someone picks them up.
+M0–M10 are built; M10's checks that need an AWS account stay open in PLAN-NOTES. M11–M17 come
+from comparing the gateway with other open-source gateways in November 2026: LiteLLM, Portkey,
+Bifrost, TensorZero, Helicone, New API, agentgateway, Plano and OmniRoute. Each milestone closes
+a gap that comparison found. Everything stays at $0: free providers only, no AWS spend. Before
+M11, the demo database moves off Render's free Postgres, which expires on 2026-11-19 (see the
+2026-11-03 PLAN-NOTES row).
+
+## M11 — Real providers and honest costs
+
+**Goal.** Real free-tier providers carry the demo's traffic, and costs mean something: each
+request shows its list price and what was actually billed, free-tier quotas are tracked across
+instances, and budgets visibly work.
+
+**Scope**
+
+- More free providers, each enabled only when its key is set: Groq gpt-oss-120b, more Gemini
+  free models, Mistral, NVIDIA NIM, OpenRouter `:free` models, Cloudflare Workers AI and Z.AI.
+- A provider name per deployment, with prices keyed by provider instead of adapter kind.
+- List cost and billed cost per request, with "saved" on the dashboard.
+- Free-tier quotas and shared 429 cooldowns in Redis.
+- Cheapest-first routing above a soft budget threshold.
+- A cost comparison: the project's usage priced at other models' prices.
+- Scheduled real traffic to the live demo from GitHub Actions.
+
+**Acceptance**
+
+- [ ] A free-tier request shows a list cost and $0 billed.
+- [ ] A $0.02 budget refuses requests once it is spent.
+- [ ] A quota skip, and a cooldown shared by two instances, are tested.
+- [ ] With no provider keys, everything still works on the mock.
+
+**ADRs to write.** List cost versus billed cost (budgets count list cost). Free-tier quotas and
+shared cooldowns, including what happens when Redis is down.
+
+**PLAN-NOTES rows it closes**
+
+- 2026-10-21 UI "The dashboard names the provider of an `openai-compatible` deployment from its
+  id…" (provider names guessed from IDs, and the Cost page grouped by adapter kind).
+- 2026-10-28 Providers "GPT, Grok, DeepSeek and further Qwen models are not configured…" (no
+  free DeepSeek, no `chat-variety`).
+
+## M12 — Fixes and supply-chain safety
+
+**Goal.** Close two known problems from PLAN-NOTES, and make what CI builds and publishes
+verifiable.
+
+**Scope**
+
+- The dead-letter fix from PLAN-NOTES: claim a retried batch with `XCLAIM ... JUSTID` before
+  each wait.
+- A per-IP limit for unknown API keys.
+- `x-ratelimit-*` headers on successful replies.
+- GitHub Actions pinned to commit SHAs, Dependabot, an SBOM, a Trivy image scan, and signed
+  images published to GHCR.
+
+**Acceptance**
+
+- [ ] A two-worker Postgres-outage test dead-letters nothing.
+- [ ] An unknown-key flood gets 429s without a Postgres lookup each.
+- [ ] The image signature verifies.
+
+**PLAN-NOTES rows it closes**
+
+- 2026-10-31 M10 "Found while writing the Postgres-outage test… with two or more workers on the
+  Redis Stream…".
+- 2026-10-20 M4 "Requests with unknown API key IDs are not rate-limited per client IP…".
+- 2026-10-20 M4 "No `x-ratelimit-limit/remaining/reset` headers on successful responses…".
+
+## M13 — Tools, JSON output and embeddings
+
+**Goal.** Agents can use the gateway: tool calls, JSON output and image input pass through with
+the same limits, budgets and accounting as text, and embeddings get their own endpoint.
+
+**Scope**
+
+- Accept `tools`, `tool_choice`, `response_format` and image parts.
+- Stream tool-call deltas.
+- Count tool definitions in token estimates and budget reservations, and include them in the
+  cache key.
+- The mock fakes tool calls.
+- `/v1/embeddings` with keys, limits, budgets and accounting.
+
+**Acceptance**
+
+- [ ] The OpenAI SDK's tool-calling example works through the gateway, streaming and not.
+- [ ] An embeddings request is recorded with its cost.
+
+**PLAN-NOTES rows it closes**
+
+- 2026-10-20 M1 "Unsupported OpenAI parameters are rejected with a 400…", for tools,
+  `response_format` and image content (`logprobs` and `n > 1` stay rejected).
+
+## M14 — Smarter routing
+
+**Goal.** Lowest-latency routing spreads load instead of sending everything to the single
+fastest deployment, retries stay bounded during an outage, and identical requests in flight
+share one upstream call.
+
+**Scope**
+
+- Power-of-two-choices with PeakEWMA for lowest-latency routing.
+- A retry budget per deployment.
+- Request coalescing for identical cacheable requests in flight.
+
+**Acceptance**
+
+- [ ] A benchmark shows traffic spread across deployments.
+- [ ] 50 identical concurrent requests make one upstream call.
+- [ ] Retries stop at the budget during a provider outage.
+
+## M15 — Control and safety
+
+**Goal.** A client's retry is never charged twice, owners are warned before a budget runs out or
+a provider fails, and routing changes without a redeploy.
+
+**Scope**
+
+- `Idempotency-Key` support: replay the stored result instead of running the request again.
+- Signed webhook alerts (budget at 50/80/100%, breaker opened, dead letters growing), delivered
+  and retried by the worker.
+- Routing edited from the dashboard, stored with a version and reloaded by every instance
+  through Redis.
+
+**Acceptance**
+
+- [ ] A retried request with the same key is charged once.
+- [ ] A failed alert is retried and delivered.
+- [ ] A routing change shows on two instances within seconds.
+
+**PLAN-NOTES rows it closes**
+
+- 2026-10-21 M7 "Deployments and routing policies are shown read-only in Settings…" (the editing
+  part).
+
+## M16 — Guardrails
+
+**Goal.** Per-project checks keep sensitive values from reaching a provider and catch JSON
+answers that break their schema, and every action taken is recorded.
+
+**Scope**
+
+- Per-project checks before the model: mask emails, phone, card, Aadhaar and PAN numbers;
+  blocked words; a prompt size cap.
+- After the model: a JSON schema check.
+- Actions block, mask or flag; each is recorded per request and shown on the Security page.
+
+**Acceptance**
+
+- [ ] Masked values never reach the provider (a test asserts it).
+- [ ] Flags show on the dashboard.
+- [ ] The approach for streamed answers is recorded in an ADR.
+
+**ADR to write.** Guardrails on streamed answers: how the after-model checks apply when part of
+the answer has already been sent.
+
+## M17 — Cloud and operations
+
+**Goal.** The gateway runs on Kubernetes from a chart CI has tested, one request can be followed
+as a trace through gateway, provider and worker, alerts follow SLOs, and the raw request tables
+stop growing without bound.
+
+**Scope**
+
+- A Helm chart tested in CI on a kind cluster (probes, autoscaling, pre-stop delay).
+- OpenTelemetry spans to a local Jaeger.
+- SLOs with burn-rate alert rules, checked by promtool.
+- Monthly partitions and retention for the raw request tables.
+
+**Acceptance**
+
+- [ ] CI installs the chart on kind and passes a smoke test.
+- [ ] A trace shows gateway, provider and worker.
+- [ ] Old partitions are dropped on schedule.
+
+**ADR to write.** Tracing with the OpenTelemetry SDK, superseding the "no tracing SDK" part of
+ADR 017 (which left it out for its memory and startup cost on the free host).
+
+**PLAN-NOTES rows it closes**
+
+- 2026-10-21 M8 "Traces exist only as IDs in the logs…".
+- 2026-10-21 M8 "The Grafana dashboard has no alert rules…".
+- 2026-10-21 M6 "Raw `request_records`, `provider_attempts` and `usage_events` have no
+  retention…", and the related 2026-10-20 M2 partitioning row.
+- 2026-10-20 M10 "No pre-stop delay between SIGTERM and closing the listener…", on Kubernetes.
+
+## Stretch
+
+Pick one after M17:
+
+- A semantic cache with a measured false-hit rate, using M13's embeddings.
+- Experiments: a feedback endpoint and A/B splits between models, with quality compared per
+  model.
+
+## Not planned
+
+- Hundreds of providers: breadth, not depth; the existing adapters already show the pattern.
+- A rewrite for raw speed: model latency dominates the gateway's own milliseconds.
+- Other request formats: large translation work.
+- An MCP gateway, prompt management, and image, audio and realtime APIs: each is a separate
+  product.
+- Paid-only models: they have no free tier.
+
+## Not scheduled
+
+Future work with no milestone: cost-aware routing evaluated against a labelled prompt set; a
+transactional outbox for usage events (closes the event-loss rows from M3 and M4); multi-region
+deployment notes. PLAN-NOTES rows marked `open` that no milestone above closes stay open until
+someone picks them up.
