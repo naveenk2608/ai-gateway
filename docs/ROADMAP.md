@@ -287,6 +287,105 @@ shared cooldowns, including what happens when Redis is down.
 - 2026-10-28 Providers "GPT, Grok, DeepSeek and further Qwen models are not configured…" (no
   free DeepSeek, no `chat-variety`).
 
+### M11 plan (2026-11-03)
+
+Order A → G; D and E build on B. Each part is pushed in small commits and CI is checked after
+each push. Model IDs, prices and free limits come only from official docs or `/models`
+endpoints, with the source and the date next to each value (code comments, or
+`docs/providers.md`); anything that cannot be confirmed is left out and gets a PLAN-NOTES row.
+
+**Part A — more free providers.**
+
+- Config: every deployment gets `providerName` (`groq`, `gemini`, `mistral`, `nvidia`,
+  `openrouter`, `cloudflare`, `zai`, `ollama`, `mock`) next to its adapter kind (`provider`,
+  unchanged, so existing model files keep working). It defaults to the adapter kind, so an
+  unnamed `openai-compatible` deployment keeps today's price key.
+- `baseUrl` may use `${VAR}` placeholders read from the environment at startup (Cloudflare's
+  account ID is never committed); a deployment whose variables are unset is disabled.
+- `healthCheck: "models" | "none"` per deployment (default `models`); Cloudflare's OpenAI
+  endpoint answers 405 to `GET /models`, so it uses `none` and recovers on `BREAKER_OPEN_MS`.
+- The usage event's attempt `provider` carries the provider name, plus `adapter` (kind). The
+  worker, `PriceBook` and `cost_aware` key prices by provider name.
+- Migration `0005_provider-names.sql`: re-keys the three seeded `openai-compatible` price rows
+  to `groq` / `gemini` in place (the immutability trigger is disabled for that one statement;
+  ids and values are unchanged, so every stored cost and `price_id` stays the same), and
+  relabels past `usage_events`, `provider_attempts` and rollup rows of the default Groq and
+  Gemini deployments. Costs are not touched.
+- Migration `0006_provider-prices.sql`: list prices for the new deployments, inserted with
+  `ON CONFLICT DO NOTHING` so hosts that never run the seed (the live demo) get them.
+- Deployments: Groq `openai/gpt-oss-120b`; Gemini `gemini-3.8-flash`, `gemini-3.1-flash-lite`;
+  Mistral `mistral-small-2603`, `mistral-large-4`; NVIDIA `deepseek-ai/deepseek-v4.1-flash`,
+  `nvidia/nemotron-3-super-120b-a12b`; OpenRouter `google/gemma-4-31b-it:free`; Cloudflare
+  `@cf/meta/llama-4-scout-17b-16e-instruct`; Z.AI `glm-4.7-flash`. Each is enabled only when
+  its key (and Cloudflare's account ID) is set.
+- Routes: `chat-default` (priority over real providers, mock last), `chat-fast`
+  (`lowest_latency`), `chat-cheap` (`cost_aware`), `chat-variety` (`weighted`); the last three
+  include the mock last-resort only where a route would otherwise be empty with no keys.
+- `/admin/models` returns `providerName`, `adapter` and the base-URL host; the dashboard names
+  providers from it; the Cost page groups by provider name. New providers use the letter tile
+  unless a logo exists in `@lobehub/icons-static-svg` 1.95.1 (MIT, as now).
+- Real checks: no provider key is set in this environment, so each is recorded "not checked:
+  no key" in PLAN-NOTES.
+
+**Part B — list price vs actually paid.**
+
+- `billing: "free_tier" | "paid"` per deployment (default `paid`, so nothing is under-counted).
+  The attempt record carries it; the worker stores `cost_micro_usd` (list, unchanged meaning)
+  and a new `billed_cost_micro_usd` (0 on `free_tier`, the list cost on `paid`), both fixed at
+  ingest.
+- Migration `0007_billed-cost.sql`: the new usage column (history: billed = list, as every past
+  request was counted), `billed_cost_micro_usd` and `unpriced_requests` on the three rollup
+  tables, and the rollup view and function recreated to fill them.
+- Analytics API (overview, cost) and the Overview and Cost pages show list, billed and saved
+  (list − billed); a model with no price shows "no list price", never $0.
+- Budgets keep counting list cost. ADR 024 records it.
+
+**Part C — free-tier quotas and shared cooldowns.**
+
+- Optional `quota` per deployment (`requestsPerMinute`, `requestsPerDay`, `tokensPerMinute`,
+  `tokensPerDay`), from published free limits only, with sources in `docs/providers.md`.
+- `QuotaBoard` (gateway, Redis Lua like the limiter): fixed UTC minute and day windows per
+  deployment; a deployment whose quota would be exceeded is skipped and the reason goes on the
+  next attempt (`skipped groq-gpt-oss-120b (quota: 1000 of 1000 requests today)`); when every
+  deployment is skipped the request fails with 503 `quota_exhausted` and a `retry-after`.
+- An upstream 429 sets `gw:cooldown:<deployment>` for its `Retry-After` or
+  `PROVIDER_COOLDOWN_MS`; every instance skips it until then (checked once per candidate, so
+  ADR 011's same-deployment retry is unchanged). `x-ratelimit-limit-*` / `-remaining-*` headers
+  whose limit matches a configured quota raise our count to the provider's.
+- Redis down: quota and cooldown checks fail open. ADR 025 records it.
+- `/admin/models` returns today's use, limits and cooldown; the Models page shows a meter and
+  the cooldown state; Prometheus counters for quota skips and cooldowns.
+
+**Part D — budgets you can see working.** `projects.budget_soft_threshold_pct` (migration
+`0008_budget-soft-threshold.sql`, default 80), editable in Settings → Limits and budget and
+audited. Admission returns the budget's used share; at or above the threshold the router puts
+the cheapest deployments first and records `budget at 82%: cheapest first`. A $0.02 budget is
+tested end to end and the README shows how to set up a demo project with one.
+
+**Part E — what it would cost elsewhere.** `model_prices.reference` (migration
+`0009_reference-prices.sql`) with a few official paid prices for models never called; the
+`PriceBook` and the worker ignore reference rows (tested). `GET
+/admin/analytics/cost-comparison` prices the project's tokens for a range under every priced
+model, sorted, with a tokenizer note; a card on the Cost page.
+
+**Part F — scheduled real traffic.** `scripts/traffic.mjs` (varied routes, streaming and not,
+small `max_tokens`, one repeated prompt, waits up to 2 minutes for a sleeping host,
+`--dry-run`), `.github/workflows/traffic.yml` (every 2 hours and on demand, skipped on forks and
+when `DEMO_API_KEY` / `DEMO_BASE_URL` are missing, short timeout); CI runs the dry run. Docs
+compare the daily totals with each provider's free limits.
+
+**Part G — wrap-up.** README (real-providers table with free limits, sources and dates; costs,
+quotas, scheduled traffic; unpooled Postgres URL for migrations), `.env.example`, PLAN-NOTES
+(close the rows above and the 2026-11-03 Render row: the demo's `DATABASE_URL` moved to Neon on
+2026-11-03), ticked acceptance checks.
+
+**Decisions to review** (also in PLAN-NOTES): list prices for free endpoints come from the
+model maker's own paid API price when it sells one (DeepSeek for NVIDIA's DeepSeek), else from
+OpenRouter's paid listing of the same model (`/api/v1/models`), else none; only one OpenRouter
+`:free` deployment, because OpenRouter's free limit (20/min, 50/day without credits) is per
+account, not per model; NVIDIA, Mistral, Gemini and Z.AI publish no per-model free limits, so
+they get no quota (their 429s still put them on cooldown).
+
 ## M12 — Fixes and supply-chain safety
 
 **Goal.** Close two known problems from PLAN-NOTES, and make what CI builds and publishes
