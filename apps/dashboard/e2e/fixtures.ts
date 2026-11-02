@@ -5,6 +5,7 @@
  */
 import type {
   ApiKey,
+  CostComparisonResponse,
   CostResponse,
   InfraResponse,
   Me,
@@ -258,6 +259,14 @@ export function emptyResponses(role: Role): Responses {
     [`/admin/projects/${PROJECT_ID}/members`]: { data: [] },
     '/admin/models': { deployments: [], models: [] },
     '/admin/models/quotas': { deployments: [] } satisfies QuotaUsageResponse,
+    '/admin/analytics/cost-comparison': {
+      window,
+      promptTokens: 0,
+      completionTokens: 0,
+      actualCostMicroUsd: 0,
+      note: "Priced at list prices with this range's token counts; each model counts tokens with its own tokenizer.",
+      models: [],
+    } satisfies CostComparisonResponse,
     '/ready': { status: 'ready', checks: { postgres: { status: 'ok', latencyMs: 2 } } },
     '/admin/analytics/overview': {
       window,
@@ -385,6 +394,34 @@ export function sampleResponses(role: Role): Responses {
         },
       ],
     } satisfies QuotaUsageResponse,
+    // The busy project's tokens at a free model's list price and at a reference price.
+    '/admin/analytics/cost-comparison': {
+      window,
+      promptTokens: 40_000,
+      completionTokens: 12_000,
+      actualCostMicroUsd: 184_000,
+      note: "Priced at list prices with this range's token counts; each model counts tokens with its own tokenizer.",
+      models: [
+        {
+          provider: 'zai',
+          model: 'glm-4.7-flash',
+          reference: false,
+          inputMicroUsdPerMTok: 60_500,
+          outputMicroUsdPerMTok: 400_000,
+          priceSince: '2026-11-03T00:00:00.000Z',
+          costMicroUsd: 7_220,
+        },
+        {
+          provider: 'gemini',
+          model: 'gemini-3.1-pro-preview',
+          reference: true,
+          inputMicroUsdPerMTok: 2_000_000,
+          outputMicroUsdPerMTok: 12_000_000,
+          priceSince: '2026-11-03T00:00:00.000Z',
+          costMicroUsd: 224_000,
+        },
+      ],
+    } satisfies CostComparisonResponse,
     [`/admin/requests/${REQUEST_ID}`]: requestDetail,
     '/admin/analytics/overview': {
       window,

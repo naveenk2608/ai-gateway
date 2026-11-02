@@ -251,6 +251,25 @@ export interface CostResponse {
   projection: { monthlyCostMicroUsd: number | null; reason: string | null; daysOfData: number };
 }
 
+/** GET /admin/analytics/cost-comparison: the range's tokens at other models' prices. */
+export interface CostComparisonResponse {
+  window: Window;
+  promptTokens: number;
+  completionTokens: number;
+  actualCostMicroUsd: number;
+  note: string;
+  models: {
+    provider: string;
+    model: string;
+    /** A paid model the gateway never calls, priced for comparison only. */
+    reference: boolean;
+    inputMicroUsdPerMTok: number;
+    outputMicroUsdPerMTok: number;
+    priceSince: string;
+    costMicroUsd: number;
+  }[];
+}
+
 export interface BreakerInstance {
   instanceId: string;
   state: 'closed' | 'open' | 'half_open';

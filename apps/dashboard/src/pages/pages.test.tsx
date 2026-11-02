@@ -362,6 +362,21 @@ describe('Cost page', () => {
     expect(within(keyRow).getByText('100.0%')).toBeTruthy();
   });
 
+  it("compares the range's tokens at other models' prices, marking reference prices", async () => {
+    stubApi('data');
+    show(page());
+    const card = (
+      await screen.findByRole('heading', { name: 'What it would cost elsewhere' })
+    ).closest('section')!;
+    const reference = (await within(card).findByText('gemini-3.1-pro-preview')).closest('tr')!;
+    expect(within(reference).getByText('reference, never called')).toBeTruthy();
+    expect(within(reference).getByText('$0.22')).toBeTruthy();
+    const free = within(card).getByText('glm-4.7-flash').closest('tr')!;
+    expect(within(free).getByText('$0.007220')).toBeTruthy();
+    expect(within(free).queryByText('reference, never called')).toBeNull();
+    expect(within(card).getByText(/own tokenizer/)).toBeTruthy();
+  });
+
   it('shows each budget as a meter with its alert', async () => {
     stubApi('data');
     show(page());

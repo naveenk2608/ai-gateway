@@ -9,6 +9,7 @@ import {
   type CostResponse,
   type ModelCatalog,
   type Spend,
+  type CostComparisonResponse,
 } from '../api.js';
 import { BarSeriesChart } from '../charts/BarSeriesChart.js';
 import { foldShares } from '../charts/series.js';
@@ -163,6 +164,48 @@ function CostKpis({ cost, range }: { cost: UseQueryResult<Data>; range: string }
   );
 }
 
+/** The range's tokens priced under every priced model, cheapest first (M11). */
+function Comparison({ data }: { data: CostComparisonResponse }) {
+  return (
+    <>
+      <p className="muted small card-text">
+        {formatCount(data.promptTokens)} prompt and {formatCount(data.completionTokens)} completion
+        tokens, which cost {formatUsd(data.actualCostMicroUsd)} at list price with the models used.
+      </p>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Model</th>
+              <th className="num">Per 1M in / out</th>
+              <th className="num">Would cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.models.map((m) => (
+              <tr key={`${m.provider}|${m.model}`}>
+                <td>
+                  <ProviderBadge provider={identifyProvider({ provider: m.provider })} />
+                </td>
+                <td>
+                  <span className="mono small">{m.model}</span>
+                  {m.reference && <span className="badge">reference, never called</span>}
+                </td>
+                <td className="num">
+                  {formatUsd(m.inputMicroUsdPerMTok)} / {formatUsd(m.outputMicroUsdPerMTok)}
+                </td>
+                <td className="num">{formatUsd(m.costMicroUsd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted small card-text">{data.note}</p>
+    </>
+  );
+}
+
 /** One project's spend this month against its budget, as a meter. */
 function BudgetTile({ budget }: { budget: BudgetStatus }) {
   return (
@@ -235,6 +278,14 @@ export function Cost({ projectId, filters }: { projectId: string; filters: Analy
     queryFn: ({ signal }) =>
       api<CostResponse>(analyticsPath('cost', projectId, filters), { signal }),
     refetchInterval: 30_000,
+  });
+  const comparison = useQuery({
+    queryKey: ['cost-comparison', projectId, filters],
+    queryFn: ({ signal }) =>
+      api<CostComparisonResponse>(analyticsPath('cost-comparison', projectId, filters), {
+        signal,
+      }),
+    refetchInterval: 60_000,
   });
   const noSpend = `No requests in the last ${filters.range}, so nothing was spent.`;
   const breakdown = (
@@ -366,6 +417,17 @@ export function Cost({ projectId, filters }: { projectId: string; filters: Analy
           'No model was called.',
         )}
       </div>
+      <QueryCard
+        title="What it would cost elsewhere"
+        what="the cost comparison"
+        query={comparison}
+        isEmpty={(data) =>
+          data.promptTokens + data.completionTokens === 0 || data.models.length === 0
+        }
+        empty={`No tokens in the last ${filters.range} to compare.`}
+      >
+        {(data) => <Comparison data={data} />}
+      </QueryCard>
       <QueryCard
         title="Budgets this month (UTC)"
         what="budgets"
