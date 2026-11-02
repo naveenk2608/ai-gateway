@@ -103,7 +103,7 @@ async function chat(model: string) {
 }
 
 async function usageOf(requestId: string) {
-  let usage: { costMicroUsd: number | null; priceId: string | null } | null = null;
+  let usage: { costMicroUsd: number | null; priceId: string | null } | null | undefined;
   await vi.waitFor(
     async () => {
       const res = await fetch(`${url}/admin/requests/${requestId}`, { headers: { cookie } });
