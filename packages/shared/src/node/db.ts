@@ -42,6 +42,8 @@ export interface ProjectsTable {
   concurrency_limit: number | null;
   monthly_budget_micro_usd: number | null;
   max_request_cost_micro_usd: number | null;
+  /** From this share of the monthly budget (percent), routing goes cheapest first. */
+  budget_soft_threshold_pct: Generated<number>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }

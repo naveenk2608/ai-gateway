@@ -4,6 +4,7 @@ import { captureLogger } from '../../test/helpers.js';
 import { PriceBook } from '../limits/prices.js';
 import type { RoutingPolicy } from '../models-config.js';
 import type { Deployment, Route } from '../providers/registry.js';
+import { cheapestFirstAt } from './routed.js';
 import { LatencyTracker, planRoute, type PlanContext } from './router.js';
 
 const deployment = (id: string, providerModel = id) =>
@@ -126,5 +127,42 @@ describe('planRoute', () => {
     expect(planRoute(alone, context()).map((c) => [c.deployment.id, c.reason])).toEqual([
       ['fallback', 'last resort 1 of 1'],
     ]);
+  });
+
+  it('puts the cheapest first above the soft budget threshold, whatever the policy', () => {
+    const { logger } = captureLogger();
+    const price = (model: string, out: number) => ({
+      id: model,
+      provider: 'mock',
+      model,
+      inputMicroUsdPerMTok: 0,
+      outputMicroUsdPerMTok: out,
+      effectiveFrom: 0,
+    });
+    const prices = PriceBook.of(
+      [price('a', 2_000_000), price('b', 1_000_000)],
+      systemClock,
+      logger,
+    );
+    const below = planRoute(route('priority', { a: 1, b: 1 }), context({ prices }));
+    expect(below.map((c) => c.deployment.id)).toEqual(['a', 'b']);
+    const above = planRoute(
+      route('priority', { a: 1, b: 1 }),
+      context({ prices, cheapestFirstAt: 82 }),
+    );
+    expect(above.map((c) => [c.deployment.id, c.reason])).toEqual([
+      ['b', 'budget at 82%: cheapest first; cheapest: at most 100 micro-USD'],
+      ['a', 'budget at 82%: cheapest first; cost rank 2: at most 200 micro-USD'],
+    ]);
+  });
+});
+
+describe('cheapestFirstAt', () => {
+  it('is the whole percentage used once it reaches the threshold', () => {
+    expect(cheapestFirstAt(undefined)).toBeUndefined();
+    expect(cheapestFirstAt({ usedShare: 0.799, softThresholdPct: 80 })).toBeUndefined();
+    expect(cheapestFirstAt({ usedShare: 0.8, softThresholdPct: 80 })).toBe(80);
+    expect(cheapestFirstAt({ usedShare: 0.826, softThresholdPct: 80 })).toBe(82);
+    expect(cheapestFirstAt({ usedShare: 1.2, softThresholdPct: 100 })).toBe(120);
   });
 });

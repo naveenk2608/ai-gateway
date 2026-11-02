@@ -306,6 +306,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           clientSignal: disconnect.signal,
           log: request.log,
           maxTokens: clientMaxTokens ?? Math.max(...deployments.map((d) => d.maxOutputTokens)),
+          budget: settlement.budget,
         };
         // Each deployment gets its own model name and, unless the client set one, output cap.
         // The last attempt started is the one that answered when runRouted resolves.

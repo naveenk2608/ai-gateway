@@ -173,6 +173,7 @@ export function databaseKeyLoader(db: Db): KeyLoader {
         'projects.concurrency_limit as project_concurrency_limit',
         'projects.monthly_budget_micro_usd',
         'projects.max_request_cost_micro_usd',
+        'projects.budget_soft_threshold_pct',
       ])
       .where('api_keys.key_id', '=', keyId)
       .executeTakeFirst();
@@ -194,6 +195,7 @@ export function databaseKeyLoader(db: Db): KeyLoader {
         },
         monthlyBudgetMicroUsd: row.monthly_budget_micro_usd,
         maxRequestCostMicroUsd: row.max_request_cost_micro_usd,
+        budgetSoftThresholdPct: row.budget_soft_threshold_pct,
       },
     };
   };

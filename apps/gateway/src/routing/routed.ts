@@ -42,6 +42,15 @@ export interface RoutedRequest {
   log: FastifyBaseLogger;
   /** For cost-aware ordering: the output cap the request may use. */
   maxTokens: number;
+  /** The project's budget use at admission and its soft threshold, when it has a budget. */
+  budget?: { usedShare: number; softThresholdPct: number } | undefined;
+}
+
+/** The budget use in whole percent when it has reached the soft threshold; undefined otherwise. */
+export function cheapestFirstAt(budget: RoutedRequest['budget']): number | undefined {
+  if (!budget) return undefined;
+  const pct = Math.floor(budget.usedShare * 100);
+  return pct >= budget.softThresholdPct ? pct : undefined;
 }
 
 /** Failures another deployment might not have; a rejected request or a gone client do not. */
@@ -75,6 +84,7 @@ export async function runRouted<T>(
     at: req.trace.startedAt,
     promptTokens: req.trace.estimatedPromptTokens,
     maxTokens: req.maxTokens,
+    cheapestFirstAt: cheapestFirstAt(req.budget),
   });
   const { maxAttempts, perDeployment, baseDelayMs, maxDelayMs } = deps.retry;
   let attempts = 0;

@@ -41,6 +41,11 @@ export interface PlanContext {
   at: number;
   promptTokens: number;
   maxTokens: number;
+  /**
+   * The project's budget use in percent, set when it is at or above its soft threshold: the
+   * deployments are then tried cheapest first, whatever the route's policy (M11).
+   */
+  cheapestFirstAt?: number | undefined;
 }
 
 /** Picks one target with probability proportional to its weight. */
@@ -61,12 +66,15 @@ function weightedPick<T extends { weight: number }>(items: T[], random: () => nu
  */
 export function planRoute(route: Route, ctx: PlanContext): Candidate[] {
   const last = route.targets.filter((t) => t.lastResort);
+  const main = route.targets.filter((t) => !t.lastResort);
+  const budgetPct = ctx.cheapestFirstAt;
   return [
-    ...orderByPolicy(
-      route.policy,
-      route.targets.filter((t) => !t.lastResort),
-      ctx,
-    ),
+    ...(budgetPct === undefined
+      ? orderByPolicy(route.policy, main, ctx)
+      : orderByPolicy('cost_aware', main, ctx).map((c) => ({
+          deployment: c.deployment,
+          reason: `budget at ${budgetPct}%: cheapest first; ${c.reason}`,
+        }))),
     ...last.map((t, i) => ({
       deployment: t.deployment,
       reason: `last resort ${i + 1} of ${last.length}`,

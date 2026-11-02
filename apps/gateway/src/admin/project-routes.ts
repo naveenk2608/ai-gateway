@@ -25,6 +25,7 @@ interface ProjectRow extends LimitColumns {
   allowed_models: string[] | null;
   monthly_budget_micro_usd: number | null;
   max_request_cost_micro_usd: number | null;
+  budget_soft_threshold_pct: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -38,6 +39,7 @@ function toProject(row: ProjectRow, role: Role) {
     budget: {
       monthlyLimitMicroUsd: row.monthly_budget_micro_usd,
       maxRequestCostMicroUsd: row.max_request_cost_micro_usd,
+      softThresholdPct: row.budget_soft_threshold_pct,
     },
     role,
     createdAt: iso(row.created_at),
@@ -54,6 +56,7 @@ const projectColumns = [
   'concurrency_limit',
   'monthly_budget_micro_usd',
   'max_request_cost_micro_usd',
+  'budget_soft_threshold_pct',
   'created_at',
   'updated_at',
 ] as const;
@@ -203,6 +206,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: AdminDeps): vo
             ...(budget?.maxRequestCostMicroUsd === undefined
               ? {}
               : { max_request_cost_micro_usd: budget.maxRequestCostMicroUsd }),
+            ...(budget?.softThresholdPct === undefined
+              ? {}
+              : { budget_soft_threshold_pct: budget.softThresholdPct }),
             updated_at: new Date(),
           })
           .where('id', '=', projectId)

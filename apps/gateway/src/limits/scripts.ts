@@ -94,11 +94,12 @@ for i = 1, 2 do
 end
 local budgetLimit = tonumber(ARGV[11])
 local amount = tonumber(ARGV[12])
+local spent, reserved = 0, 0
 if budgetLimit >= 0 then
   if redis.call('EXISTS', KEYS[7]) == 0 then return {-1} end
   local totals = redis.call('HMGET', KEYS[7], 'spent', 'reserved')
-  local spent = tonumber(totals[1]) or 0
-  local reserved = tonumber(totals[2]) or 0
+  spent = tonumber(totals[1]) or 0
+  reserved = tonumber(totals[2]) or 0
   if amount > budgetLimit then return {0, 'budget', 'project', -1} end
   if spent + reserved + amount > budgetLimit then
     return {0, 'budget', 'project', math.max(1000, tonumber(ARGV[15]) - now)}
@@ -125,7 +126,8 @@ if budgetLimit >= 0 and amount > 0 then
   redis.call('PEXPIRE', KEYS[8], ARGV[14])
   redis.call('ZADD', KEYS[9], ARGV[10], ARGV[13])
 end
-return {1}
+-- The month's spend and reservations before this request, for the soft threshold.
+return {1, spent, reserved}
 `);
 
 /**

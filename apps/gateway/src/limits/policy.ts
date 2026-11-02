@@ -16,7 +16,14 @@ export interface UsagePolicy {
   monthlyBudgetMicroUsd: number | null;
   /** The most one request may reserve; null means no cap beyond the budget. */
   maxRequestCostMicroUsd: number | null;
+  /**
+   * From this share of the monthly budget (percent, spent plus reserved), routing puts the
+   * cheapest deployments first. Absent means the default, 80.
+   */
+  budgetSoftThresholdPct?: number;
 }
+
+export const DEFAULT_SOFT_THRESHOLD_PCT = 80;
 
 export const NO_SCOPE_LIMITS: ScopeLimits = { rpm: null, tpm: null, concurrency: null };
 

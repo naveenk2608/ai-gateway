@@ -51,6 +51,11 @@ export const budgetSchema = z.object({
   monthlyLimitMicroUsd: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
   /** The most one request may cost in the worst case (its prompt estimate plus max_tokens). */
   maxRequestCostMicroUsd: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+  /**
+   * Soft threshold, in percent of the monthly limit (default 80): from there on, routing puts the
+   * cheapest deployments first and records why. At 100% requests are refused.
+   */
+  softThresholdPct: z.number().int().min(1).max(100),
 });
 export const budgetPatchSchema = budgetSchema.partial().strict();
 

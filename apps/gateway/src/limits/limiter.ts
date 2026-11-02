@@ -27,7 +27,13 @@ export interface AdmitRequest {
 }
 
 export type Admission =
-  { admitted: true; ticket: Ticket } | { admitted: false; rejection: Rejection };
+  | {
+      admitted: true;
+      ticket: Ticket;
+      /** The month's spend and reservations before this request; null without a budget. */
+      budget: { spentMicroUsd: number; reservedMicroUsd: number } | null;
+    }
+  | { admitted: false; rejection: Rejection };
 
 /** Reads a project's recorded spend for a period from Postgres, to rebuild lost Redis totals. */
 export type SpendLoader = (projectId: string, period: BudgetPeriod) => Promise<number>;
@@ -155,7 +161,13 @@ export class Limiter {
       concurrency: [policy.key, policy.project],
       budgeted,
     });
-    return { admitted: true, ticket };
+    return {
+      admitted: true,
+      ticket,
+      budget: budgeted
+        ? { spentMicroUsd: Number(reply[1] ?? 0), reservedMicroUsd: Number(reply[2] ?? 0) }
+        : null,
+    };
   }
 
   /**

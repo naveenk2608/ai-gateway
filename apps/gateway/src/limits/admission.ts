@@ -4,7 +4,7 @@ import { GatewayError } from '../errors.js';
 import type { Deployment } from '../providers/registry.js';
 import type { RequestTrace } from '../proxy/trace.js';
 import type { Limiter, Rejection, Ticket } from './limiter.js';
-import { hasLimits, type ScopeLimits } from './policy.js';
+import { DEFAULT_SOFT_THRESHOLD_PCT, hasLimits, type ScopeLimits } from './policy.js';
 import type { PriceBook } from './prices.js';
 
 /** What happens when Redis cannot be reached (ADR 010). */
@@ -34,6 +34,12 @@ export interface Settlement {
   readonly costMicroUsd: number;
   /** Gives back what the request did not use. Never throws; failures are logged. */
   release(): void;
+  /**
+   * The project's budget use when the request was admitted: spent plus reserved over the monthly
+   * limit, and the soft threshold (percent) from which routing goes cheapest first. Absent
+   * without a budget, or when limits were not checked (Redis down in open mode).
+   */
+  readonly budget?: { usedShare: number; softThresholdPct: number };
 }
 
 const SCOPE_NAMES = { key: 'API key', project: 'project' } as const;
@@ -124,6 +130,7 @@ export class AdmissionControl {
     if (!hasLimits(policy) && !priced) return NOTHING_HELD;
 
     let ticket: Ticket;
+    let budget: Settlement['budget'];
     try {
       // Without prices a budget would reserve nothing (Postgres was down at startup).
       if (priced && !this.#o.prices.loaded) throw new Error('model prices are not loaded yet');
@@ -149,6 +156,18 @@ export class AdmissionControl {
         throw rejectionError(result.rejection, input, tokens);
       }
       ticket = result.ticket;
+      if (result.budget && policy.monthlyBudgetMicroUsd !== null) {
+        const used = result.budget.spentMicroUsd + result.budget.reservedMicroUsd;
+        budget = {
+          usedShare:
+            policy.monthlyBudgetMicroUsd > 0
+              ? used / policy.monthlyBudgetMicroUsd
+              : used > 0
+                ? 1
+                : 0,
+          softThresholdPct: policy.budgetSoftThresholdPct ?? DEFAULT_SOFT_THRESHOLD_PCT,
+        };
+      }
       if (policy.monthlyBudgetMicroUsd !== null) {
         trace.setBudget({
           limitMicroUsd: policy.monthlyBudgetMicroUsd,
@@ -170,6 +189,7 @@ export class AdmissionControl {
     return {
       tokens,
       costMicroUsd,
+      ...(budget ? { budget } : {}),
       release: () => {
         if (released) return;
         released = true;

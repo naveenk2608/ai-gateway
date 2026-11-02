@@ -758,7 +758,7 @@ describe('limits and budgets through the admin API', () => {
     const { cookie, p } = await ownedProject();
     expect((await api('GET', `/admin/projects/${p}`, cookie)).body).toMatchObject({
       limits: none,
-      budget: { monthlyLimitMicroUsd: null, maxRequestCostMicroUsd: null },
+      budget: { monthlyLimitMicroUsd: null, maxRequestCostMicroUsd: null, softThresholdPct: 80 },
     });
     const patched = await api('PATCH', `/admin/projects/${p}`, cookie, {
       limits: { requestsPerMinute: 60, concurrentRequests: 5 },
@@ -784,6 +784,29 @@ describe('limits and budgets through the admin API', () => {
       limits: { requestsPerMinute: 0 },
     });
     expect(bad.status).toBe(400);
+
+    // The soft threshold (M11) is edited like the rest of the budget, and audited.
+    const soft = await api('PATCH', `/admin/projects/${p}`, cookie, {
+      budget: { softThresholdPct: 50 },
+    });
+    expect(soft.body).toMatchObject({
+      budget: { monthlyLimitMicroUsd: 1_000_000, softThresholdPct: 50 },
+    });
+    for (const softThresholdPct of [0, 101, 50.5]) {
+      const invalid = await api('PATCH', `/admin/projects/${p}`, cookie, {
+        budget: { softThresholdPct },
+      });
+      expect(invalid.status, String(softThresholdPct)).toBe(400);
+    }
+    const audit = await db
+      .selectFrom('audit_logs')
+      .select('details')
+      .where('project_id', '=', p)
+      .where('action', '=', 'project.update')
+      .execute();
+    expect(audit.map((a) => a.details)).toContainEqual({
+      changes: { budget: { softThresholdPct: 50 } },
+    });
 
     const viewer = await createUser(db, [{ projectId: p, role: 'viewer' }]);
     const denied = await api('PATCH', `/admin/projects/${p}`, await login(viewer), {
