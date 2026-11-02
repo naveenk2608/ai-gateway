@@ -658,6 +658,38 @@ describe('Settings tabs', () => {
   });
 });
 
+describe('budget soft threshold in the settings page', () => {
+  it('shows the cheapest-first threshold and saves a new one with the budget', async () => {
+    const fetchMock = stubApi('data', 'owner');
+    show(<Settings projectId={PROJECT_ID} userId="u" tab="limits" />);
+    const field = await screen.findByLabelText(/Cheapest deployments first from/);
+    expect((field as HTMLInputElement).value).toBe('80');
+    fireEvent.change(field, { target: { value: '90' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save limits and budget' }));
+    await waitFor(() => {
+      const patch = (fetchMock.mock.calls as unknown[][]).find(
+        ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH',
+      );
+      expect(JSON.parse(String((patch?.[1] as RequestInit).body))).toMatchObject({
+        budget: { softThresholdPct: 90 },
+      });
+    });
+  });
+
+  it('refuses a threshold outside 1 to 100 before calling the API', async () => {
+    const fetchMock = stubApi('data', 'owner');
+    show(<Settings projectId={PROJECT_ID} userId="u" tab="limits" />);
+    const field = await screen.findByLabelText(/Cheapest deployments first from/);
+    fireEvent.change(field, { target: { value: '120' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save limits and budget' }));
+    expect(await screen.findByText(/whole percentage from 1 to 100/)).toBeTruthy();
+    const patched = (fetchMock.mock.calls as unknown[][]).some(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH',
+    );
+    expect(patched).toBe(false);
+  });
+});
+
 describe('roles in the settings page', () => {
   const mutationButtons = [
     'Save project settings',

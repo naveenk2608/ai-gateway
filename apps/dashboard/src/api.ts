@@ -79,6 +79,8 @@ export interface RequestDetail extends Omit<
 export interface Budget {
   monthlyLimitMicroUsd: number | null;
   maxRequestCostMicroUsd: number | null;
+  /** From this share of the monthly budget (percent), routing puts the cheapest first. */
+  softThresholdPct?: number;
 }
 
 export interface Project {

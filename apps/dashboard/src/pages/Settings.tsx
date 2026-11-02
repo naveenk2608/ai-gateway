@@ -313,6 +313,7 @@ function LimitsForm({ project }: { project: Project }) {
   const [budget, setBudget] = useState({
     monthly: usdInput(project.budget.monthlyLimitMicroUsd),
     perRequest: usdInput(project.budget.maxRequestCostMicroUsd),
+    softThreshold: String(project.budget.softThresholdPct ?? 80),
   });
   const [invalid, setInvalid] = useState<string | null>(null);
   const save = useSaveProject(project.id);
@@ -334,10 +335,23 @@ function LimitsForm({ project }: { project: Project }) {
       setInvalid('Budgets are dollar amounts (up to 6 decimals), or empty for none.');
       return;
     }
+    const softThresholdPct = Number(budget.softThreshold.trim());
+    if (
+      !/^\d+$/.test(budget.softThreshold.trim()) ||
+      softThresholdPct < 1 ||
+      softThresholdPct > 100
+    ) {
+      setInvalid('The cheapest-first threshold is a whole percentage from 1 to 100.');
+      return;
+    }
     setInvalid(null);
     save.mutate({
       limits: parsedLimits,
-      budget: { monthlyLimitMicroUsd: monthly, maxRequestCostMicroUsd: perRequest },
+      budget: {
+        monthlyLimitMicroUsd: monthly,
+        maxRequestCostMicroUsd: perRequest,
+        softThresholdPct,
+      },
     });
   };
 
@@ -388,6 +402,14 @@ function LimitsForm({ project }: { project: Project }) {
               inputMode="decimal"
               value={budget.perRequest}
               onChange={(e) => setBudget({ ...budget, perRequest: e.target.value })}
+            />
+          </label>
+          <label>
+            Cheapest deployments first from (% of the monthly budget)
+            <input
+              inputMode="numeric"
+              value={budget.softThreshold}
+              onChange={(e) => setBudget({ ...budget, softThreshold: e.target.value })}
             />
           </label>
         </fieldset>
