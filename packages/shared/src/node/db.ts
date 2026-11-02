@@ -100,6 +100,8 @@ export interface ModelPricesTable {
   input_micro_usd_per_mtok: number;
   output_micro_usd_per_mtok: number;
   effective_from: Timestamp;
+  /** A paid model no deployment calls, for the cost comparison only; never prices a request. */
+  reference: Generated<boolean>;
   created_at: CreatedAt;
 }
 

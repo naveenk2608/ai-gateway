@@ -105,7 +105,12 @@ export class PriceBook {
 
 export function databasePriceLoader(db: Db): PriceLoader {
   return async () => {
-    const rows = await db.selectFrom('model_prices').selectAll().execute();
+    // Reference prices are for the cost comparison only: they never price or route a request.
+    const rows = await db
+      .selectFrom('model_prices')
+      .selectAll()
+      .where('reference', '=', false)
+      .execute();
     return rows.map((row) => ({
       id: row.id,
       provider: row.provider,

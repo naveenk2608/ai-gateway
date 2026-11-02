@@ -42,6 +42,14 @@ const MIGRATION_PRICES = [
   output: Number(output),
 }));
 
+/** The reference prices migration 0009 inserts: paid models no deployment may call. */
+const REFERENCE_PRICES = [
+  ...readFileSync(
+    fileURLToPath(new URL('../../../db/migrations/0009_reference-prices.sql', import.meta.url)),
+    'utf8',
+  ).matchAll(/\(gen_random_uuid\(\), '([^']+)', '([^']+)', (\d+), (\d+), '[^']+', true\)/g),
+].map(([, provider, model]) => ({ provider: provider!, model: model! }));
+
 function registry(env: Record<string, string>) {
   const { logger } = captureLogger();
   return createRegistry(config, {
@@ -242,5 +250,15 @@ describe('the default models file', () => {
     }
     // No price is keyed by an adapter kind any more.
     expect(MIGRATION_PRICES.filter((p) => p.provider === 'openai-compatible')).toEqual([]);
+  });
+
+  it('serves no model that has only a reference price, so none is ever routed', () => {
+    expect(REFERENCE_PRICES.length).toBeGreaterThanOrEqual(3);
+    for (const ref of REFERENCE_PRICES) {
+      const serving = Object.entries(config.deployments).filter(
+        ([, d]) => d.provider === ref.provider && d.model === ref.model,
+      );
+      expect(serving, `${ref.provider} ${ref.model}`).toEqual([]);
+    }
   });
 });

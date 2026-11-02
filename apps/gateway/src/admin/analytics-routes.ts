@@ -1,4 +1,4 @@
-import { budgetPeriodAt, type Clock } from '@ai-gateway/shared';
+import { budgetPeriodAt, costMicroUsd, type Clock } from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -589,6 +589,112 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
         ),
         budgets: budgetRows,
         projection: projected,
+      };
+    },
+  );
+
+  routes.get(
+    '/admin/analytics/cost-comparison',
+    {
+      schema: {
+        tags,
+        summary: "The range's tokens priced under every priced model, cheapest first",
+        description:
+          'Sums prompt and completion tokens for the range and filters, then prices them at the ' +
+          'current list price of every model in model_prices: the deployments, and reference ' +
+          'prices of paid models the gateway never calls. Token counts differ between ' +
+          'tokenizers, so another model would count the same text differently; treat the ' +
+          'figures as an estimate.',
+        security,
+        querystring: analyticsQuerySchema,
+        response: {
+          200: z.object({
+            window: windowSchema,
+            promptTokens: z.number(),
+            completionTokens: z.number(),
+            /** What the range cost at list price with the models it actually used. */
+            actualCostMicroUsd: z.number(),
+            note: z.string(),
+            models: z.array(
+              z.object({
+                provider: z.string(),
+                model: z.string(),
+                /** A price-only row for a model no deployment calls; never routed. */
+                reference: z.boolean(),
+                inputMicroUsdPerMTok: z.number(),
+                outputMicroUsdPerMTok: z.number(),
+                /** When this price version took effect. */
+                priceSince: z.string(),
+                costMicroUsd: z.number(),
+              }),
+            ),
+          }),
+          ...errorResponses,
+        },
+      },
+    },
+    async (request) => {
+      const { range, projectId, ...filters } = request.query;
+      const now = clock.now();
+      const window = windowFor(range, now);
+      const scope = await projectScope(db, request, projectId);
+      const [totals, priceRows] = await Promise.all([
+        rollups(db, window, scope, filters)
+          .select([
+            sumOf('prompt_tokens').as('prompt'),
+            sumOf('completion_tokens').as('completion'),
+            sumOf('cost_micro_usd').as('cost'),
+          ])
+          .executeTakeFirstOrThrow(),
+        db
+          .selectFrom('model_prices')
+          .select([
+            'provider',
+            'model',
+            'reference',
+            'input_micro_usd_per_mtok',
+            'output_micro_usd_per_mtok',
+            'effective_from',
+          ])
+          .where('effective_from', '<=', new Date(now))
+          .execute(),
+      ]);
+      // The version in effect now for each provider and model.
+      const latest = new Map<string, (typeof priceRows)[number]>();
+      for (const row of priceRows) {
+        const key = `${row.provider}|${row.model}`;
+        const seen = latest.get(key);
+        if (!seen || row.effective_from > seen.effective_from) latest.set(key, row);
+      }
+      const models = [...latest.values()]
+        .map((row) => ({
+          provider: row.provider,
+          model: row.model,
+          reference: row.reference,
+          inputMicroUsdPerMTok: row.input_micro_usd_per_mtok,
+          outputMicroUsdPerMTok: row.output_micro_usd_per_mtok,
+          priceSince: iso(row.effective_from),
+          costMicroUsd: costMicroUsd(totals.prompt, totals.completion, {
+            inputMicroUsdPerMTok: row.input_micro_usd_per_mtok,
+            outputMicroUsdPerMTok: row.output_micro_usd_per_mtok,
+          }),
+        }))
+        .sort(
+          (a, b) =>
+            a.costMicroUsd - b.costMicroUsd ||
+            a.provider.localeCompare(b.provider) ||
+            a.model.localeCompare(b.model),
+        );
+      return {
+        window: describeWindow(window),
+        promptTokens: totals.prompt,
+        completionTokens: totals.completion,
+        actualCostMicroUsd: totals.cost,
+        note:
+          "Priced at today's list prices with this range's token counts. Each model counts " +
+          'tokens with its own tokenizer, so the same text would be more or fewer tokens there; ' +
+          'read these as estimates. Reference prices are paid models the gateway never calls.',
+        models,
       };
     },
   );

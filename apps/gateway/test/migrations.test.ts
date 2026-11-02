@@ -40,6 +40,8 @@ const MIGRATIONS = [
   '0005_provider-names',
   '0006_provider-prices',
   '0007_billed-cost',
+  '0008_budget-soft-threshold',
+  '0009_reference-prices',
 ];
 
 /** A throwaway database, so migrations run from scratch. */

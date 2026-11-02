@@ -46,6 +46,8 @@ async function loadPrices(trx: Db, events: UsageEvent[]): Promise<Map<string, Pr
   const rows = await trx
     .selectFrom('model_prices')
     .selectAll()
+    // Reference prices are for the cost comparison only; they never cost a request.
+    .where('reference', '=', false)
     .where('effective_from', '<=', new Date(latest))
     .where((eb) =>
       eb.or(
