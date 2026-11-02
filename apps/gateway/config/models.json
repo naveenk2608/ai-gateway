@@ -55,7 +55,13 @@
       "model": "openai/gpt-oss-20b",
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY",
-      "billing": "free_tier"
+      "billing": "free_tier",
+      "quota": {
+        "requestsPerMinute": 30,
+        "requestsPerDay": 1000,
+        "tokensPerMinute": 8000,
+        "tokensPerDay": 200000
+      }
     },
     "groq-gpt-oss-120b": {
       "adapter": "openai-compatible",
@@ -63,7 +69,13 @@
       "model": "openai/gpt-oss-120b",
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY",
-      "billing": "free_tier"
+      "billing": "free_tier",
+      "quota": {
+        "requestsPerMinute": 30,
+        "requestsPerDay": 1000,
+        "tokensPerMinute": 8000,
+        "tokensPerDay": 200000
+      }
     },
     "groq-qwen3.8-27b": {
       "adapter": "openai-compatible",
@@ -71,7 +83,13 @@
       "model": "qwen/qwen3.8-27b",
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY",
-      "billing": "free_tier"
+      "billing": "free_tier",
+      "quota": {
+        "requestsPerMinute": 30,
+        "requestsPerDay": 1000,
+        "tokensPerMinute": 8000,
+        "tokensPerDay": 200000
+      }
     },
     "gemini-3.5-flash-lite": {
       "adapter": "openai-compatible",
@@ -135,7 +153,11 @@
       "model": "google/gemma-4-31b-it:free",
       "baseUrl": "https://openrouter.ai/api/v1",
       "apiKeyEnv": "OPENROUTER_API_KEY",
-      "billing": "free_tier"
+      "billing": "free_tier",
+      "quota": {
+        "requestsPerMinute": 20,
+        "requestsPerDay": 50
+      }
     },
     "cloudflare-llama-4-scout": {
       "adapter": "openai-compatible",
@@ -144,7 +166,11 @@
       "baseUrl": "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
       "apiKeyEnv": "CLOUDFLARE_API_TOKEN",
       "billing": "free_tier",
-      "healthCheck": "none"
+      "healthCheck": "none",
+      "quota": {
+        "requestsPerMinute": 300,
+        "tokensPerDay": 129000
+      }
     },
     "zai-glm-4.7-flash": {
       "adapter": "openai-compatible",

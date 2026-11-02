@@ -3,10 +3,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import { GatewayError } from '../errors.js';
 import type { PriceBook } from '../limits/prices.js';
 import { ProviderError, type ProviderErrorKind } from '../providers/errors.js';
-import type { Route } from '../providers/registry.js';
+import type { Deployment, Route } from '../providers/registry.js';
 import type { AttemptContext, AttemptOutcome } from '../proxy/attempt.js';
 import type { RequestTrace } from '../proxy/trace.js';
 import { countsAsFailure, type BreakerBoard } from './breaker.js';
+import type { QuotaBoard, QuotaTicket } from './quota.js';
 import { planRoute, type LatencyTracker } from './router.js';
 
 export interface RetrySettings {
@@ -26,6 +27,11 @@ export interface RoutingDeps {
   retry: RetrySettings;
   /** A number in [0, 1), for weighted picks and backoff jitter. */
   random: () => number;
+  /**
+   * Free-tier quotas and 429 cooldowns shared through Redis (ADR 025). Without it (unit tests),
+   * every deployment may always be tried.
+   */
+  quotas?: QuotaBoard | undefined;
 }
 
 export interface RoutedRequest {
@@ -78,6 +84,9 @@ export async function runRouted<T>(
   const skipped: string[] = [];
   /** Deployments left behind so far, for the answering attempt's `passedOver`. */
   const passedOver: string[] = [];
+  /** Skips for a used-up quota or a 429 cooldown: the error when nothing could be tried. */
+  const limited: { kind: 'quota' | 'cooldown'; retryAfterMs: number }[] = [];
+  const promptTokens = req.trace.estimatedPromptTokens;
 
   for (const candidate of candidates) {
     const id = candidate.deployment.id;
@@ -87,6 +96,23 @@ export async function runRouted<T>(
       if (!breaker.tryAcquire()) {
         skipped.push(`${id} (circuit ${breaker.state})`);
         break;
+      }
+      let ticket: QuotaTicket | null = null;
+      if (deps.quotas) {
+        // A retry here follows this deployment's own failure and waited out its Retry-After,
+        // so only the quota applies to it, not the cooldown its 429 may have started.
+        const check = await deps.quotas.acquire(
+          candidate.deployment,
+          promptTokens + req.maxTokens,
+          { ignoreCooldown: tryNumber > 1 },
+        );
+        if (!check.ok) {
+          breaker.onNeutral();
+          skipped.push(`${id} (${check.reason})`);
+          limited.push({ kind: check.kind, retryAfterMs: check.retryAfterMs });
+          break;
+        }
+        ticket = check.ticket;
       }
       const reason =
         retryNote ??
@@ -105,7 +131,10 @@ export async function runRouted<T>(
         trace: req.trace,
         routing: { policy: route.policy, reason },
         passedOver: [...passedOver],
-        onEnd: (outcome) => settleHealth(deps, id, outcome),
+        onEnd: (outcome) => {
+          settleHealth(deps, id, outcome);
+          settleQuota(deps, candidate.deployment, ticket, outcome, promptTokens);
+        },
       };
       try {
         return await start(ctx);
@@ -136,6 +165,23 @@ export async function runRouted<T>(
   }
 
   if (lastError !== undefined) throw lastError;
+  if (limited.length > 0) {
+    // Nothing was tried: free-tier quotas are used up or providers asked us to back off. The
+    // client may retry when the first of them clears.
+    const waitMs = Math.min(...limited.map((l) => l.retryAfterMs));
+    const quota = limited.some((l) => l.kind === 'quota');
+    throw new GatewayError(
+      quota ? 'upstream_quota_exhausted' : 'upstream_rate_limited',
+      quota
+        ? `The free-tier quota of every deployment of \`${route.model}\` is used up; retry later.`
+        : `Every deployment of \`${route.model}\` is rate limited by its provider; retry later.`,
+      {
+        httpStatus: 429,
+        retryable: true,
+        retryAfterSeconds: Math.max(1, Math.ceil(waitMs / 1000)),
+      },
+    );
+  }
   // Every deployment's breaker is open: fail fast rather than call a deployment known to fail.
   const waitMs = Math.min(
     ...route.targets.map((t) => deps.breakers.get(t.deployment.id).retryInMs),
@@ -145,6 +191,26 @@ export async function runRouted<T>(
     `Every deployment of the model \`${route.model}\` is failing; retry shortly.`,
     { httpStatus: 503, retryable: true, retryAfterSeconds: Math.max(1, Math.ceil(waitMs / 1000)) },
   );
+}
+
+/**
+ * Quota bookkeeping when an attempt ends (ADR 025): its counted tokens corrected to what it used,
+ * the provider's own counts from its headers, and a cooldown after a 429.
+ */
+function settleQuota(
+  deps: RoutingDeps,
+  deployment: Deployment,
+  ticket: QuotaTicket | null,
+  outcome: AttemptOutcome,
+  promptTokens: number,
+): void {
+  const quotas = deps.quotas;
+  if (!quotas) return;
+  quotas.settle(ticket, outcome.usage?.totalTokens ?? null, promptTokens);
+  quotas.observe(deployment, outcome.rateLimit);
+  if (outcome.error instanceof ProviderError && outcome.error.kind === 'rate_limited') {
+    quotas.cooldown(deployment.id, outcome.error.retryAfterMs);
+  }
 }
 
 function settleHealth(deps: RoutingDeps, deployment: string, outcome: AttemptOutcome): void {

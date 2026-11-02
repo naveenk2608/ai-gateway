@@ -104,6 +104,11 @@ export const gatewayConfigSchema = z
     /** How often open breakers' deployments are health-checked, and each check's timeout. */
     HEALTH_CHECK_INTERVAL_MS: z.coerce.number().int().min(100).default(5_000),
     HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).default(5_000),
+    /**
+     * Cooldown after an upstream 429 that sent no Retry-After (ADR 025): every instance skips the
+     * deployment for this long. 0 starts none without a Retry-After.
+     */
+    PROVIDER_COOLDOWN_MS: z.coerce.number().int().min(0).max(3_600_000).default(30_000),
 
     /**
      * Exact-match response cache (ADR 013): for temperature-0 requests and those sent with

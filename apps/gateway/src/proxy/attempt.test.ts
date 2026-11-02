@@ -33,6 +33,7 @@ function setup(settings: Partial<MockSettings> = {}, timeouts = { timeoutMs: 1_0
     baseUrlHost: null,
     probes: true,
     billing: 'paid',
+    quota: null,
     providerModel: 'mock',
     timeoutMs: timeouts.timeoutMs,
     streamIdleTimeoutMs: timeouts.idle,

@@ -89,6 +89,27 @@ describe('the default models file', () => {
     expect(config.deployments['ollama-llama3.2']).toMatchObject({ provider: 'ollama' });
   });
 
+  it('sets the published free-tier quotas (docs/providers.md) and no others', () => {
+    const quotas = Object.fromEntries(
+      Object.entries(config.deployments).flatMap(([id, d]) => (d.quota ? [[id, d.quota]] : [])),
+    );
+    const groq = {
+      requestsPerMinute: 30,
+      requestsPerDay: 1_000,
+      tokensPerMinute: 8_000,
+      tokensPerDay: 200_000,
+    };
+    expect(quotas).toEqual({
+      'groq-gpt-oss-20b': groq,
+      'groq-gpt-oss-120b': groq,
+      'groq-qwen3.8-27b': groq,
+      // Per account, not per model: OpenRouter has one :free deployment here.
+      'openrouter-gemma-4-31b-free': { requestsPerMinute: 20, requestsPerDay: 50 },
+      // 10,000 free Neurons a day at 77,273 Neurons per million output tokens.
+      'cloudflare-llama-4-scout': { requestsPerMinute: 300, tokensPerDay: 129_000 },
+    });
+  });
+
   it('only uses OpenRouter models whose id ends in :free', () => {
     const openrouter = hosted.filter(([, d]) => d.provider === 'openrouter');
     expect(openrouter.length).toBeGreaterThan(0);

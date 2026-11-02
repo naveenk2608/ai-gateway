@@ -74,7 +74,7 @@ function setup(
         : next instanceof ProviderError
           ? next
           : new ProviderError(next, next);
-    ctx.onEnd?.({ error, latencyMs: 10, ttftMs: null });
+    ctx.onEnd?.({ error, latencyMs: 10, ttftMs: null, usage: null });
     return error ? Promise.reject(error) : Promise.resolve(`served by ${id}`);
   };
   const run = (signal = new AbortController().signal) => {

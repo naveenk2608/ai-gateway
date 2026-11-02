@@ -2,7 +2,13 @@ import { abortReason, childSpan, formatTraceparent, uuidv7, type Clock } from '@
 import type { FastifyBaseLogger } from 'fastify';
 import { ProviderError } from '../providers/errors.js';
 import type { Deployment } from '../providers/registry.js';
-import type { ChatRequest, ChatResult, StreamEvent } from '../providers/types.js';
+import type {
+  ChatRequest,
+  ChatResult,
+  RateLimitHeaders,
+  StreamEvent,
+  Usage,
+} from '../providers/types.js';
 import type { RequestTrace } from './trace.js';
 
 /** Abort reason when the client disconnects before the response is complete. */
@@ -59,6 +65,10 @@ export interface AttemptOutcome {
   error: unknown;
   latencyMs: number;
   ttftMs: number | null;
+  /** Tokens the provider reported; null when it reported none or the attempt failed first. */
+  usage: Usage | null;
+  /** The provider's own rate-limit counts, from its response headers. */
+  rateLimit?: RateLimitHeaders | undefined;
 }
 
 const noop = () => undefined;
@@ -78,6 +88,8 @@ class Attempt {
   readonly #startedAt: number;
   readonly #number: number;
   #firstEventAt: number | undefined;
+  #usage: Usage | null = null;
+  #rateLimit: RateLimitHeaders | undefined;
   #ended = false;
   readonly #onClientAbort = () => this.#controller.abort(new ClientClosedError());
 
@@ -110,6 +122,20 @@ class Attempt {
 
   markFirstEvent(): void {
     this.#firstEventAt ??= this.#ctx.clock.now();
+  }
+
+  /** Keeps what the provider reported about usage and its rate limits, for the outcome. */
+  report(usage: Usage | null, rateLimit: RateLimitHeaders | undefined): void {
+    this.#usage = usage;
+    this.#rateLimit = rateLimit;
+  }
+
+  /** Reports a stream's finish event when it passes through. */
+  seen(result: IteratorResult<StreamEvent>): IteratorResult<StreamEvent> {
+    if (!result.done && result.value.type === 'finish') {
+      this.report(result.value.usage, result.value.rateLimit);
+    }
+    return result;
   }
 
   /**
@@ -149,7 +175,13 @@ class Attempt {
     const outcome =
       error === undefined ? 'success' : error instanceof ProviderError ? error.kind : 'error';
     const ttftMs = this.#firstEventAt === undefined ? null : this.#firstEventAt - this.#startedAt;
-    this.#ctx.onEnd?.({ error, latencyMs: Math.max(0, now - this.#startedAt), ttftMs });
+    this.#ctx.onEnd?.({
+      error,
+      latencyMs: Math.max(0, now - this.#startedAt),
+      ttftMs,
+      usage: this.#usage,
+      rateLimit: this.#rateLimit,
+    });
     this.#ctx.trace?.recordAttempt({
       id: this.id,
       attemptNumber: this.#number,
@@ -212,6 +244,7 @@ export async function runChat(ctx: AttemptContext, req: ChatRequest): Promise<Ch
       ctx.deployment.timeoutMs,
       'response',
     );
+    attempt.report(result.usage, result.rateLimit);
     attempt.end();
     return result;
   } catch (err) {
@@ -244,11 +277,16 @@ export async function openStream(ctx: AttemptContext, req: ChatRequest): Promise
     void iterator.return?.().catch(noop);
   };
   try {
-    const first = await attempt.within(iterator.next(), ctx.deployment.timeoutMs, 'first_event');
+    const first = attempt.seen(
+      await attempt.within(iterator.next(), ctx.deployment.timeoutMs, 'first_event'),
+    );
     attempt.markFirstEvent();
     return {
       first,
-      next: () => attempt.within(iterator.next(), ctx.deployment.streamIdleTimeoutMs, 'idle'),
+      next: async () =>
+        attempt.seen(
+          await attempt.within(iterator.next(), ctx.deployment.streamIdleTimeoutMs, 'idle'),
+        ),
       close,
     };
   } catch (err) {

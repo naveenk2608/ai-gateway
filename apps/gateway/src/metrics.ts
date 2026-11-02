@@ -75,6 +75,8 @@ export interface MetricSources {
   /** Named round trips (postgres, redis); each rejects when its dependency is down. */
   checks: Record<string, () => Promise<void>>;
   timeoutMs: number;
+  /** Today's quota use per deployment, read from Redis at scrape time; absent in unit tests. */
+  quotas?: () => Promise<{ deployment: string; share: number | null }[]>;
 }
 
 export class GatewayMetrics {
@@ -93,6 +95,8 @@ export class GatewayMetrics {
   readonly #ttft: Histogram<'deployment'>;
   readonly #tokensPerSecond: Histogram<'deployment' | 'stream'>;
   readonly #estimateError: Histogram<'deployment'>;
+  readonly #providerSkips: Counter<'deployment' | 'reason'>;
+  readonly #cooldowns: Counter<'deployment'>;
 
   constructor(registry: Registry, labels: MetricLabels) {
     this.registry = registry;
@@ -166,6 +170,26 @@ export class GatewayMetrics {
       buckets: ESTIMATE_ERROR_BUCKETS,
       registers,
     });
+    this.#providerSkips = new Counter({
+      name: 'gateway_provider_skips_total',
+      help: 'Deployments skipped before a try: its free-tier quota was used up (quota), or a 429 put it on cooldown (cooldown).',
+      labelNames: ['deployment', 'reason'],
+      registers,
+    });
+    this.#cooldowns = new Counter({
+      name: 'gateway_provider_cooldowns_total',
+      help: 'Cooldowns started on this instance after an upstream 429; every instance skips the deployment until it ends.',
+      labelNames: ['deployment'],
+      registers,
+    });
+  }
+
+  providerSkipped(deployment: string, reason: 'quota' | 'cooldown'): void {
+    this.#providerSkips.inc({ deployment: bounded(deployment, this.#deployments), reason });
+  }
+
+  cooldownStarted(deployment: string): void {
+    this.#cooldowns.inc({ deployment: bounded(deployment, this.#deployments) });
   }
 
   /** `route` is the matched route pattern (never the raw URL); undefined for unmatched URLs. */
@@ -289,6 +313,26 @@ export class GatewayMetrics {
         this.set({ state: 'waiting' }, sources.pool.waitingCount);
       },
     });
+
+    const quotas = sources.quotas;
+    if (quotas) {
+      new Gauge({
+        name: 'gateway_provider_quota_used_ratio',
+        help: "Share of each deployment's tightest free-tier quota used in the current UTC minute or day (ADR 025); absent while Redis is unreachable.",
+        labelNames: ['deployment'],
+        registers,
+        async collect() {
+          this.reset();
+          try {
+            for (const { deployment, share } of await quotas()) {
+              if (share !== null) this.set({ deployment: bounded(deployment, deployments) }, share);
+            }
+          } catch {
+            // Redis is down: report nothing rather than stale or invented values.
+          }
+        },
+      });
+    }
 
     // Both dependency gauges are collected in the same scrape; one round trip serves them.
     let probing: Promise<Map<string, { up: boolean; seconds: number }>> | undefined;

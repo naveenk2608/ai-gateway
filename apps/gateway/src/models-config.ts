@@ -68,6 +68,24 @@ export type Billing = (typeof BILLING)[number];
  */
 const billing = z.enum(BILLING).default('paid');
 
+const perWindow = z.number().int().positive().max(1_000_000_000).optional();
+
+/**
+ * A provider's published free-tier limits for this deployment (ADR 025), counted across every
+ * gateway instance in fixed UTC minutes and days. A deployment whose quota would be exceeded is
+ * skipped. Only values from the provider's own docs belong here (see docs/providers.md).
+ */
+const quota = z
+  .object({
+    requestsPerMinute: perWindow,
+    requestsPerDay: perWindow,
+    tokensPerMinute: perWindow,
+    tokensPerDay: perWindow,
+  })
+  .strict()
+  .refine((q) => Object.values(q).some((v) => v !== undefined), 'set at least one limit')
+  .optional();
+
 const attemptTimeouts = {
   /** Non-streaming: the whole attempt. Streaming: until the first event. */
   timeoutMs: z.number().int().positive().max(600_000).default(60_000),
@@ -103,6 +121,7 @@ const mockDeployment = z
     model: z.string().min(1).default('mock'),
     mock: mockSettingsSchema.prefault({}),
     billing,
+    quota,
     ...attemptTimeouts,
   })
   .strict();
@@ -120,6 +139,7 @@ const openAICompatibleDeployment = z
       .regex(/^[A-Z][A-Z0-9_]*$/, 'use an environment variable name, e.g. GROQ_API_KEY'),
     healthCheck,
     billing,
+    quota,
     ...attemptTimeouts,
   })
   .strict();
@@ -133,6 +153,7 @@ const ollamaDeployment = z
     baseUrl: z.url({ protocol: /^https?$/ }).optional(),
     healthCheck,
     billing,
+    quota,
     ...attemptTimeouts,
   })
   .strict();

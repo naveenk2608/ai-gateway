@@ -76,7 +76,74 @@ export function modelCatalog(config: ModelsConfig, registry: ProviderRegistry): 
   };
 }
 
+const usedSchema = z.object({ requests: z.number(), tokens: z.number() });
+
+export const quotaUsageSchema = z.object({
+  /** Null when Redis is unreachable: quota use is not known then (checks fail open, ADR 025). */
+  deployments: z
+    .array(
+      z.object({
+        deployment: z.string(),
+        /** The free-tier quota from the models file; null for a deployment without one. */
+        limits: z
+          .object({
+            requestsPerMinute: z.number().nullable(),
+            requestsPerDay: z.number().nullable(),
+            tokensPerMinute: z.number().nullable(),
+            tokensPerDay: z.number().nullable(),
+          })
+          .nullable(),
+        /** Counted in the current UTC minute and day, across every gateway instance. */
+        minute: usedSchema,
+        today: usedSchema,
+        /** When the cooldown after an upstream 429 ends; null when none is running. */
+        cooldownUntil: z.string().nullable(),
+      }),
+    )
+    .nullable(),
+});
+export type QuotaUsageResponse = z.output<typeof quotaUsageSchema>;
+
 export function registerModelRoutes(app: FastifyInstance, deps: AdminDeps): void {
+  app.withTypeProvider<ZodTypeProvider>().get(
+    '/admin/models/quotas',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Free-tier quota use and 429 cooldowns per deployment (any user)',
+        description:
+          'Requests and tokens counted against each enabled deployment in the current UTC minute ' +
+          'and day, its quota from the models file, and any cooldown. `deployments` is null ' +
+          'while Redis is unreachable.',
+        security: [{ session: [] }],
+        response: { 200: quotaUsageSchema, ...errorResponses },
+      },
+    },
+    async (request): Promise<QuotaUsageResponse> => {
+      if (!deps.quotas) return { deployments: null };
+      try {
+        const usage = await deps.quotas();
+        return {
+          deployments: usage.map((u) => ({
+            deployment: u.deployment,
+            limits: u.limits && {
+              requestsPerMinute: u.limits.requestsPerMinute ?? null,
+              requestsPerDay: u.limits.requestsPerDay ?? null,
+              tokensPerMinute: u.limits.tokensPerMinute ?? null,
+              tokensPerDay: u.limits.tokensPerDay ?? null,
+            },
+            minute: u.minute,
+            today: u.today,
+            cooldownUntil:
+              u.cooldownUntil === null ? null : new Date(u.cooldownUntil).toISOString(),
+          })),
+        };
+      } catch (err) {
+        request.log.warn({ err }, 'quota use unavailable');
+        return { deployments: null };
+      }
+    },
+  );
   app.withTypeProvider<ZodTypeProvider>().get(
     '/admin/models',
     {

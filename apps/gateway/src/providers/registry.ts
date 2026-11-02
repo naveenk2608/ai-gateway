@@ -9,6 +9,7 @@ import {
   type ModelsConfig,
   type RoutingPolicy,
 } from '../models-config.js';
+import type { QuotaLimits } from '../routing/quota.js';
 import { MockProvider } from './mock.js';
 import { OllamaProvider } from './ollama.js';
 import { OpenAICompatibleProvider } from './openai-compatible.js';
@@ -27,6 +28,8 @@ export interface Deployment {
   probes: boolean;
   /** `free_tier`: the provider charges nothing; the list cost is still recorded (ADR 024). */
   billing: Billing;
+  /** Free-tier limits counted in Redis across instances (ADR 025); null without any. */
+  quota: QuotaLimits | null;
   /** The provider's model name, sent upstream. */
   providerModel: string;
   timeoutMs: number;
@@ -136,6 +139,7 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
       baseUrlHost: urlHost(created.baseUrl),
       probes: deployment.adapter === 'mock' || deployment.healthCheck === 'models',
       billing: deployment.billing,
+      quota: deployment.quota ?? null,
       providerModel: deployment.model,
       timeoutMs: deployment.timeoutMs,
       streamIdleTimeoutMs: deployment.streamIdleTimeoutMs,

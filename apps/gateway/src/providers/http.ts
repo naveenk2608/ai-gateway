@@ -1,6 +1,7 @@
 import type { Clock } from '@ai-gateway/shared';
 import { request, type Agent, type Dispatcher } from 'undici';
 import { errorForStatus, parseRetryAfter, ProviderError } from './errors.js';
+import type { RateLimitHeaders } from './types.js';
 
 /** Response bodies larger than this are rejected rather than buffered. */
 export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -137,4 +138,28 @@ export async function postJson(
         });
   error.upstreamCode = upstreamCode(text);
   throw error;
+}
+
+/** A non-negative integer header, or undefined when absent or not a number. */
+function headerCount(value: string | string[] | undefined): number | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * The provider's own request and token counts from `x-ratelimit-limit-*` and
+ * `x-ratelimit-remaining-*` headers (sent by Groq and others); undefined when there are none.
+ */
+export function rateLimitHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): RateLimitHeaders | undefined {
+  const found: RateLimitHeaders = {
+    limitRequests: headerCount(headers['x-ratelimit-limit-requests']),
+    remainingRequests: headerCount(headers['x-ratelimit-remaining-requests']),
+    limitTokens: headerCount(headers['x-ratelimit-limit-tokens']),
+    remainingTokens: headerCount(headers['x-ratelimit-remaining-tokens']),
+  };
+  return Object.values(found).some((v) => v !== undefined) ? found : undefined;
 }

@@ -6,6 +6,7 @@ import type { LoginThrottle } from '../limits/login-throttle.js';
 import type { InfraProbe } from './infra.js';
 import type { ModelCatalog } from './model-routes.js';
 import { errorBodySchema } from '../proxy/schema.js';
+import type { QuotaUsage } from '../routing/quota.js';
 
 export interface AdminDeps {
   db: Db;
@@ -20,6 +21,8 @@ export interface AdminDeps {
   infra: InfraProbe;
   /** Deployments and routing policies loaded at startup, for the settings page. */
   models: ModelCatalog;
+  /** Each deployment's quota use and cooldown, read from Redis (ADR 025). */
+  quotas?: () => Promise<QuotaUsage[]>;
 }
 
 export const roleSchema = z.enum(['owner', 'admin', 'viewer']);

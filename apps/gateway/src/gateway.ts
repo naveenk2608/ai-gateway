@@ -42,6 +42,7 @@ import { registerModels } from './proxy/models.js';
 import { BreakerBoard } from './routing/breaker.js';
 import { HealthChecker, HealthReporter } from './routing/health.js';
 import type { RoutingDeps } from './routing/routed.js';
+import { QuotaBoard, quotaUsedShare } from './routing/quota.js';
 import { LatencyTracker } from './routing/router.js';
 import { drainAndClose, type DrainOutcome } from './shutdown.js';
 import {
@@ -216,10 +217,20 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     intervalMs: config.HEALTH_CHECK_INTERVAL_MS,
     timeoutMs: config.HEALTH_CHECK_TIMEOUT_MS,
   });
+  const quotas = new QuotaBoard({
+    redis,
+    clock,
+    logger,
+    defaultCooldownMs: config.PROVIDER_COOLDOWN_MS,
+    onSkip: (deployment, kind) => metrics.providerSkipped(deployment, kind),
+    onCooldown: (deployment) => metrics.cooldownStarted(deployment),
+  });
+  const quotaUsage = () => quotas.usage(deployments);
   const routing: RoutingDeps = {
     breakers,
     latency: new LatencyTracker(),
     prices,
+    quotas,
     random: deps.random ?? Math.random,
     retry: {
       maxAttempts: config.RETRY_MAX_ATTEMPTS,
@@ -238,7 +249,15 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       })
     : null;
 
-  metrics.watch({ breakers, events, pool, checks, timeoutMs: config.READY_CHECK_TIMEOUT_MS });
+  metrics.watch({
+    breakers,
+    events,
+    pool,
+    checks,
+    timeoutMs: config.READY_CHECK_TIMEOUT_MS,
+    quotas: async () =>
+      (await quotaUsage()).map((u) => ({ deployment: u.deployment, share: quotaUsedShare(u) })),
+  });
   const processProbe = processInstanceProbe(() => events.stats());
   // The pipeline state stays visible here while the worker is down (stream lag rising).
   watchPipeline(metrics.registry, readPipeline);
@@ -304,6 +323,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         instance: () => processProbe.read(),
       }),
       models: modelCatalog(deps.models, registry),
+      quotas: quotaUsage,
     }),
   );
 

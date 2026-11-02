@@ -8,6 +8,7 @@ import {
   parseJson,
   postJson,
   probeGet,
+  rateLimitHeaders,
   readText,
 } from './http.js';
 import { parseSse } from './line-stream.js';
@@ -120,6 +121,7 @@ export class OpenAICompatibleProvider implements Provider {
       content: choice.message.content ?? '',
       finishReason: toFinishReason(choice.finish_reason),
       usage: toUsage(completion.usage),
+      rateLimit: rateLimitHeaders(response.headers),
     };
   }
 
@@ -150,7 +152,7 @@ export class OpenAICompatibleProvider implements Provider {
     if (finishReason === undefined) {
       throw new ProviderError('connection', 'upstream stream ended before a finish_reason');
     }
-    yield { type: 'finish', finishReason, usage };
+    yield { type: 'finish', finishReason, usage, rateLimit: rateLimitHeaders(response.headers) };
   }
 
   /** Lists models: the API is up and accepts the key, and no tokens are billed. */

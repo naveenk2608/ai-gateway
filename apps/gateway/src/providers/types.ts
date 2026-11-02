@@ -43,11 +43,23 @@ export interface Usage {
   totalTokens: number;
 }
 
+/**
+ * The provider's own counts from `x-ratelimit-*` response headers, when it sends them (Groq
+ * does). Which window each refers to differs by provider; quotas match them by their limit.
+ */
+export interface RateLimitHeaders {
+  limitRequests?: number | undefined;
+  remainingRequests?: number | undefined;
+  limitTokens?: number | undefined;
+  remainingTokens?: number | undefined;
+}
+
 export interface ChatResult {
   content: string;
   finishReason: FinishReason;
   /** Null when the provider did not report usage. */
   usage: Usage | null;
+  rateLimit?: RateLimitHeaders | undefined;
 }
 
 /**
@@ -56,7 +68,12 @@ export interface ChatResult {
  */
 export type StreamEvent =
   | { type: 'content'; text: string }
-  | { type: 'finish'; finishReason: FinishReason; usage: Usage | null };
+  | {
+      type: 'finish';
+      finishReason: FinishReason;
+      usage: Usage | null;
+      rateLimit?: RateLimitHeaders | undefined;
+    };
 
 export type ProviderKind = 'mock' | 'ollama' | 'openai-compatible';
 

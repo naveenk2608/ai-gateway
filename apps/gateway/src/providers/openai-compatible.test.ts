@@ -164,6 +164,47 @@ describe('OpenAICompatibleProvider.chat', () => {
   });
 });
 
+describe('rate-limit headers', () => {
+  const headers = {
+    'content-type': 'application/json',
+    'x-ratelimit-limit-requests': '1000',
+    'x-ratelimit-remaining-requests': '990',
+    'x-ratelimit-limit-tokens': '8000',
+    'x-ratelimit-remaining-tokens': 'not-a-number',
+  };
+
+  it("returns the provider's own counts with a completion", async () => {
+    const { provider } = await setup((_req, res) => {
+      res.writeHead(200, headers);
+      res.end(JSON.stringify(completion));
+    });
+    const result = await provider.chat(request, signal());
+    expect(result.rateLimit).toEqual({
+      limitRequests: 1000,
+      remainingRequests: 990,
+      limitTokens: 8000,
+      remainingTokens: undefined,
+    });
+  });
+
+  it('puts them on the finish event of a stream', async () => {
+    const { provider } = await setup((_req, res) => {
+      res.writeHead(200, { ...headers, 'content-type': 'text/event-stream' });
+      res.end(openAIStream(['Hi']));
+    });
+    const events = await collect(provider.chatStream(request, signal()));
+    expect(events.at(-1)).toMatchObject({
+      type: 'finish',
+      rateLimit: { limitRequests: 1000, remainingRequests: 990 },
+    });
+  });
+
+  it('has none when the provider sends none', async () => {
+    const { provider } = await setup((_req, res) => sendJson(res, 200, completion));
+    expect((await provider.chat(request, signal())).rateLimit).toBeUndefined();
+  });
+});
+
 describe('OpenAICompatibleProvider.chatStream', () => {
   it('asks for usage in the final chunk and yields content, then one finish with usage', async () => {
     const { upstream, provider } = await setup((_req, res) => {
