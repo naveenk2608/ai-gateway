@@ -272,13 +272,24 @@ instances, and budgets visibly work.
 
 **Acceptance**
 
-- [ ] A free-tier request shows a list cost and $0 billed.
-- [ ] A $0.02 budget refuses requests once it is spent.
-- [ ] A quota skip, and a cooldown shared by two instances, are tested.
-- [ ] With no provider keys, everything still works on the mock.
+- [x] A free-tier request shows a list cost and $0 billed (`usage-pipeline.test.ts` through the
+      gateway and worker; the saving on the Overview and Cost pages in `pages.test.tsx`).
+- [x] A $0.02 budget refuses requests once it is spent, and above the soft threshold the attempt
+      records "cheapest first" (`budget-soft-threshold.test.ts`).
+- [x] A quota skip, and a cooldown shared by two instances, are tested (`quotas.test.ts`: a mock
+      with a quota of 3 requests a day is skipped on the 4th with the reason stored; a 429 on one
+      instance makes the other skip a deployment that would have answered).
+- [x] With no provider keys, everything still works on the mock; with only the Groq and Gemini
+      keys, `chat-default` is as before (`default-models.test.ts`).
+- [x] Reference-price models are never routed (`cost-comparison.test.ts`, `default-models.test.ts`).
+- [x] The traffic script's dry run passes in CI.
+- [ ] Each new provider called once with a real key (health check, a call, a stream, usage):
+      not checked, no key was available (PLAN-NOTES).
+- [ ] The scheduled traffic runs against the live demo: waits for the owner's `DEMO_BASE_URL` and
+      `DEMO_API_KEY` secrets.
 
 **ADRs to write.** List cost versus billed cost (budgets count list cost). Free-tier quotas and
-shared cooldowns, including what happens when Redis is down.
+shared cooldowns, including what happens when Redis is down. Written: ADR 024 and ADR 025.
 
 **PLAN-NOTES rows it closes**
 
