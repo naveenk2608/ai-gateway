@@ -10,9 +10,11 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: all milestones (M0-M10) are built.** The MVP (M0-M5), the analytics API (M6), the
-full dashboard (M7), observability (M8), benchmarks (M9) and the AWS deployment code (M10:
-Terraform tested with a mocked provider, [never applied](docs/aws-deployment.md)).
+**Status: milestones M0-M11 are built.** The MVP (M0-M5), the analytics API (M6), the full
+dashboard (M7), observability (M8), benchmarks (M9), the AWS deployment code (M10: Terraform
+tested with a mocked provider, [never applied](docs/aws-deployment.md)) and real free providers
+with honest costs (M11; the new providers have not been called with real keys yet, see
+[docs/providers.md](docs/providers.md)). What comes next is in [docs/ROADMAP.md](docs/ROADMAP.md).
 Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trade-offs in
 [docs/trade-offs.md](docs/trade-offs.md).
 
@@ -25,6 +27,10 @@ Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trad
   health checks. Each attempt is stored with the reason it was made.
 - Usage accounting through a Redis Stream (or SQS on AWS) into Postgres, exactly once in effect,
   with a dead-letter path; costs from versioned prices.
+- Real free-tier providers, each enabled by its key: Groq, Gemini, Mistral, NVIDIA NIM,
+  OpenRouter `:free` models, Cloudflare Workers AI and Z.AI. Each request records its list cost
+  and what was actually billed ($0 on a free tier); free-tier quotas and 429 cooldowns are shared
+  by every instance; budgets route cheapest first above a soft threshold.
 - An analytics API over per-minute, hourly and daily rollups: traffic, cost and budgets, model
   comparison, reliability, rejections and pipeline health, for 1 h to 30 days.
 - A dashboard on that API: overview, requests with filters and routing history, cost and budgets,
@@ -271,10 +277,11 @@ ends without `[DONE]`.
 ## Models and routing
 
 Clients send a logical model name. [apps/gateway/config/models.json](apps/gateway/config/models.json)
-(or the file in `MODELS_CONFIG_PATH`) maps each name to deployments: a provider, its own model
-name, timeouts and an output cap. The file is validated at startup.
+(or the file in `MODELS_CONFIG_PATH`) maps each name to deployments: an adapter (the wire
+protocol), the provider's name, its own model name, timeouts and an output cap. The file is
+validated at startup.
 
-| Provider | Talks to | Notes |
+| Adapter | Talks to | Notes |
 | --- | --- | --- |
 | `mock` | nothing (in-process) | Deterministic: `latencyMs`, `ttftMs`, `tokensPerSecond`, `completionTokens`, `promptTokens`, `errorRate` with `seed`, `failWith` (`429` or `500`), `retryAfterMs`, `dropAfterTokens`. |
 | `ollama` | Ollama's `/api/chat` | `baseUrl` defaults to `OLLAMA_BASE_URL`. |
@@ -282,7 +289,21 @@ name, timeouts and an output cap. The file is validated at startup.
 
 Per deployment, `timeoutMs` bounds a non-streaming call or the wait for a stream's first token,
 `streamIdleTimeoutMs` the silence between tokens, and `maxOutputTokens` (4096) is sent upstream
-when the client sets no `max_tokens`. A client that disconnects cancels the upstream call.
+when the client sets no `max_tokens`. A client that disconnects cancels the upstream call. Also
+per deployment:
+
+- `adapter` and `provider`: the adapter kind, and who serves it (`groq`, `gemini`, `mistral`,
+  `nvidia`, `openrouter`, `cloudflare`, `zai`, `ollama`, `mock`; it defaults to the adapter
+  kind). Prices, costs, metrics and the dashboard go by the provider name, so two providers
+  serving the same model name keep separate prices. A file that still sets `provider` to the
+  adapter kind, as before M11, reads as that adapter.
+- `baseUrl` may hold `${NAME}` placeholders filled from the environment at startup (Cloudflare's
+  account ID); the deployment is disabled while one is unset.
+- `healthCheck`: `models` (default) probes an open breaker with `GET /models`; `none` sends
+  nothing, for providers without a model list, and the breaker half-opens after `BREAKER_OPEN_MS`.
+- `billing`: `free_tier` or `paid` (default), see [Costs](#costs-list-price-and-what-was-billed).
+- `quota`: the provider's published free limits, see
+  [Free-tier quotas and cooldowns](#free-tier-quotas-and-cooldowns).
 
 A model names one deployment, or several with a policy:
 
@@ -299,6 +320,10 @@ A model names one deployment, or several with a policy:
 | `weighted` | random, in proportion to `weight` | the rest by weight |
 | `lowest_latency` | lowest moving average of time to first byte; unmeasured ones first | slower ones |
 | `cost_aware` | lowest worst-case cost at current prices (unpriced counts as free) | costlier ones |
+
+A target marked `"lastResort": true` is tried only after every other target, in the order listed,
+under any policy: the mock in `chat-fast`, `chat-cheap` and `chat-variety` never wins on latency,
+price or weight, but answers when no provider key is set.
 
 - **Retries** (ADR 011): a timeout, rate limit, 5xx or dropped connection is retried on the same
   deployment (`RETRY_PER_DEPLOYMENT`, 2 tries) after a random backoff below
@@ -318,7 +343,8 @@ A model names one deployment, or several with a policy:
   model and request. Projects never share entries. Hits count toward request limits but cost
   nothing, and are recorded with `cacheHit: true`. `x-gateway-cache: off` skips the cache.
 
-The default file has these models:
+The default file has these models (each hosted one needs its provider's key; without it the
+deployment is disabled and the model answers 404):
 
 | Model | Served by | Needs |
 | --- | --- | --- |
@@ -326,15 +352,23 @@ The default file has these models:
 | `mock-slow`, `mock-rate-limited`, `mock-error`, `mock-flaky`, `mock-drop` | the mock, one failure mode each | nothing |
 | `mock-failover` | `priority`: `mock-error`, then `mock` | nothing |
 | `mock-balanced` | `weighted`: `mock` ×3, `mock-flaky` ×1 | nothing |
-| `chat-default` | `priority`: Groq `openai/gpt-oss-20b`, then Gemini `gemini-3.5-flash-lite`, then `mock` | nothing; each provider joins once its key is set |
-| `gpt-oss-20b` | Groq, `openai/gpt-oss-20b` | `GROQ_API_KEY` |
-| `qwen3` | Groq, `qwen/qwen3.8-27b` (a preview model on Groq) | `GROQ_API_KEY` |
-| `gemini-3.5-flash-lite` | Google Gemini API (OpenAI-compatible endpoint) | `GEMINI_API_KEY` |
+| `chat-default` | `priority`: Groq `openai/gpt-oss-20b`, Gemini `gemini-3.5-flash-lite`, Mistral Small 4, Cloudflare Llama 4 Scout, NVIDIA DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, OpenRouter Gemma 4 31B, then `mock` | nothing; each provider joins once its key is set |
+| `chat-fast` | `lowest_latency`: Groq gpt-oss-120b and gpt-oss-20b, Gemini 3.1 Flash-Lite, Mistral Small 4, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
+| `chat-cheap` | `cost_aware`: Gemini 3.1 Flash-Lite, Groq gpt-oss-20b, Mistral Small 4, NVIDIA DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
+| `chat-variety` | `weighted`: Groq gpt-oss-120b ×2, Gemini 3.8 Flash ×2, Mistral Large 4, NVIDIA Nemotron 3 Super and DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, OpenRouter Gemma 4 31B, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
+| `gpt-oss-20b`, `gpt-oss-120b`, `qwen3` | Groq (`qwen/qwen3.8-27b` is a preview model there) | `GROQ_API_KEY` |
+| `gemini-3.5-flash-lite`, `gemini-3.8-flash`, `gemini-3.1-flash-lite` | Gemini API | `GEMINI_API_KEY` |
+| `mistral-small`, `mistral-large` | Mistral (`mistral-small-2603`, `mistral-large-4`, a public preview) | `MISTRAL_API_KEY` |
+| `deepseek-v4.1-flash`, `nemotron-3-super` | NVIDIA NIM | `NVIDIA_API_KEY` |
+| `gemma-4-31b` | OpenRouter, `google/gemma-4-31b-it:free` | `OPENROUTER_API_KEY` |
+| `llama-4-scout` | Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` |
+| `glm-4.7-flash` | Z.AI | `ZAI_API_KEY` |
 | `llama3.2` | Ollama, `llama3.2:1b` | a running Ollama |
 
 A deployment whose key variable is empty is disabled at startup (the log says which), and a
-model with no enabled deployment answers 404. `chat-default` always answers: with no keys it is
-the mock.
+model with no enabled deployment answers 404. `chat-default`, `chat-fast`, `chat-cheap` and
+`chat-variety` always answer: with no keys they are the mock. With only the Groq and Gemini keys,
+`chat-default` is Groq, then Gemini, then the mock, as before M11.
 
 The mock also runs as a standalone HTTP server speaking the OpenAI wire format
 (`POST /v1/chat/completions` with or without streaming, `GET /v1/models`, `GET /stats` for its
@@ -346,49 +380,51 @@ In a container image it is `node dist/mock-server/main.js`.
 
 ### Using real providers
 
-Groq and the Gemini API both speak the OpenAI wire format, so they use the `openai-compatible`
-provider; no provider code is specific to them.
+Every hosted provider speaks the OpenAI wire format, so all of them use the `openai-compatible`
+adapter; no provider code is specific to one. Each has a free tier that needs no credit card.
 
-1. Create a key: Groq at <https://console.groq.com/keys>, Gemini at
-   <https://aistudio.google.com/apikey>.
-2. Put it in `.env` (never commit it) as `GROQ_API_KEY=` or `GEMINI_API_KEY=`, then restart
-   `pnpm dev`. With Compose, the `full` profile passes both through to the gateway. On a host such
-   as Render, set them as environment variables of the gateway service.
-3. Call `chat-default` (or `gpt-oss-20b`, `qwen3` or `gemini-3.5-flash-lite` directly):
+1. Create a key: Groq <https://console.groq.com/keys>, Gemini <https://aistudio.google.com/apikey>,
+   Mistral <https://console.mistral.ai/api-keys>, NVIDIA <https://build.nvidia.com>, OpenRouter
+   <https://openrouter.ai/settings/keys>, Cloudflare (an API token with Workers AI access, and the
+   account ID from the dashboard), Z.AI <https://z.ai/manage-apikey/apikey-list>.
+2. Put it in `.env` (never commit it) under the name in [.env.example](.env.example), then restart
+   `pnpm dev`. With Compose, the `full` profile passes them all through to the gateway. On a host
+   such as Render, set them as environment variables of the gateway service.
+3. Call `chat-default` (or any model in the table above):
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/chat/completions   -H "Authorization: Bearer $GATEWAY_KEY" -H 'content-type: application/json'   -d '{"model":"chat-default","messages":[{"role":"user","content":"Say hi"}]}'
+curl -s http://127.0.0.1:8080/v1/chat/completions -H "Authorization: Bearer $GATEWAY_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"model":"chat-default","messages":[{"role":"user","content":"Say hi"}]}'
 ```
 
-If Groq fails or is rate-limited, the request falls back to Gemini, then to the mock; the
-request's routing history in the dashboard shows each attempt and why.
+If Groq fails, is rate-limited or has used its free quota, the request falls back to the next
+provider, and finally to the mock; the request's routing history in the dashboard shows each
+attempt and why.
 
-`pnpm db:seed` adds prices for these models (from the providers' pricing pages, checked
-2026-10-21 and, for `qwen3`, 2026-10-28, with the sources in
-[apps/gateway/src/cli/seed-prices.ts](apps/gateway/src/cli/seed-prices.ts)), so their requests
-show a cost and count against budgets. A database the seed never ran on (such as the Render demo)
-needs the rows inserted; prices are versioned and never edited (ADR 016). Any unique UUID works
-as the `id`:
+| Provider | Free limit (as published) | Quota in the models file | Source, checked |
+| --- | --- | --- | --- |
+| Groq | 30 requests/min, 1,000/day, 8,000 tokens/min, 200,000 tokens/day per model | the same, per deployment | [rate limits](https://console.groq.com/docs/rate-limits), 2026-11-03 |
+| Gemini API | per project, shown only in AI Studio | none | [rate limits](https://aistudio.google.com/docs/rate-limits), 2026-11-03 |
+| Mistral | "restrictive", shown only in the console | none | Mistral docs, 2026-11-03 |
+| NVIDIA NIM | no official figure (forum reports 40/min) | none | 2026-11-03 |
+| OpenRouter `:free` | 20/min; 50/day per account without purchased credits | 20/min, 50/day | [limits](https://openrouter.ai/docs/api/reference/limits), 2026-11-03 |
+| Cloudflare Workers AI | 10,000 Neurons/day; 300 requests/min | 300/min; 129,000 tokens/day (derived from the Neurons) | [pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), [limits](https://developers.cloudflare.com/workers-ai/platform/limits/), 2026-11-03 |
+| Z.AI | GLM-4.7-Flash free; no published rate limit | none | [pricing](https://docs.z.ai/guides/overview/pricing), 2026-11-03 |
 
-```sql
-INSERT INTO model_prices (id, provider, model, input_micro_usd_per_mtok, output_micro_usd_per_mtok, effective_from)
-VALUES (gen_random_uuid(), 'openai-compatible', 'openai/gpt-oss-20b', 75000, 300000, '2026-10-21'),
-       (gen_random_uuid(), 'openai-compatible', 'qwen/qwen3.8-27b', 800000, 4000000, '2026-10-28'),
-       (gen_random_uuid(), 'openai-compatible', 'gemini-3.5-flash-lite', 300000, 2500000, '2026-10-21');
-```
+[docs/providers.md](docs/providers.md) has every model ID, list price and limit with its source
+and the date it was checked, and how each list price was chosen for endpoints that have none of
+their own. The list prices are inserted by a migration (`0006_provider-prices.sql`), so every
+database has them, the live demo included; prices are versioned and never edited (ADR 016).
 
-Free tiers have low request limits, and Google's pricing page says content sent on the Gemini
-free tier is used to improve its products (on the paid tier it is not); check each provider's
-terms before sending real data.
+Free tiers have low limits, and Google's pricing page says content sent on the Gemini free tier
+is used to improve its products (on the paid tier it is not); check each provider's terms before
+sending real data. `qwen3` and Mistral Large 4 are preview models: they may be withdrawn at short
+notice, so neither is in `chat-default`.
 
-`qwen3` is a preview model on Groq: Groq offers previews for evaluation only and may withdraw
-them at short notice, so it is not in `chat-default`. It is billed at Groq's listed price.
-
-Not configured, as checked on 2026-10-28: GPT (including OpenAI's open gpt-oss models, beyond the
-one on Groq), Grok, DeepSeek and further Qwen models through a free tier. GitHub Models, which
-offered them free, was retired on 2026-07-30, and OpenRouter's free (`:free`) models include none
-of these families today; all four are paid there. A free one can be added later as another
-`openai-compatible` deployment.
+Groq and Gemini were checked with real keys on 2026-10-21. No key for the providers added in M11
+was available when they were built (2026-11-03), so they are configured from their documentation
+and have not been called yet; the first real call of each is a step in PLAN-NOTES.
 
 ## Playground
 
@@ -432,7 +468,8 @@ none, so they hold across instances (ADR 008).
 curl -s -X PATCH "http://127.0.0.1:8080/admin/projects/$PROJECT_ID" \
   -b "gw_session=$SESSION" -H 'content-type: application/json' \
   -d '{"limits": {"requestsPerMinute": 60, "tokensPerMinute": 100000, "concurrentRequests": 10},
-       "budget": {"monthlyLimitMicroUsd": 5000000, "maxRequestCostMicroUsd": 50000}}'
+       "budget": {"monthlyLimitMicroUsd": 5000000, "maxRequestCostMicroUsd": 50000,
+                  "softThresholdPct": 80}}'
 ```
 
 | Setting | How it works |
@@ -442,6 +479,7 @@ curl -s -X PATCH "http://127.0.0.1:8080/admin/projects/$PROJECT_ID" \
 | `concurrentRequests` | Leases that running requests renew; a crashed instance's leases expire after `LIMITS_LEASE_TTL_MS` (30 s). |
 | `budget.monthlyLimitMicroUsd` | Per UTC month, in micro-dollars ($1 = 1,000,000). Each request reserves its worst-case cost and is charged its actual cost after (ADR 009). |
 | `budget.maxRequestCostMicroUsd` | The most one request may reserve; a costlier request gets a 400. |
+| `budget.softThresholdPct` | From this share of the monthly budget (default 80%), routing tries the cheapest deployments first, whatever the model's policy, and records why on the attempt (`budget at 82%: cheapest first; ...`). At 100% requests are refused. Editable in Settings → Limits and budget; every change is audited. |
 
 Rejections are recorded as `rejected` requests. Spend stays within **budget + requests in flight
 x max request cost**: a request costs more than it reserved only when the provider counts more
@@ -450,8 +488,97 @@ each project's monthly spend; if Redis loses its data (a restart with no persist
 are rebuilt from Postgres instead of starting from zero. Models with no price cost nothing.
 
 If Redis is unreachable, `LIMITS_FAIL_MODE=closed` (default) answers 503 to requests that have a
-limit or budget, and `open` admits them unchecked (ADR 010). Requests with no limits never touch
-Redis.
+limit or budget, and `open` admits them unchecked (ADR 010). Requests with no limits skip the
+limit scripts; their only Redis call is the free-tier quota and cooldown check, which fails open
+(ADR 025).
+
+Budgets count list cost, so they work on free tiers too (ADR 024). To see one work, give a demo
+project a tiny budget: in Settings → Limits and budget set the monthly budget to `0.02` (dollars)
+and the cheapest-first threshold to `50`, or with the API:
+
+```bash
+curl -s -X PATCH "http://127.0.0.1:8080/admin/projects/$PROJECT_ID" \
+  -b "gw_session=$SESSION" -H 'content-type: application/json' \
+  -d '{"budget": {"monthlyLimitMicroUsd": 20000, "softThresholdPct": 50}}'
+```
+
+Then send requests (the Playground works) until the budget runs out: below 50% each request goes
+to the route's first choice; above it the Requests page shows `budget at NN%: cheapest first` on
+each attempt; once spent, requests get a 429 `budget_exceeded` until the next UTC month. The Cost
+page's budget meter follows along. An integration test does exactly this
+(`apps/gateway/test/budget-soft-threshold.test.ts`).
+
+## Costs: list price and what was billed
+
+Each request stores two costs, both fixed when the worker ingests it (ADR 024):
+
+- **List cost**: its tokens at the model's price in `model_prices`, versioned (ADR 016). Budgets
+  count this, so a budget means the same on a free tier as on a paid one.
+- **Billed cost**: what the provider charges: 0 for a deployment with `billing: free_tier`, the
+  list cost for `paid`. Changing a deployment's billing later never changes past rows.
+
+The Overview and Cost pages show both and the difference as **saved**; each breakdown on the Cost
+page has a Billed column. A model with no list price (some free endpoints have no paid version
+anywhere) shows "no list price", never $0. Free endpoints without a price of their own use the
+model maker's paid price, or OpenRouter's paid listing of the same model; the source of each is in
+[docs/providers.md](docs/providers.md).
+
+**What it would cost elsewhere.** `GET /admin/analytics/cost-comparison` (a card on the Cost page)
+prices the range's prompt and completion tokens under every priced model, cheapest first. It
+includes reference prices of a few paid models the gateway never calls (`model_prices.reference`);
+the router, budgets and the worker never read those rows. Each model counts tokens with its own
+tokenizer, so these are estimates.
+
+## Free-tier quotas and cooldowns
+
+A deployment's `quota` (`requestsPerMinute`, `requestsPerDay`, `tokensPerMinute`,
+`tokensPerDay`) holds the provider's published free limits. Every instance counts in the same
+Redis keys, in fixed UTC minutes and days, with one Lua script per try (ADR 025):
+
+- A deployment whose quota would be exceeded is skipped, and the next attempt says why:
+  `skipped groq-gpt-oss-120b (quota, 1,000 of 1,000 requests today)`. If nothing is left, the
+  request gets a 429 `upstream_quota_exhausted` with `retry-after` until the window ends.
+- Tokens are counted up front (prompt estimate plus output cap) and corrected to the reported total
+  when the try ends; `x-ratelimit-*` headers whose limit matches a quota raise the count to the
+  provider's own.
+- An upstream 429 puts the deployment on a cooldown for its `Retry-After` (or
+  `PROVIDER_COOLDOWN_MS`, 30 s), and every instance skips it until then.
+- If Redis is down, quota checks fail open: the provider's own 429 still protects the quota, and a
+  free tier cannot overspend money.
+
+The Models page shows each deployment's use today against its quota, as a meter, and any running
+cooldown (`GET /admin/models/quotas`). Prometheus has `gateway_provider_skips_total`,
+`gateway_provider_cooldowns_total` and `gateway_provider_quota_used_ratio`.
+
+## Scheduled traffic
+
+[.github/workflows/traffic.yml](.github/workflows/traffic.yml) runs
+[scripts/traffic.mjs](scripts/traffic.mjs) every two hours (and on demand from the Actions tab),
+so the live demo's real providers carry some traffic and the dashboard has data. Each run waits up
+to two minutes for the sleeping host to wake, then sends six requests: `chat-default`,
+`chat-fast` and `chat-variety` streamed, `chat-cheap`, and one prompt twice at temperature 0 for
+the cache. Output caps are 8 to 48 tokens. CI runs `node scripts/traffic.mjs --dry-run`, which
+prints the plan and sends nothing. The job is skipped on forks, and without its secrets its steps
+are skipped and it succeeds.
+
+What it sends a day, against the free limits: 12 runs × 6 requests = **72 requests a day**, each
+under about 150 tokens with the providers' own prompt overhead, so **under about 11,000 tokens a
+day** in all. That is under 8% of one Groq model's 1,000 requests and 6% of its 200,000 tokens a
+day, under 9% of Cloudflare's 129,000-token daily quota, and far from the 30/min and 20/min
+limits; OpenRouter's 50 a day is reached only if almost everything else fails, and its quota then
+skips it. Gemini, Mistral, NVIDIA and Z.AI publish no per-model numbers.
+
+To turn it on (once):
+
+1. In the live dashboard, log in as the owner and pick the project the traffic should count
+   against (a separate "demo traffic" project keeps it apart; Settings → Limits and budget can
+   give it a budget, such as $1 a month).
+2. Settings → API keys → create a key named `traffic`, and copy it (it is shown once).
+3. On GitHub, Settings → Secrets and variables → Actions → New repository secret: add
+   `DEMO_BASE_URL` (the demo's URL, e.g. `https://ai-gateway-8var.onrender.com`) and
+   `DEMO_API_KEY` (the key).
+4. Actions → Traffic → Run workflow, to check one run by hand. To stop it, delete either secret or
+   disable the workflow; revoking the key in Settings stops it at the gateway.
 
 ## API keys and the admin API
 
@@ -564,8 +691,9 @@ its consumer group.
 `usage_source` is `reported` (by the provider), `estimated` (by the gateway's tokenizer
 approximation, when a stream was cut off or the provider sent no counts) or `missing`. Cost, in
 integer micro-dollars, uses the `model_prices` version in effect when the request started
-(ADR 016); price rows are immutable, so past costs never move. `pnpm db:seed` adds demo prices for
-the mock provider.
+(ADR 016); price rows are immutable, so past costs never move. Each usage row also stores the
+billed cost and the deployment's billing (ADR 024). `pnpm db:seed` adds a demo price for the mock
+provider; the real providers' list prices come with the migrations.
 
 Migrations are plain SQL in [db/migrations](db/migrations) (ADR 003), applied at startup under a
 Postgres advisory lock (`MIGRATE_ON_START`), or by hand with `pnpm db:migrate`.
@@ -719,6 +847,10 @@ A Redis without persistence (Render's free plan) is fine: rate limits restart, b
 rebuilt from Postgres, and the usage stream and consumer group are recreated. Events in the
 stream at the moment of a restart are lost.
 
+A hosted Postgres (the live demo uses Neon) must be given its **direct (unpooled) connection
+string** as `DATABASE_URL`: migrations run at startup under a session-level advisory lock, which a
+transaction-pooling proxy (PgBouncer in transaction mode, Neon's `-pooler` host) breaks.
+
 Then open the host's URL: it redirects to the dashboard (`/dashboard/`, built into the image), where
 the bootstrap owner logs in and the Playground chats through `/v1`. Or open `/docs`, **Authorize**
 with the key, and call `POST /v1/chat/completions`.
@@ -752,7 +884,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Secrets and first run | `API_KEY_PEPPER` (required), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_API_KEY` |
 | Event bus | `EVENT_BUS` (`redis` or `sqs`), `SQS_QUEUE_URL`, `SQS_DLQ_URL`, `AWS_REGION`, `SQS_ENDPOINT` (LocalStack only), `EVENTS_*`, `WORKER_*` |
 | Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*` |
-| Routing | `RETRY_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `OLLAMA_BASE_URL`) |
+| Routing | `RETRY_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
 | Cache | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
 | Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |
@@ -774,13 +906,14 @@ infra/compose    Docker Compose stack (compose.yaml at the root includes it); ob
                  LocalStack (SQS); aws-demo.yml is the AWS demo instance's override
 infra/terraform  AWS: demo/ and full/ setups, modules/ (network, Docker host), tests run with
                  a mocked provider, scripts/check.mjs (tags, no NAT gateway)
-scripts          formatting and the demo
+scripts          formatting, the demo, and traffic.mjs (the scheduled demo traffic)
 bench            k6 scenarios, the bench Compose stack, `pnpm bench` and the report generator;
                  results/ holds the committed runs
 docs/adr         architecture decision records
 docs/aws-deployment.md   the AWS guide (cost, deploy, destroy)
 docs/trade-offs.md       consistency, retries, reservation accuracy, cache correctness
 docs/ROADMAP.md  the milestones, with scope and acceptance checks
+docs/providers.md        every provider's model IDs, prices and free limits, with sources
 ```
 
 ## Known limitations
