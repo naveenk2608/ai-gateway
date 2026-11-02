@@ -99,7 +99,9 @@ describe('the default models file', () => {
 
   it('sets the published free-tier quotas (docs/providers.md) and no others', () => {
     const quotas = Object.fromEntries(
-      Object.entries(config.deployments).flatMap(([id, d]) => (d.quota ? [[id, d.quota]] : [])),
+      Object.entries(config.deployments).flatMap(([id, d]) =>
+        d.quota ? [[id, d.quota] as const] : [],
+      ),
     );
     const groq = {
       requestsPerMinute: 30,
