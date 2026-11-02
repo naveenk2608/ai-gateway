@@ -29,6 +29,7 @@ describe('models config', () => {
       adapter: 'mock',
       provider: 'mock',
       model: 'mock',
+      billing: 'paid',
       timeoutMs: 60_000,
       streamIdleTimeoutMs: 30_000,
       maxOutputTokens: 4_096,
