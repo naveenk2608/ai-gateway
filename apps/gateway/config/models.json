@@ -54,77 +54,88 @@
       "provider": "groq",
       "model": "openai/gpt-oss-20b",
       "baseUrl": "https://api.groq.com/openai/v1",
-      "apiKeyEnv": "GROQ_API_KEY"
+      "apiKeyEnv": "GROQ_API_KEY",
+      "billing": "free_tier"
     },
     "groq-gpt-oss-120b": {
       "adapter": "openai-compatible",
       "provider": "groq",
       "model": "openai/gpt-oss-120b",
       "baseUrl": "https://api.groq.com/openai/v1",
-      "apiKeyEnv": "GROQ_API_KEY"
+      "apiKeyEnv": "GROQ_API_KEY",
+      "billing": "free_tier"
     },
     "groq-qwen3.8-27b": {
       "adapter": "openai-compatible",
       "provider": "groq",
       "model": "qwen/qwen3.8-27b",
       "baseUrl": "https://api.groq.com/openai/v1",
-      "apiKeyEnv": "GROQ_API_KEY"
+      "apiKeyEnv": "GROQ_API_KEY",
+      "billing": "free_tier"
     },
     "gemini-3.5-flash-lite": {
       "adapter": "openai-compatible",
       "provider": "gemini",
       "model": "gemini-3.5-flash-lite",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "apiKeyEnv": "GEMINI_API_KEY"
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "billing": "free_tier"
     },
     "gemini-3.8-flash": {
       "adapter": "openai-compatible",
       "provider": "gemini",
       "model": "gemini-3.8-flash",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "apiKeyEnv": "GEMINI_API_KEY"
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "billing": "free_tier"
     },
     "gemini-3.1-flash-lite": {
       "adapter": "openai-compatible",
       "provider": "gemini",
       "model": "gemini-3.1-flash-lite",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "apiKeyEnv": "GEMINI_API_KEY"
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "billing": "free_tier"
     },
     "mistral-small-2603": {
       "adapter": "openai-compatible",
       "provider": "mistral",
       "model": "mistral-small-2603",
       "baseUrl": "https://api.mistral.ai/v1",
-      "apiKeyEnv": "MISTRAL_API_KEY"
+      "apiKeyEnv": "MISTRAL_API_KEY",
+      "billing": "free_tier"
     },
     "mistral-large-4": {
       "adapter": "openai-compatible",
       "provider": "mistral",
       "model": "mistral-large-4",
       "baseUrl": "https://api.mistral.ai/v1",
-      "apiKeyEnv": "MISTRAL_API_KEY"
+      "apiKeyEnv": "MISTRAL_API_KEY",
+      "billing": "free_tier"
     },
     "nvidia-deepseek-v4.1-flash": {
       "adapter": "openai-compatible",
       "provider": "nvidia",
       "model": "deepseek-ai/deepseek-v4.1-flash",
       "baseUrl": "https://integrate.api.nvidia.com/v1",
-      "apiKeyEnv": "NVIDIA_API_KEY"
+      "apiKeyEnv": "NVIDIA_API_KEY",
+      "billing": "free_tier"
     },
     "nvidia-nemotron-3-super": {
       "adapter": "openai-compatible",
       "provider": "nvidia",
       "model": "nvidia/nemotron-3-super-120b-a12b",
       "baseUrl": "https://integrate.api.nvidia.com/v1",
-      "apiKeyEnv": "NVIDIA_API_KEY"
+      "apiKeyEnv": "NVIDIA_API_KEY",
+      "billing": "free_tier"
     },
     "openrouter-gemma-4-31b-free": {
       "adapter": "openai-compatible",
       "provider": "openrouter",
       "model": "google/gemma-4-31b-it:free",
       "baseUrl": "https://openrouter.ai/api/v1",
-      "apiKeyEnv": "OPENROUTER_API_KEY"
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "billing": "free_tier"
     },
     "cloudflare-llama-4-scout": {
       "adapter": "openai-compatible",
@@ -132,6 +143,7 @@
       "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
       "baseUrl": "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
       "apiKeyEnv": "CLOUDFLARE_API_TOKEN",
+      "billing": "free_tier",
       "healthCheck": "none"
     },
     "zai-glm-4.7-flash": {
@@ -140,6 +152,7 @@
       "model": "glm-4.7-flash",
       "baseUrl": "https://api.z.ai/api/paas/v4",
       "apiKeyEnv": "ZAI_API_KEY",
+      "billing": "free_tier",
       "healthCheck": "none"
     }
   },

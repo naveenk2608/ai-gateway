@@ -44,7 +44,12 @@ const requestDetailSchema = z.object({
       promptTokens: z.number().nullable(),
       completionTokens: z.number().nullable(),
       totalTokens: z.number().nullable(),
+      /** List cost (ADR 016); null when the model has no price or the usage is unknown. */
       costMicroUsd: z.number().nullable(),
+      /** What the provider bills (ADR 024): 0 on a free tier, the list cost on a paid one. */
+      billedCostMicroUsd: z.number().nullable(),
+      /** Null for cache hits and for requests stored before M11 (costed as paid). */
+      billing: z.enum(['free_tier', 'paid']).nullable(),
       priceId: z.string().nullable(),
     })
     .nullable(),
@@ -121,6 +126,8 @@ export function registerRequestRoutes(app: FastifyInstance, deps: AdminDeps): vo
               completionTokens: usage.completion_tokens,
               totalTokens: usage.total_tokens,
               costMicroUsd: usage.cost_micro_usd,
+              billedCostMicroUsd: usage.billed_cost_micro_usd,
+              billing: usage.billing,
               priceId: usage.price_id,
             }
           : null,

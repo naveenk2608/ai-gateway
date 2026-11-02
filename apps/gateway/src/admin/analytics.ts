@@ -129,6 +129,8 @@ export function metricSums() {
     sumOf('completion_tokens').as('completion_tokens'),
     sumOf('total_tokens').as('total_tokens'),
     sumOf('cost_micro_usd').as('cost_micro_usd'),
+    sumOf('billed_cost_micro_usd').as('billed_cost_micro_usd'),
+    sumOf('unpriced_requests').as('unpriced_requests'),
     sumOf('attempts').as('attempts'),
     sumOf('retries').as('retries'),
     sumOf('fallbacks').as('fallbacks'),
@@ -153,6 +155,8 @@ export interface MetricSums {
   completion_tokens: number;
   total_tokens: number;
   cost_micro_usd: number;
+  billed_cost_micro_usd: number;
+  unpriced_requests: number;
   attempts: number;
   retries: number;
   fallbacks: number;
@@ -177,6 +181,36 @@ const latencySchema = z
       '(10 ms ... 120 s); values above 120 s are reported as 120 s. Null without data.',
   );
 
+/**
+ * List cost versus what was billed (ADR 024), shared by every response that reports spend.
+ * `costMicroUsd` stays the list cost, so older clients keep reading the same number.
+ */
+export const costFields = {
+  costMicroUsd: z
+    .number()
+    .describe('List cost: tokens at the price of each model; requests without one add nothing.'),
+  billedCostMicroUsd: z
+    .number()
+    .describe('What the providers bill: 0 for free-tier deployments, the list cost on paid ones.'),
+  savedMicroUsd: z.number().describe('List cost minus billed cost.'),
+  unpricedRequests: z
+    .number()
+    .describe(
+      'Requests with usage but no list price: their list cost is unknown ("no list price"), ' +
+        'not zero, and is not in costMicroUsd.',
+    ),
+};
+
+/** The cost fields of a response, from summed list cost, billed cost and unpriced requests. */
+export function toCost(list: number, billed: number, unpriced: number) {
+  return {
+    costMicroUsd: list,
+    billedCostMicroUsd: billed,
+    savedMicroUsd: Math.max(0, list - billed),
+    unpricedRequests: unpriced,
+  };
+}
+
 export const metricsSchema = z.object({
   requests: z.number(),
   succeeded: z.number(),
@@ -187,7 +221,7 @@ export const metricsSchema = z.object({
   promptTokens: z.number(),
   completionTokens: z.number(),
   totalTokens: z.number(),
-  costMicroUsd: z.number(),
+  ...costFields,
   /** Upstream attempts; retries stayed on a deployment, fallbacks moved to another. */
   attempts: z.number(),
   retries: z.number(),
@@ -233,7 +267,7 @@ export function toMetrics(s: MetricSums): Metrics {
     promptTokens: s.prompt_tokens,
     completionTokens: s.completion_tokens,
     totalTokens: s.total_tokens,
-    costMicroUsd: s.cost_micro_usd,
+    ...toCost(s.cost_micro_usd, s.billed_cost_micro_usd, s.unpriced_requests),
     attempts: s.attempts,
     retries: s.retries,
     fallbacks: s.fallbacks,

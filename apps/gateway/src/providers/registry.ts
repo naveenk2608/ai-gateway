@@ -4,6 +4,7 @@ import {
   expandBaseUrl,
   modelRoute,
   type AdapterKind,
+  type Billing,
   type DeploymentConfig,
   type ModelsConfig,
   type RoutingPolicy,
@@ -24,6 +25,8 @@ export interface Deployment {
   baseUrlHost: string | null;
   /** False when the deployment is never probed (`healthCheck: "none"`). */
   probes: boolean;
+  /** `free_tier`: the provider charges nothing; the list cost is still recorded (ADR 024). */
+  billing: Billing;
   /** The provider's model name, sent upstream. */
   providerModel: string;
   timeoutMs: number;
@@ -132,6 +135,7 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
       adapter: deployment.adapter,
       baseUrlHost: urlHost(created.baseUrl),
       probes: deployment.adapter === 'mock' || deployment.healthCheck === 'models',
+      billing: deployment.billing,
       providerModel: deployment.model,
       timeoutMs: deployment.timeoutMs,
       streamIdleTimeoutMs: deployment.streamIdleTimeoutMs,

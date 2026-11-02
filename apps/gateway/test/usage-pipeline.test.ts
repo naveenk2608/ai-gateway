@@ -13,6 +13,12 @@ const models = parseModelsConfig(
   {
     deployments: {
       priced: { provider: 'mock', model: pricedModel, mock: { completionTokens: 4 } },
+      'priced-free': {
+        adapter: 'mock',
+        model: pricedModel,
+        billing: 'free_tier',
+        mock: { completionTokens: 4 },
+      },
       dropping: {
         provider: 'mock',
         model: pricedModel,
@@ -22,6 +28,7 @@ const models = parseModelsConfig(
     },
     models: {
       'mock-priced': { deployment: 'priced' },
+      'mock-free-tier': { deployment: 'priced-free' },
       'mock-dropping': { deployment: 'dropping' },
       'mock-failing': { deployment: 'failing' },
     },
@@ -127,6 +134,17 @@ describe('usage pipeline with the worker running in the gateway process', () => 
     expect(d.attempts).toEqual([
       expect.objectContaining({ attemptNumber: 1, outcome: 'success', deployment: 'priced' }),
     ]);
+  });
+
+  it('records a free-tier request at its list cost with nothing billed (ADR 024)', async () => {
+    const paid = await detail(await chat('mock-priced'));
+    expect(paid.usage).toMatchObject({ costMicroUsd: 11, billedCostMicroUsd: 11, billing: 'paid' });
+    const free = await detail(await chat('mock-free-tier'));
+    expect(free.usage).toMatchObject({
+      costMicroUsd: 11,
+      billedCostMicroUsd: 0,
+      billing: 'free_tier',
+    });
   });
 
   it('records an interrupted stream with estimated usage', async () => {

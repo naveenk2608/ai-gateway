@@ -150,7 +150,12 @@ export interface UsageEventsTable {
   completion_tokens: number | null;
   total_tokens: number | null;
   usage_source: UsageSource;
+  /** List cost: tokens at the model's price (ADR 016); null without a price or usage. */
   cost_micro_usd: number | null;
+  /** What the provider bills (ADR 024): 0 on a free tier, the list cost on a paid one. */
+  billed_cost_micro_usd: number | null;
+  /** The deployment's billing when the request ran; null for cache hits and rows before M11. */
+  billing: 'free_tier' | 'paid' | null;
   price_id: string | null;
   estimated_prompt_tokens: number | null;
   occurred_at: Timestamp;
@@ -240,6 +245,10 @@ export interface UsageRollupsTable {
   ttft_buckets: number[];
   throughput_tokens: number;
   throughput_ms: number;
+  /** Billed cost (ADR 024); list cost is cost_micro_usd. */
+  billed_cost_micro_usd: number;
+  /** Requests with usage but no list price: their list cost is unknown, not zero. */
+  unpriced_requests: number;
 }
 
 export interface Database {

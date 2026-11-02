@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { GatewayError } from '../errors.js';
 import {
   analyticsQuerySchema,
+  costFields,
   describeWindow,
   fillSeries,
   inScope,
@@ -18,6 +19,7 @@ import {
   seriesBucket,
   sumOf,
   sumWithStatus,
+  toCost,
   toMetrics,
   windowFor,
   windowSchema,
@@ -69,8 +71,16 @@ const countPointSchema = z.object({
 const spendSchema = z.object({
   requests: z.number(),
   totalTokens: z.number(),
-  costMicroUsd: z.number(),
+  ...costFields,
 });
+
+/** A spend row's cost fields, with the saving computed from its list and billed cost. */
+function withCost<T extends { costMicroUsd: number; billedCostMicroUsd: number; unpriced: number }>(
+  row: T,
+) {
+  const { costMicroUsd, billedCostMicroUsd, unpriced, ...rest } = row;
+  return { ...rest, ...toCost(costMicroUsd, billedCostMicroUsd, unpriced) };
+}
 
 const budgetSchema = z.object({
   projectId: z.string(),
@@ -474,7 +484,12 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
               spendSchema.extend({ apiKeyId: z.string().nullable(), name: z.string().nullable() }),
             ),
             series: z.array(
-              z.object({ start: z.string(), costMicroUsd: z.number(), totalTokens: z.number() }),
+              z.object({
+                start: z.string(),
+                costMicroUsd: z.number(),
+                billedCostMicroUsd: z.number(),
+                totalTokens: z.number(),
+              }),
             ),
             budgets: z.array(budgetSchema),
             projection: projectionSchema,
@@ -492,6 +507,8 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
         sumOf('requests').as('requests'),
         sumOf('total_tokens').as('totalTokens'),
         sumOf('cost_micro_usd').as('costMicroUsd'),
+        sumOf('billed_cost_micro_usd').as('billedCostMicroUsd'),
+        sumOf('unpriced_requests').as('unpriced'),
       ] as const;
       const base = () => rollups(db, window, scope, filters);
       const [totals, byProvider, byModel, byProject, byKey, points, budgetRows, projected] =
@@ -531,6 +548,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
             .select([
               seriesBucket(window).as('start'),
               sumOf('cost_micro_usd').as('costMicroUsd'),
+              sumOf('billed_cost_micro_usd').as('billedCostMicroUsd'),
               sumOf('total_tokens').as('totalTokens'),
             ])
             .groupBy(sql`1`)
@@ -551,23 +569,23 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
       ]);
       return {
         window: describeWindow(window),
-        totals,
-        byProvider,
-        byModel,
+        totals: withCost(totals),
+        byProvider: byProvider.map(withCost),
+        byModel: byModel.map(withCost),
         byProject: byProject.map(({ project_id, ...s }) => ({
           projectId: project_id,
           projectName: names.get(project_id) ?? '',
-          ...s,
+          ...withCost(s),
         })),
         byApiKey: byKey.map(({ api_key_id, ...s }) => ({
           apiKeyId: api_key_id,
           name: api_key_id ? (keys.get(api_key_id) ?? null) : null,
-          ...s,
+          ...withCost(s),
         })),
         series: fillSeries(
           window,
           points.map(({ start, ...values }) => ({ start, values })),
-          () => ({ costMicroUsd: 0, totalTokens: 0 }),
+          () => ({ costMicroUsd: 0, billedCostMicroUsd: 0, totalTokens: 0 }),
         ),
         budgets: budgetRows,
         projection: projected,

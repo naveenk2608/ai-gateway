@@ -58,6 +58,16 @@ export function expandBaseUrl(
  */
 const healthCheck = z.enum(['models', 'none']).default('models');
 
+export const BILLING = ['free_tier', 'paid'] as const;
+export type Billing = (typeof BILLING)[number];
+
+/**
+ * Whether the provider charges for this deployment (ADR 024). `free_tier`: requests are billed
+ * nothing, while their list cost is still recorded and counted by budgets. Defaults to `paid`, so
+ * nothing is under-counted.
+ */
+const billing = z.enum(BILLING).default('paid');
+
 const attemptTimeouts = {
   /** Non-streaming: the whole attempt. Streaming: until the first event. */
   timeoutMs: z.number().int().positive().max(600_000).default(60_000),
@@ -92,6 +102,7 @@ const mockDeployment = z
     provider: providerName.default('mock'),
     model: z.string().min(1).default('mock'),
     mock: mockSettingsSchema.prefault({}),
+    billing,
     ...attemptTimeouts,
   })
   .strict();
@@ -108,6 +119,7 @@ const openAICompatibleDeployment = z
       .string()
       .regex(/^[A-Z][A-Z0-9_]*$/, 'use an environment variable name, e.g. GROQ_API_KEY'),
     healthCheck,
+    billing,
     ...attemptTimeouts,
   })
   .strict();
@@ -120,6 +132,7 @@ const ollamaDeployment = z
     /** Server root; defaults to OLLAMA_BASE_URL. */
     baseUrl: z.url({ protocol: /^https?$/ }).optional(),
     healthCheck,
+    billing,
     ...attemptTimeouts,
   })
   .strict();

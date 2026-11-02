@@ -75,7 +75,9 @@ async function loadPrices(trx: Db, events: UsageEvent[]): Promise<Map<string, Pr
  * Writes a batch of events: one request record, its attempts and (if any provider was called) one
  * usage row each. Every insert is ON CONFLICT DO NOTHING, so re-delivered events change nothing
  * (ADR 014). Cost uses the price version in effect when the request started (ADR 016), and is
- * stored with that version's id, so later price changes never alter it.
+ * stored with that version's id, so later price changes never alter it. The billed cost follows
+ * the billing the event carries (ADR 024), so changing a deployment's billing later never alters
+ * it either. Budgets count the list cost.
  */
 export async function ingestEvents(
   trx: Db,
@@ -159,6 +161,8 @@ export async function ingestEvents(
           total_tokens: event.usage?.totalTokens ?? null,
           usage_source: event.usageSource,
           cost_micro_usd: 0,
+          billed_cost_micro_usd: 0,
+          billing: null,
           price_id: null,
           estimated_prompt_tokens: event.estimatedPromptTokens ?? null,
           occurred_at: event.occurredAt,
@@ -174,6 +178,9 @@ export async function ingestEvents(
       : undefined;
     const cost =
       usage && price ? costMicroUsd(usage.promptTokens, usage.completionTokens, price) : null;
+    // A free tier bills nothing, priced or not; a paid one bills the list cost (ADR 024). Events
+    // from before M11 have no billing and were all costed as paid.
+    const billing = attempt.billing ?? 'paid';
     return [
       {
         id: uuidv7(Date.parse(event.occurredAt)),
@@ -189,6 +196,8 @@ export async function ingestEvents(
         total_tokens: usage?.totalTokens ?? null,
         usage_source: event.usageSource,
         cost_micro_usd: cost,
+        billed_cost_micro_usd: billing === 'free_tier' ? 0 : cost,
+        billing,
         price_id: cost === null ? null : (price?.id ?? null),
         estimated_prompt_tokens: event.estimatedPromptTokens ?? null,
         occurred_at: event.occurredAt,

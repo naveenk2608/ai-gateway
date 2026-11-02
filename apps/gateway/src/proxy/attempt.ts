@@ -156,6 +156,7 @@ class Attempt {
       deployment: this.#ctx.deployment.id,
       provider: this.#ctx.deployment.providerName,
       adapter: this.#ctx.deployment.adapter,
+      billing: this.#ctx.deployment.billing,
       providerModel: this.#ctx.deployment.providerModel,
       outcome,
       upstreamStatus: error instanceof ProviderError ? (error.upstreamStatus ?? null) : null,

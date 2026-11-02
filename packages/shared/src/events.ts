@@ -20,6 +20,11 @@ export const attemptRecordSchema = z.object({
   provider: z.string().min(1),
   /** The adapter kind (mock, ollama, openai-compatible); absent before M11. */
   adapter: z.string().min(1).optional(),
+  /**
+   * Whether the provider charges for the deployment, as configured when the request ran (ADR 024).
+   * Absent before M11, which counts as `paid`: every earlier request was costed at list price.
+   */
+  billing: z.enum(['free_tier', 'paid']).optional(),
   providerModel: z.string().min(1),
   /** 'success', a ProviderError kind ('timeout', 'rate_limited', ...) or 'error'. */
   outcome: z.string().min(1),
