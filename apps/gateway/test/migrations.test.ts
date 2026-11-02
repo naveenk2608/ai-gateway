@@ -34,6 +34,8 @@ const MIGRATIONS = [
   '0002_limits-and-budgets',
   '0003_response-cache',
   '0004_usage-rollups',
+  '0005_provider-names',
+  '0006_provider-prices',
 ];
 
 /** A throwaway database, so migrations run from scratch. */
