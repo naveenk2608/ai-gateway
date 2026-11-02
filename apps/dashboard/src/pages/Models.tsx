@@ -6,6 +6,7 @@ import {
   type BreakerInstance,
   type ModelCatalog,
   type ModelsResponse,
+  type QuotaUsageResponse,
   type ReliabilityResponse,
 } from '../api.js';
 import { CategoryBarChart } from '../charts/CategoryBarChart.js';
@@ -13,6 +14,7 @@ import { TONES } from '../charts/theme.js';
 import { formatCount, formatLatency, formatPercent, formatUsd } from '../format.js';
 import { ModelLabel, ProviderBadge } from '../ui/ProviderBadge.js';
 import { familyOnHost, identifyProvider, useProviderOf } from '../ui/providers.js';
+import { Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
 
 type Row = ModelsResponse['data'][number] & { deployment: string };
@@ -97,6 +99,63 @@ function ComparisonTable({ rows }: { rows: Row[] }) {
   );
 }
 
+type QuotaRow = NonNullable<QuotaUsageResponse['deployments']>[number];
+
+/** "250 of 1,000", or the count alone without a limit. */
+const usedOf = (used: number, limit: number | null) =>
+  limit === null ? formatCount(used) : `${formatCount(used)} of ${formatCount(limit)}`;
+
+/**
+ * A deployment's free-tier quota: a meter for the tightest one, today's and this minute's counts
+ * against the limits, and a running 429 cooldown.
+ */
+function QuotaFacts({ id, quota }: { id: string; quota: QuotaRow | undefined }) {
+  if (!quota) return null;
+  const l = quota.limits;
+  const shares = l
+    ? [
+        l.requestsPerDay === null ? 0 : quota.today.requests / l.requestsPerDay,
+        l.tokensPerDay === null ? 0 : quota.today.tokens / l.tokensPerDay,
+        l.requestsPerMinute === null ? 0 : quota.minute.requests / l.requestsPerMinute,
+        l.tokensPerMinute === null ? 0 : quota.minute.tokens / l.tokensPerMinute,
+      ]
+    : [];
+  const share = shares.length > 0 ? Math.max(...shares) : null;
+  return (
+    <>
+      {share !== null && (
+        <Meter
+          share={share}
+          label={`Free-tier quota used by ${id}`}
+          valueText={formatPercent(share)}
+        />
+      )}
+      <dl className="tile-facts">
+        <dt>Today</dt>
+        <dd>
+          {usedOf(quota.today.requests, l?.requestsPerDay ?? null)} requests ·{' '}
+          {usedOf(quota.today.tokens, l?.tokensPerDay ?? null)} tokens
+        </dd>
+        {l && (l.requestsPerMinute !== null || l.tokensPerMinute !== null) && (
+          <>
+            <dt>This minute</dt>
+            <dd>
+              {usedOf(quota.minute.requests, l.requestsPerMinute)} requests ·{' '}
+              {usedOf(quota.minute.tokens, l.tokensPerMinute)} tokens
+            </dd>
+          </>
+        )}
+        <dt>Cooldown</dt>
+        <dd>
+          {quota.cooldownUntil === null
+            ? 'none'
+            : `after a 429, until ${new Date(quota.cooldownUntil).toLocaleTimeString('en-GB')}`}
+        </dd>
+      </dl>
+    </>
+  );
+}
+
 /** A deployment's provider, then the provider's model name with its family's logo. */
 function DeploymentModel({ deployment: d }: { deployment: ModelCatalog['deployments'][number] }) {
   const provider = identifyProvider({
@@ -131,6 +190,12 @@ export function Models({ projectId, filters }: { projectId: string; filters: Ana
     queryFn: ({ signal }) =>
       api<ReliabilityResponse>(analyticsPath('reliability', projectId, filters), { signal }),
     refetchInterval: 30_000,
+  });
+  // Free-tier quota use and cooldowns, counted across every gateway instance.
+  const quotas = useQuery({
+    queryKey: ['quotas'],
+    queryFn: ({ signal }) => api<QuotaUsageResponse>('/admin/models/quotas', { signal }),
+    refetchInterval: 15_000,
   });
   const noRequests = `No requests reached a model in the last ${filters.range}.`;
 
@@ -227,14 +292,21 @@ export function Models({ projectId, filters }: { projectId: string; filters: Ana
                         <dt>Uptime</dt>
                         <dd className="muted">not measured</dd>
                       </dl>
+                      {d.enabled && (
+                        <QuotaFacts
+                          id={d.id}
+                          quota={quotas.data?.deployments?.find((q) => q.deployment === d.id)}
+                        />
+                      )}
                     </div>
                   );
                 })}
               </div>
               <p className="muted small card-text">
                 Deployments come from the gateway&apos;s models file; a disabled one has no API key
-                set. Uptime is not measured: the gateway records breaker changes, not availability
-                over time.
+                set. Quotas are the providers&apos; published free-tier limits, counted by every
+                gateway instance together in UTC minutes and days. Uptime is not measured: the
+                gateway records breaker changes, not availability over time.
               </p>
             </>
           );

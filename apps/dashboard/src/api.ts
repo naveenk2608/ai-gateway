@@ -123,6 +123,25 @@ export interface ModelCatalog {
   }[];
 }
 
+/** GET /admin/models/quotas: free-tier quota use and 429 cooldowns (ADR 025). */
+export interface QuotaUsageResponse {
+  /** Null while Redis is unreachable. */
+  deployments:
+    | {
+        deployment: string;
+        limits: {
+          requestsPerMinute: number | null;
+          requestsPerDay: number | null;
+          tokensPerMinute: number | null;
+          tokensPerDay: number | null;
+        } | null;
+        minute: { requests: number; tokens: number };
+        today: { requests: number; tokens: number };
+        cooldownUntil: string | null;
+      }[]
+    | null;
+}
+
 // --- Analytics API (M6) ---
 
 export interface Window {

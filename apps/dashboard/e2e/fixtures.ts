@@ -14,6 +14,7 @@ import type {
   ModelsResponse,
   OverviewResponse,
   Project,
+  QuotaUsageResponse,
   ReliabilityResponse,
   RequestDetail,
   RequestPage,
@@ -256,6 +257,7 @@ export function emptyResponses(role: Role): Responses {
     '/v1/models': { object: 'list', data: [] },
     [`/admin/projects/${PROJECT_ID}/members`]: { data: [] },
     '/admin/models': { deployments: [], models: [] },
+    '/admin/models/quotas': { deployments: [] } satisfies QuotaUsageResponse,
     '/ready': { status: 'ready', checks: { postgres: { status: 'ok', latencyMs: 2 } } },
     '/admin/analytics/overview': {
       window,
@@ -359,6 +361,30 @@ export function sampleResponses(role: Role): Responses {
     },
     [`/admin/projects/${PROJECT_ID}/members`]: { data: members },
     '/admin/models': catalog,
+    // The mock with a daily quota of 1,000 requests, three quarters used; mock-error cooling down.
+    '/admin/models/quotas': {
+      deployments: [
+        {
+          deployment: 'mock',
+          limits: {
+            requestsPerMinute: null,
+            requestsPerDay: 1_000,
+            tokensPerMinute: null,
+            tokensPerDay: null,
+          },
+          minute: { requests: 2, tokens: 300 },
+          today: { requests: 750, tokens: 90_000 },
+          cooldownUntil: null,
+        },
+        {
+          deployment: 'mock-error',
+          limits: null,
+          minute: { requests: 0, tokens: 0 },
+          today: { requests: 12, tokens: 1_200 },
+          cooldownUntil: '2026-10-21T12:00:30.000Z',
+        },
+      ],
+    } satisfies QuotaUsageResponse,
     [`/admin/requests/${REQUEST_ID}`]: requestDetail,
     '/admin/analytics/overview': {
       window,

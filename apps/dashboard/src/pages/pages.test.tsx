@@ -419,6 +419,24 @@ describe('Models page', () => {
     expect(screen.getAllByText('not measured')).toHaveLength(3);
     expect(screen.queryByText(/%\s*uptime|uptime\s*\d/i)).toBeNull();
   });
+
+  it('shows the free-tier quota used today and a running cooldown on each deployment', async () => {
+    stubApi('data');
+    show(page());
+    const mock = await screen.findByRole('group', { name: 'mock' });
+    const meter = await within(mock).findByRole('meter', { name: 'Free-tier quota used by mock' });
+    expect(meter.getAttribute('aria-valuenow')).toBe('75');
+    expect(within(mock).getByText('750 of 1,000 requests · 90,000 tokens')).toBeTruthy();
+    expect(within(mock).getByText('none')).toBeTruthy();
+    const failing = screen.getByRole('group', { name: 'mock-error' });
+    // No quota: counts without a meter; the cooldown after a 429 is shown.
+    expect(within(failing).queryByRole('meter')).toBeNull();
+    expect(within(failing).getByText(/^after a 429, until /)).toBeTruthy();
+    // A disabled deployment is not routed, so it has no quota facts.
+    expect(
+      within(screen.getByRole('group', { name: 'hosted-small' })).queryByText('Today'),
+    ).toBeNull();
+  });
 });
 
 describe('Infrastructure instance card', () => {
