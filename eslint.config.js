@@ -31,6 +31,21 @@ export default defineConfig(
     languageOptions: { globals: { console: 'readonly', process: 'readonly' } },
   },
   {
+    // The scheduled traffic script: plain Node 22, run without installing anything.
+    files: ['scripts/*.mjs'],
+    languageOptions: {
+      globals: {
+        AbortSignal: 'readonly',
+        TextDecoder: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        performance: 'readonly',
+        process: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
+  },
+  {
     // k6 scripts run inside k6, which provides these globals.
     files: ['bench/k6/**/*.js'],
     languageOptions: { globals: { __ENV: 'readonly', __VU: 'readonly', __ITER: 'readonly' } },

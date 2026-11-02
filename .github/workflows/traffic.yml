@@ -1,0 +1,47 @@
+name: Traffic
+
+# Sends a handful of varied requests to the live demo every two hours (scripts/traffic.mjs), so
+# real free-tier providers carry some traffic and the dashboard has data. It needs two repository
+# secrets, DEMO_BASE_URL and DEMO_API_KEY (README, "Scheduled traffic"); without them, and on
+# forks, the job skips its steps and succeeds.
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: traffic
+  cancel-in-progress: false
+
+jobs:
+  traffic:
+    name: Send demo traffic
+    if: github.repository == 'naveenk2608/ai-gateway'
+    runs-on: ubuntu-24.04
+    # Up to two minutes for a sleeping host to wake, then six requests of at most a minute each.
+    timeout-minutes: 10
+    env:
+      DEMO_BASE_URL: ${{ secrets.DEMO_BASE_URL }}
+      DEMO_API_KEY: ${{ secrets.DEMO_API_KEY }}
+    steps:
+      - name: Check the secrets
+        id: secrets
+        run: |
+          if [ -z "$DEMO_BASE_URL" ] || [ -z "$DEMO_API_KEY" ]; then
+            echo "DEMO_BASE_URL or DEMO_API_KEY is not set: skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.secrets.outputs.ready == 'true'
+      - uses: actions/setup-node@v7
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version-file: .nvmrc
+      - name: Send the requests
+        if: steps.secrets.outputs.ready == 'true'
+        run: node scripts/traffic.mjs
