@@ -1,15 +1,25 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { modelRoute, ROUTING_POLICIES, type ModelsConfig } from '../models-config.js';
-import type { ProviderRegistry } from '../providers/registry.js';
+import { ADAPTERS, modelRoute, ROUTING_POLICIES, type ModelsConfig } from '../models-config.js';
+import { urlHost, type ProviderRegistry } from '../providers/registry.js';
 import { errorResponses, type AdminDeps } from './schemas.js';
 
 export const modelCatalogSchema = z.object({
   deployments: z.array(
     z.object({
       id: z.string(),
-      provider: z.enum(['mock', 'ollama', 'openai-compatible']),
+      /** Who serves it (groq, gemini, mock, ...), from the models file. */
+      provider: z.string(),
+      /** The wire protocol it is called with. */
+      adapter: z.enum(ADAPTERS),
+      /**
+       * Host of the base URL (`api.groq.com`), never its path, which can hold an account ID. Null
+       * for the mock, and for a deployment whose URL needs a variable that is unset.
+       */
+      baseUrlHost: z.string().nullable(),
+      /** `none`: never probed while its breaker is open; it half-opens after BREAKER_OPEN_MS. */
+      healthCheck: z.enum(['models', 'none']),
       providerModel: z.string(),
       /** False when the deployment could not be created, e.g. its API key variable is unset. */
       enabled: z.boolean(),
@@ -22,7 +32,9 @@ export const modelCatalogSchema = z.object({
     z.object({
       name: z.string(),
       policy: z.enum(ROUTING_POLICIES),
-      targets: z.array(z.object({ deployment: z.string(), weight: z.number() })),
+      targets: z.array(
+        z.object({ deployment: z.string(), weight: z.number(), lastResort: z.boolean() }),
+      ),
       /** False when none of its deployments is enabled: requests get 404. */
       available: z.boolean(),
     }),
@@ -31,8 +43,8 @@ export const modelCatalogSchema = z.object({
 export type ModelCatalog = z.output<typeof modelCatalogSchema>;
 
 /**
- * The deployments and routing policies the gateway loaded from its models file. Base URLs and the
- * names of key variables are left out: they describe the host, not the routing.
+ * The deployments and routing policies the gateway loaded from its models file. Only the host of
+ * each base URL is shown; paths and the names of key variables are left out.
  */
 export function modelCatalog(config: ModelsConfig, registry: ProviderRegistry): ModelCatalog {
   return {
@@ -40,6 +52,13 @@ export function modelCatalog(config: ModelsConfig, registry: ProviderRegistry): 
       .map(([id, d]) => ({
         id,
         provider: d.provider,
+        adapter: d.adapter,
+        baseUrlHost:
+          registry.deployment(id)?.baseUrlHost ??
+          (d.adapter === 'mock' || d.baseUrl === undefined || d.baseUrl.includes('${')
+            ? null
+            : urlHost(d.baseUrl)),
+        healthCheck: d.adapter === 'mock' ? ('models' as const) : d.healthCheck,
         providerModel: d.model,
         enabled: registry.deployment(id) !== undefined,
         timeoutMs: d.timeoutMs,

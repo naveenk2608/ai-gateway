@@ -7,7 +7,12 @@ import type { Deployment, Route } from '../providers/registry.js';
 import { LatencyTracker, planRoute, type PlanContext } from './router.js';
 
 const deployment = (id: string, providerModel = id) =>
-  ({ id, providerModel, provider: { kind: 'mock' } }) as unknown as Deployment;
+  ({
+    id,
+    providerModel,
+    provider: { kind: 'mock' },
+    providerName: 'mock',
+  }) as unknown as Deployment;
 
 function route(policy: RoutingPolicy, weights: Record<string, number>): Route {
   return {
@@ -16,6 +21,7 @@ function route(policy: RoutingPolicy, weights: Record<string, number>): Route {
     targets: Object.entries(weights).map(([id, weight]) => ({
       deployment: deployment(id),
       weight,
+      lastResort: false,
     })),
   };
 }
@@ -93,6 +99,32 @@ describe('planRoute', () => {
       ['free', 'cheapest: at most 0 micro-USD'],
       ['b', 'cost rank 2: at most 100 micro-USD'],
       ['a', 'cost rank 3: at most 200 micro-USD'],
+    ]);
+  });
+
+  it('tries last-resort targets after every other one, whatever the policy', () => {
+    const lastResortRoute = (policy: RoutingPolicy): Route => ({
+      model: 'm',
+      policy,
+      targets: [
+        { deployment: deployment('fallback'), weight: 100, lastResort: true },
+        { deployment: deployment('a'), weight: 1, lastResort: false },
+        { deployment: deployment('b'), weight: 1, lastResort: false },
+      ],
+    });
+    // Unpriced and unmeasured, the fallback would otherwise come first on cost and latency.
+    for (const policy of ['priority', 'weighted', 'lowest_latency', 'cost_aware'] as const) {
+      const plan = planRoute(lastResortRoute(policy), context());
+      expect(plan.map((c) => c.deployment.id).at(-1), policy).toBe('fallback');
+      expect(plan.at(-1)?.reason, policy).toBe('last resort 1 of 1');
+    }
+    const alone: Route = {
+      model: 'm',
+      policy: 'lowest_latency',
+      targets: [{ deployment: deployment('fallback'), weight: 1, lastResort: true }],
+    };
+    expect(planRoute(alone, context()).map((c) => [c.deployment.id, c.reason])).toEqual([
+      ['fallback', 'last resort 1 of 1'],
     ]);
   });
 });

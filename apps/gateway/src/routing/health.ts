@@ -98,7 +98,10 @@ export class HealthChecker {
 
   /** Probes every deployment whose breaker is open, at once. */
   async checkOpen(): Promise<void> {
-    const open = this.#o.deployments.filter((d) => this.#o.breakers.get(d.id).state === 'open');
+    // A deployment with `healthCheck: "none"` is never probed: its breaker half-opens on time.
+    const open = this.#o.deployments.filter(
+      (d) => d.probes && this.#o.breakers.get(d.id).state === 'open',
+    );
     await Promise.all(open.map((d) => this.#probe(d)));
   }
 

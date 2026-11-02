@@ -154,7 +154,8 @@ class Attempt {
       id: this.id,
       attemptNumber: this.#number,
       deployment: this.#ctx.deployment.id,
-      provider: this.#ctx.deployment.provider.kind,
+      provider: this.#ctx.deployment.providerName,
+      adapter: this.#ctx.deployment.adapter,
       providerModel: this.#ctx.deployment.providerModel,
       outcome,
       upstreamStatus: error instanceof ProviderError ? (error.upstreamStatus ?? null) : null,
@@ -166,7 +167,7 @@ class Attempt {
       routingReason: this.#ctx.routing?.reason ?? null,
     });
     const fields = {
-      provider: this.#ctx.deployment.provider.kind,
+      provider: this.#ctx.deployment.providerName,
       routing: this.#ctx.routing?.reason,
       stream: this.#stream,
       durationMs: now - this.#startedAt,

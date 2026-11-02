@@ -60,8 +60,26 @@ function weightedPick<T extends { weight: number }>(items: T[], random: () => nu
  * applied when each attempt starts, since they can change during a request.
  */
 export function planRoute(route: Route, ctx: PlanContext): Candidate[] {
-  const targets = route.targets;
-  const policy: RoutingPolicy = route.policy;
+  const last = route.targets.filter((t) => t.lastResort);
+  return [
+    ...orderByPolicy(
+      route.policy,
+      route.targets.filter((t) => !t.lastResort),
+      ctx,
+    ),
+    ...last.map((t, i) => ({
+      deployment: t.deployment,
+      reason: `last resort ${i + 1} of ${last.length}`,
+    })),
+  ];
+}
+
+function orderByPolicy(
+  policy: RoutingPolicy,
+  targets: Route['targets'],
+  ctx: PlanContext,
+): Candidate[] {
+  if (targets.length === 0) return [];
   switch (policy) {
     case 'priority':
       return targets.map((t, i) => ({
@@ -101,7 +119,7 @@ export function planRoute(route: Route, ctx: PlanContext): Candidate[] {
         t,
         i,
         cost: ctx.prices.cost(
-          t.deployment.provider.kind,
+          t.deployment.providerName,
           t.deployment.providerModel,
           ctx.at,
           ctx.promptTokens,

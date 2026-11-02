@@ -19,6 +19,7 @@ const deployment = (id: string) =>
     id,
     providerModel: id,
     provider: { kind: 'mock' },
+    providerName: 'mock',
     maxOutputTokens: 100,
   }) as unknown as Deployment;
 
@@ -49,7 +50,7 @@ function setup(
   const route: Route = {
     model: 'm',
     policy,
-    targets: ids.map((id) => ({ deployment: deployment(id), weight: 1 })),
+    targets: ids.map((id) => ({ deployment: deployment(id), weight: 1, lastResort: false })),
   };
   const breakers = new BreakerBoard(ids, { failureThreshold, openMs: 60_000 }, clock, () => {});
   const deps = {

@@ -1,7 +1,9 @@
 import type { Clock, Env } from '@ai-gateway/shared';
 import type { Logger } from '@ai-gateway/shared/node';
 import {
+  expandBaseUrl,
   modelRoute,
+  type AdapterKind,
   type DeploymentConfig,
   type ModelsConfig,
   type RoutingPolicy,
@@ -15,6 +17,13 @@ import type { Provider } from './types.js';
 export interface Deployment {
   id: string;
   provider: Provider;
+  /** Who serves it (groq, gemini, mock, ...): the key for its prices and metrics. */
+  providerName: string;
+  adapter: AdapterKind;
+  /** Host of the base URL, for display; null for the in-process mock. */
+  baseUrlHost: string | null;
+  /** False when the deployment is never probed (`healthCheck: "none"`). */
+  probes: boolean;
   /** The provider's model name, sent upstream. */
   providerModel: string;
   timeoutMs: number;
@@ -27,7 +36,7 @@ export interface Deployment {
 export interface Route {
   model: string;
   policy: RoutingPolicy;
-  targets: { deployment: Deployment; weight: number }[];
+  targets: { deployment: Deployment; weight: number; lastResort: boolean }[];
 }
 
 export interface RegistryDeps {
@@ -70,30 +79,40 @@ export class ProviderRegistry {
   }
 }
 
-type Created = { provider: Provider } | { disabled: string };
+type Created = { provider: Provider; baseUrl: string | null } | { disabled: string };
 
 function createProvider(config: DeploymentConfig, deps: RegistryDeps): Created {
-  switch (config.provider) {
+  switch (config.adapter) {
     case 'mock':
-      return { provider: new MockProvider(config.mock, deps.clock) };
-    case 'ollama':
-      return {
-        provider: new OllamaProvider({
-          baseUrl: config.baseUrl ?? deps.ollamaBaseUrl,
-          clock: deps.clock,
-        }),
-      };
+      return { provider: new MockProvider(config.mock, deps.clock), baseUrl: null };
+    case 'ollama': {
+      const baseUrl = config.baseUrl ?? deps.ollamaBaseUrl;
+      return { provider: new OllamaProvider({ baseUrl, clock: deps.clock }), baseUrl };
+    }
     case 'openai-compatible': {
       const apiKey = deps.env[config.apiKeyEnv];
       if (!apiKey) return { disabled: `${config.apiKeyEnv} is not set` };
+      const expanded = expandBaseUrl(config.baseUrl, deps.env);
+      if ('missing' in expanded) return { disabled: `${expanded.missing} is not set` };
       return {
         provider: new OpenAICompatibleProvider({
-          baseUrl: config.baseUrl,
+          baseUrl: expanded.url,
           apiKey,
           clock: deps.clock,
         }),
+        baseUrl: expanded.url,
       };
     }
+  }
+}
+
+/** The host of a base URL, never its path (which may hold an account ID). */
+export function urlHost(url: string | null): string | null {
+  if (url === null) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
   }
 }
 
@@ -109,6 +128,10 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
     deployments.set(id, {
       id,
       provider: created.provider,
+      providerName: deployment.provider,
+      adapter: deployment.adapter,
+      baseUrlHost: urlHost(created.baseUrl),
+      probes: deployment.adapter === 'mock' || deployment.healthCheck === 'models',
       providerModel: deployment.model,
       timeoutMs: deployment.timeoutMs,
       streamIdleTimeoutMs: deployment.streamIdleTimeoutMs,
@@ -121,7 +144,7 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
     const { policy, targets } = modelRoute(model);
     const available = targets.flatMap((t) => {
       const deployment = deployments.get(t.deployment);
-      return deployment ? [{ deployment, weight: t.weight }] : [];
+      return deployment ? [{ deployment, weight: t.weight, lastResort: t.lastResort }] : [];
     });
     if (available.length > 0) models.set(name, { model: name, policy, targets: available });
     else

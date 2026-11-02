@@ -6,6 +6,58 @@ const deploymentId = z
   .string()
   .regex(/^[a-z0-9][a-z0-9._-]{0,63}$/, 'use lowercase letters, digits, ".", "_" or "-"');
 
+/** Adapter kinds: the wire protocol a deployment is called with. */
+export const ADAPTERS = ['mock', 'ollama', 'openai-compatible'] as const;
+export type AdapterKind = (typeof ADAPTERS)[number];
+
+/**
+ * Who serves the deployment (groq, gemini, mistral, ...). Prices are keyed by it and the
+ * provider's own model name, so two OpenAI-compatible providers serving the same model name keep
+ * separate prices. Defaults to the adapter kind.
+ */
+const providerName = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,31}$/, 'use lowercase letters, digits, ".", "_" or "-"');
+
+/** `${NAME}` in a base URL: replaced at startup with the environment variable's value. */
+const PLACEHOLDER = /\$\{([A-Z][A-Z0-9_]*)\}/g;
+
+/** An http(s) URL, which may contain `${NAME}` placeholders (never the values themselves). */
+const baseUrl = z.string().refine((value) => {
+  try {
+    const url = new URL(value.replace(PLACEHOLDER, 'placeholder'));
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}, 'use an http(s) URL; ${NAME} placeholders are filled from the environment');
+
+/** Names of the environment variables a base URL's placeholders read. */
+export function baseUrlVariables(url: string): string[] {
+  return [...url.matchAll(PLACEHOLDER)].map((m) => m[1]!);
+}
+
+/**
+ * The base URL with each placeholder replaced by its (URL-encoded) environment value, or the
+ * name of the first variable that is unset.
+ */
+export function expandBaseUrl(
+  url: string,
+  env: Readonly<Record<string, string | undefined>>,
+): { url: string } | { missing: string } {
+  for (const name of baseUrlVariables(url)) {
+    if (!env[name]) return { missing: name };
+  }
+  return { url: url.replace(PLACEHOLDER, (_, name: string) => encodeURIComponent(env[name]!)) };
+}
+
+/**
+ * How an open breaker's deployment is health-checked (ADR 012): `models` lists models (runs no
+ * model), `none` sends nothing, for providers without a model list; the breaker then half-opens
+ * after BREAKER_OPEN_MS.
+ */
+const healthCheck = z.enum(['models', 'none']).default('models');
+
 const attemptTimeouts = {
   /** Non-streaming: the whole attempt. Streaming: until the first event. */
   timeoutMs: z.number().int().positive().max(600_000).default(60_000),
@@ -36,7 +88,8 @@ export const mockSettingsSchema = z
 
 const mockDeployment = z
   .object({
-    provider: z.literal('mock'),
+    adapter: z.literal('mock'),
+    provider: providerName.default('mock'),
     model: z.string().min(1).default('mock'),
     mock: mockSettingsSchema.prefault({}),
     ...attemptTimeouts,
@@ -45,33 +98,51 @@ const mockDeployment = z
 
 const openAICompatibleDeployment = z
   .object({
-    provider: z.literal('openai-compatible'),
+    adapter: z.literal('openai-compatible'),
+    provider: providerName.default('openai-compatible'),
     model: z.string().min(1),
-    /** API root, e.g. https://api.groq.com/openai/v1 */
-    baseUrl: z.url({ protocol: /^https?$/ }),
+    /** API root, e.g. https://api.groq.com/openai/v1; may hold `${NAME}` placeholders. */
+    baseUrl,
     /** Name of the environment variable holding the API key; never the key itself. */
     apiKeyEnv: z
       .string()
       .regex(/^[A-Z][A-Z0-9_]*$/, 'use an environment variable name, e.g. GROQ_API_KEY'),
+    healthCheck,
     ...attemptTimeouts,
   })
   .strict();
 
 const ollamaDeployment = z
   .object({
-    provider: z.literal('ollama'),
+    adapter: z.literal('ollama'),
+    provider: providerName.default('ollama'),
     model: z.string().min(1),
     /** Server root; defaults to OLLAMA_BASE_URL. */
     baseUrl: z.url({ protocol: /^https?$/ }).optional(),
+    healthCheck,
     ...attemptTimeouts,
   })
   .strict();
 
-const deployment = z.discriminatedUnion('provider', [
-  mockDeployment,
-  ollamaDeployment,
-  openAICompatibleDeployment,
-]);
+/**
+ * Files written before provider names existed set `provider` to the adapter kind and have no
+ * `adapter`: they are read as that adapter, with the provider name defaulting to it.
+ */
+function legacyAdapter(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || 'adapter' in raw) {
+    return raw;
+  }
+  const { provider, ...rest } = raw as Record<string, unknown>;
+  if (typeof provider !== 'string' || !(ADAPTERS as readonly string[]).includes(provider)) {
+    return raw;
+  }
+  return { adapter: provider, ...rest };
+}
+
+const deployment = z.preprocess(
+  legacyAdapter,
+  z.discriminatedUnion('adapter', [mockDeployment, ollamaDeployment, openAICompatibleDeployment]),
+);
 
 export const ROUTING_POLICIES = ['priority', 'weighted', 'lowest_latency', 'cost_aware'] as const;
 export type RoutingPolicy = (typeof ROUTING_POLICIES)[number];
@@ -81,6 +152,11 @@ const target = z
     deployment: deploymentId,
     /** Share of traffic under the `weighted` policy. */
     weight: z.number().int().min(1).max(1_000).default(1),
+    /**
+     * Tried only after every other target, in the order listed, whatever the policy: a fallback
+     * (such as the mock) that should never win on latency, price or weight.
+     */
+    lastResort: z.boolean().default(false),
   })
   .strict();
 
@@ -133,16 +209,23 @@ export type ModelConfig = ModelsConfig['models'][string];
 
 export interface ModelRoute {
   policy: RoutingPolicy;
-  targets: { deployment: string; weight: number }[];
+  targets: { deployment: string; weight: number; lastResort: boolean }[];
 }
 
 /** A model's routing, whichever form the file uses. */
 export function modelRoute(m: z.input<typeof model> | ModelConfig): ModelRoute {
   if ('deployment' in m)
-    return { policy: 'priority', targets: [{ deployment: m.deployment, weight: 1 }] };
+    return {
+      policy: 'priority',
+      targets: [{ deployment: m.deployment, weight: 1, lastResort: false }],
+    };
   return {
     policy: m.policy ?? 'priority',
-    targets: m.targets.map((t) => ({ deployment: t.deployment, weight: t.weight ?? 1 })),
+    targets: m.targets.map((t) => ({
+      deployment: t.deployment,
+      weight: t.weight ?? 1,
+      lastResort: t.lastResort ?? false,
+    })),
   };
 }
 export type DeploymentConfig = ModelsConfig['deployments'][string];

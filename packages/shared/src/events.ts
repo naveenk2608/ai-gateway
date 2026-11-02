@@ -13,7 +13,13 @@ export const attemptRecordSchema = z.object({
   id: z.uuid(),
   attemptNumber: z.number().int().min(1),
   deployment: z.string().min(1),
+  /**
+   * Who served the attempt (groq, gemini, mock, ...); prices are keyed by it. Events from gateways
+   * before M11 carry the adapter kind here instead.
+   */
   provider: z.string().min(1),
+  /** The adapter kind (mock, ollama, openai-compatible); absent before M11. */
+  adapter: z.string().min(1).optional(),
   providerModel: z.string().min(1),
   /** 'success', a ProviderError kind ('timeout', 'rate_limited', ...) or 'error'. */
   outcome: z.string().min(1),

@@ -1,7 +1,7 @@
 {
   "deployments": {
     "mock": {
-      "provider": "mock",
+      "adapter": "mock",
       "mock": {
         "ttftMs": 200,
         "tokensPerSecond": 40,
@@ -10,7 +10,7 @@
       }
     },
     "mock-slow": {
-      "provider": "mock",
+      "adapter": "mock",
       "timeoutMs": 5000,
       "mock": {
         "latencyMs": 10000,
@@ -18,27 +18,27 @@
       }
     },
     "mock-rate-limited": {
-      "provider": "mock",
+      "adapter": "mock",
       "mock": {
         "failWith": 429,
         "retryAfterMs": 2000
       }
     },
     "mock-error": {
-      "provider": "mock",
+      "adapter": "mock",
       "mock": {
         "failWith": 500
       }
     },
     "mock-flaky": {
-      "provider": "mock",
+      "adapter": "mock",
       "mock": {
         "errorRate": 0.3,
         "seed": 42
       }
     },
     "mock-drop": {
-      "provider": "mock",
+      "adapter": "mock",
       "mock": {
         "tokensPerSecond": 20,
         "completionTokens": 40,
@@ -46,26 +46,101 @@
       }
     },
     "ollama-llama3.2": {
-      "provider": "ollama",
+      "adapter": "ollama",
       "model": "llama3.2:1b"
     },
     "groq-gpt-oss-20b": {
-      "provider": "openai-compatible",
+      "adapter": "openai-compatible",
+      "provider": "groq",
       "model": "openai/gpt-oss-20b",
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY"
     },
+    "groq-gpt-oss-120b": {
+      "adapter": "openai-compatible",
+      "provider": "groq",
+      "model": "openai/gpt-oss-120b",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "apiKeyEnv": "GROQ_API_KEY"
+    },
     "groq-qwen3.8-27b": {
-      "provider": "openai-compatible",
+      "adapter": "openai-compatible",
+      "provider": "groq",
       "model": "qwen/qwen3.8-27b",
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY"
     },
     "gemini-3.5-flash-lite": {
-      "provider": "openai-compatible",
+      "adapter": "openai-compatible",
+      "provider": "gemini",
       "model": "gemini-3.5-flash-lite",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
       "apiKeyEnv": "GEMINI_API_KEY"
+    },
+    "gemini-3.8-flash": {
+      "adapter": "openai-compatible",
+      "provider": "gemini",
+      "model": "gemini-3.8-flash",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apiKeyEnv": "GEMINI_API_KEY"
+    },
+    "gemini-3.1-flash-lite": {
+      "adapter": "openai-compatible",
+      "provider": "gemini",
+      "model": "gemini-3.1-flash-lite",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apiKeyEnv": "GEMINI_API_KEY"
+    },
+    "mistral-small-2603": {
+      "adapter": "openai-compatible",
+      "provider": "mistral",
+      "model": "mistral-small-2603",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "apiKeyEnv": "MISTRAL_API_KEY"
+    },
+    "mistral-large-4": {
+      "adapter": "openai-compatible",
+      "provider": "mistral",
+      "model": "mistral-large-4",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "apiKeyEnv": "MISTRAL_API_KEY"
+    },
+    "nvidia-deepseek-v4.1-flash": {
+      "adapter": "openai-compatible",
+      "provider": "nvidia",
+      "model": "deepseek-ai/deepseek-v4.1-flash",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "apiKeyEnv": "NVIDIA_API_KEY"
+    },
+    "nvidia-nemotron-3-super": {
+      "adapter": "openai-compatible",
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "apiKeyEnv": "NVIDIA_API_KEY"
+    },
+    "openrouter-gemma-4-31b-free": {
+      "adapter": "openai-compatible",
+      "provider": "openrouter",
+      "model": "google/gemma-4-31b-it:free",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    },
+    "cloudflare-llama-4-scout": {
+      "adapter": "openai-compatible",
+      "provider": "cloudflare",
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+      "apiKeyEnv": "CLOUDFLARE_API_TOKEN",
+      "healthCheck": "none"
+    },
+    "zai-glm-4.7-flash": {
+      "adapter": "openai-compatible",
+      "provider": "zai",
+      "model": "glm-4.7-flash",
+      "baseUrl": "https://api.z.ai/api/paas/v4",
+      "apiKeyEnv": "ZAI_API_KEY",
+      "healthCheck": "none"
     }
   },
   "models": {
@@ -93,11 +168,41 @@
     "gpt-oss-20b": {
       "deployment": "groq-gpt-oss-20b"
     },
+    "gpt-oss-120b": {
+      "deployment": "groq-gpt-oss-120b"
+    },
     "qwen3": {
       "deployment": "groq-qwen3.8-27b"
     },
     "gemini-3.5-flash-lite": {
       "deployment": "gemini-3.5-flash-lite"
+    },
+    "gemini-3.8-flash": {
+      "deployment": "gemini-3.8-flash"
+    },
+    "gemini-3.1-flash-lite": {
+      "deployment": "gemini-3.1-flash-lite"
+    },
+    "mistral-small": {
+      "deployment": "mistral-small-2603"
+    },
+    "mistral-large": {
+      "deployment": "mistral-large-4"
+    },
+    "deepseek-v4.1-flash": {
+      "deployment": "nvidia-deepseek-v4.1-flash"
+    },
+    "nemotron-3-super": {
+      "deployment": "nvidia-nemotron-3-super"
+    },
+    "gemma-4-31b": {
+      "deployment": "openrouter-gemma-4-31b-free"
+    },
+    "llama-4-scout": {
+      "deployment": "cloudflare-llama-4-scout"
+    },
+    "glm-4.7-flash": {
+      "deployment": "zai-glm-4.7-flash"
     },
     "chat-default": {
       "policy": "priority",
@@ -109,7 +214,108 @@
           "deployment": "gemini-3.5-flash-lite"
         },
         {
+          "deployment": "mistral-small-2603"
+        },
+        {
+          "deployment": "cloudflare-llama-4-scout"
+        },
+        {
+          "deployment": "nvidia-deepseek-v4.1-flash"
+        },
+        {
+          "deployment": "zai-glm-4.7-flash"
+        },
+        {
+          "deployment": "openrouter-gemma-4-31b-free"
+        },
+        {
           "deployment": "mock"
+        }
+      ]
+    },
+    "chat-fast": {
+      "policy": "lowest_latency",
+      "targets": [
+        {
+          "deployment": "groq-gpt-oss-120b"
+        },
+        {
+          "deployment": "groq-gpt-oss-20b"
+        },
+        {
+          "deployment": "gemini-3.1-flash-lite"
+        },
+        {
+          "deployment": "mistral-small-2603"
+        },
+        {
+          "deployment": "cloudflare-llama-4-scout"
+        },
+        {
+          "deployment": "mock",
+          "lastResort": true
+        }
+      ]
+    },
+    "chat-cheap": {
+      "policy": "cost_aware",
+      "targets": [
+        {
+          "deployment": "gemini-3.1-flash-lite"
+        },
+        {
+          "deployment": "groq-gpt-oss-20b"
+        },
+        {
+          "deployment": "mistral-small-2603"
+        },
+        {
+          "deployment": "nvidia-deepseek-v4.1-flash"
+        },
+        {
+          "deployment": "zai-glm-4.7-flash"
+        },
+        {
+          "deployment": "cloudflare-llama-4-scout"
+        },
+        {
+          "deployment": "mock",
+          "lastResort": true
+        }
+      ]
+    },
+    "chat-variety": {
+      "policy": "weighted",
+      "targets": [
+        {
+          "deployment": "groq-gpt-oss-120b",
+          "weight": 2
+        },
+        {
+          "deployment": "gemini-3.8-flash",
+          "weight": 2
+        },
+        {
+          "deployment": "mistral-large-4"
+        },
+        {
+          "deployment": "nvidia-nemotron-3-super"
+        },
+        {
+          "deployment": "nvidia-deepseek-v4.1-flash"
+        },
+        {
+          "deployment": "zai-glm-4.7-flash"
+        },
+        {
+          "deployment": "openrouter-gemma-4-31b-free"
+        },
+        {
+          "deployment": "cloudflare-llama-4-scout"
+        },
+        {
+          "deployment": "mock",
+          "lastResort": true
         }
       ]
     },

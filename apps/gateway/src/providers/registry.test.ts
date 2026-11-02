@@ -27,7 +27,12 @@ describe('createRegistry', () => {
     const { logger, lines } = captureLogger();
     const registry = createRegistry(config, { ...deps, logger, env: {} });
 
-    expect(registry.route('mock-1')?.targets[0]?.deployment.provider.kind).toBe('mock');
+    expect(registry.route('mock-1')?.targets[0]?.deployment).toMatchObject({
+      provider: { kind: 'mock' },
+      providerName: 'mock',
+      adapter: 'mock',
+      baseUrlHost: null,
+    });
     expect(registry.route('gpt-x')).toBeUndefined();
     expect(lines.find((l) => l.msg === 'deployment disabled')).toMatchObject({
       deployment: 'hosted',

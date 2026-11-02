@@ -373,6 +373,9 @@ describe('roles', () => {
         {
           id: 'quick',
           provider: 'mock',
+          adapter: 'mock',
+          baseUrlHost: null,
+          healthCheck: 'models',
           providerModel: expect.any(String) as string,
           enabled: true,
           timeoutMs: expect.any(Number) as number,
@@ -384,7 +387,7 @@ describe('roles', () => {
         {
           name: 'mock-a',
           policy: 'priority',
-          targets: [{ deployment: 'quick', weight: 1 }],
+          targets: [{ deployment: 'quick', weight: 1, lastResort: false }],
           available: true,
         },
       ],

@@ -28,6 +28,10 @@ function setup(settings: Partial<MockSettings> = {}, timeouts = { timeoutMs: 1_0
   const deployment: Deployment = {
     id: 'mock-a',
     provider: mock,
+    providerName: 'mock',
+    adapter: 'mock',
+    baseUrlHost: null,
+    probes: true,
     providerModel: 'mock',
     timeoutMs: timeouts.timeoutMs,
     streamIdleTimeoutMs: timeouts.idle,

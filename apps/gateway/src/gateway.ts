@@ -113,7 +113,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
   const metrics = new GatewayMetrics(createMetricsRegistry(), {
     deployments: registry.deployments().map((d) => ({
       id: d.id,
-      provider: d.provider.kind,
+      provider: d.providerName,
       providerModel: d.providerModel,
     })),
     models: registry.modelNames(),

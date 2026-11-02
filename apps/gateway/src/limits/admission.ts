@@ -112,7 +112,7 @@ export class AdmissionControl {
     const costMicroUsd = Math.max(
       ...deployments.map((d) =>
         this.#o.prices.cost(
-          d.provider.kind,
+          d.providerName,
           d.providerModel,
           trace.startedAt,
           trace.estimatedPromptTokens,
