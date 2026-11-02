@@ -685,7 +685,7 @@ describe('budget soft threshold in the settings page', () => {
       const patch = (fetchMock.mock.calls as unknown[][]).find(
         ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH',
       );
-      expect(JSON.parse(String((patch?.[1] as RequestInit).body))).toMatchObject({
+      expect(JSON.parse((patch?.[1] as { body: string }).body)).toMatchObject({
         budget: { softThresholdPct: 90 },
       });
     });
