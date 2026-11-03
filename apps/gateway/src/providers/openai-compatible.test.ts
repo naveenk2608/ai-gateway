@@ -102,6 +102,73 @@ describe('OpenAICompatibleProvider.chat', () => {
     expect(String(error)).not.toContain('Secret prompt text');
   });
 
+  it("keeps the provider's code and message for the log, without the key or the prompt", async () => {
+    const prompt = 'Please keep my travel plans to Lisbon a secret.';
+    const { provider } = await setup((_req, res) =>
+      sendJson(res, 400, {
+        error: {
+          code: 'content_filter',
+          message: `Blocked "${prompt}" sent with key test-key-not-secret. ${'More detail. '.repeat(30)}`,
+        },
+      }),
+    );
+    const error = await provider
+      .chat({ ...request, messages: [{ role: 'user', content: prompt }] }, signal())
+      .catch((err: unknown) => err);
+    expect(error).toMatchObject({ kind: 'bad_request', upstreamCode: 'content_filter' });
+    const logged = (error as { upstreamMessage: string }).upstreamMessage;
+    expect(logged).toMatch(/^Blocked "\[request text\]" sent with key \[redacted\]\. More detail/);
+    expect(logged).not.toMatch(/Lisbon|test-key-not-secret/);
+    expect(logged.length).toBeLessThanOrEqual(200);
+  });
+
+  // Mistral's reasoning models (Mistral Large 4) answer with a list of content parts: `thinking`
+  // parts, which hold the reasoning in text parts of their own, and `text` parts with the reply.
+  it('joins the text parts of a list content and leaves the thinking out', async () => {
+    const { provider } = await setup((_req, res) =>
+      sendJson(res, 200, {
+        id: 'cmpl-1',
+        object: 'chat.completion',
+        model: 'mistral-large-4',
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              tool_calls: null,
+              content: [
+                {
+                  type: 'thinking',
+                  thinking: [{ type: 'text', text: 'The user wants a single word.' }],
+                },
+                { type: 'text', text: 'o' },
+                { type: 'text', text: 'k' },
+              ],
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 11, completion_tokens: 23, total_tokens: 34 },
+      }),
+    );
+    expect(await provider.chat(request, signal())).toEqual({
+      content: 'ok',
+      finishReason: 'stop',
+      // As the provider reports it: the thinking tokens stay in the completion count.
+      usage: { promptTokens: 11, completionTokens: 23, totalTokens: 34 },
+    });
+  });
+
+  it('says where an unreadable response broke, without its values', async () => {
+    const { provider } = await setup((_req, res) =>
+      sendJson(res, 200, { choices: [{ message: { content: 4242 }, finish_reason: 'stop' }] }),
+    );
+    const error = await provider.chat(request, signal()).catch((err: unknown) => err);
+    expect(error).toMatchObject({ kind: 'invalid_response' });
+    expect(String(error)).toMatch(/unexpected shape at choices\.0\.message\.content/);
+    expect(String(error)).not.toContain('4242');
+  });
+
   it('sends the attempt traceparent as a header, never in the body', async () => {
     const { upstream, provider } = await setup((_req, res) => sendJson(res, 200, completion));
     const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
@@ -241,14 +308,55 @@ describe('OpenAICompatibleProvider.chatStream', () => {
     expect(error).toMatchObject({ kind: 'connection' });
   });
 
-  it('turns an error event from the upstream into server_error', async () => {
+  it('turns an error event from the upstream into server_error, with its code and message', async () => {
     const { provider } = await setup((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      res.end(`data: ${JSON.stringify({ error: { message: 'overloaded' } })}\n\n`);
+      res.end(`data: ${JSON.stringify({ error: { code: 502, message: 'overloaded' } })}\n\n`);
     });
     await expect(collect(provider.chatStream(request, signal()))).rejects.toMatchObject({
       kind: 'server_error',
+      upstreamCode: '502',
+      upstreamMessage: 'overloaded',
     });
+  });
+
+  it('streams the text of list content and leaves thinking parts out, with usage as sent', async () => {
+    const chunk = (delta: unknown, finish: string | null = null, usage?: unknown) =>
+      `data: ${JSON.stringify({
+        id: 'cmpl-1',
+        object: 'chat.completion.chunk',
+        model: 'mistral-large-4',
+        choices: [{ index: 0, delta, finish_reason: finish }],
+        ...(usage ? { usage } : {}),
+      })}\n\n`;
+    const thinking = (text: string) => ({
+      content: [{ type: 'thinking', thinking: [{ type: 'text', text }] }],
+    });
+    const { provider } = await setup((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(
+        chunk({ role: 'assistant', content: '' }) +
+          chunk(thinking('The user wants')) +
+          chunk(thinking(' a single word.')) +
+          chunk({ content: [{ type: 'text', text: 'o' }] }) +
+          chunk({ content: 'k' }) +
+          chunk({ content: '' }, 'stop', {
+            prompt_tokens: 11,
+            total_tokens: 34,
+            completion_tokens: 23,
+          }) +
+          'data: [DONE]\n\n',
+      );
+    });
+    expect(await collect(provider.chatStream(request, signal()))).toEqual([
+      { type: 'content', text: 'o' },
+      { type: 'content', text: 'k' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: { promptTokens: 11, completionTokens: 23, totalTokens: 34 },
+      },
+    ]);
   });
 
   it('closes the upstream connection when the signal aborts mid-stream', async () => {

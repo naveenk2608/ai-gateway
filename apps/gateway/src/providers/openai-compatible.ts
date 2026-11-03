@@ -3,6 +3,7 @@ import { Agent } from 'undici';
 import { z } from 'zod';
 import { ProviderError } from './errors.js';
 import {
+  attachUpstreamDetail,
   MAX_RESPONSE_BYTES,
   networkError,
   parseJson,
@@ -35,12 +36,18 @@ const wireUsage = z.object({
   total_tokens: z.number().int().min(0).optional(),
 });
 
+// A string, or a list of parts (Mistral's reasoning models: `text` parts and `thinking` parts,
+// whose reasoning sits in parts of their own and has no `text`).
+const wireContent = z
+  .union([z.string(), z.array(z.object({ type: z.string(), text: z.string().nullish() }))])
+  .nullish();
+
 // Upstream payloads are untrusted: validate only the fields we use and ignore the rest.
 const completionSchema = z.object({
   choices: z
     .array(
       z.object({
-        message: z.object({ content: z.string().nullish() }),
+        message: z.object({ content: wireContent }),
         finish_reason: z.string().nullish(),
       }),
     )
@@ -52,7 +59,7 @@ const chunkSchema = z.object({
   choices: z
     .array(
       z.object({
-        delta: z.object({ content: z.string().nullish() }).nullish(),
+        delta: z.object({ content: wireContent }).nullish(),
         finish_reason: z.string().nullish(),
       }),
     )
@@ -71,6 +78,12 @@ function toUsage(usage: z.output<typeof wireUsage> | null | undefined): Usage | 
   };
 }
 
+/** The reply text: text parts joined; thinking and other parts are not part of the reply. */
+function toText(content: z.output<typeof wireContent>): string {
+  if (typeof content === 'string') return content;
+  return (content ?? []).map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('');
+}
+
 function toFinishReason(reason: string | null | undefined): FinishReason {
   return reason === 'length' || reason === 'content_filter' ? reason : 'stop';
 }
@@ -78,9 +91,18 @@ function toFinishReason(reason: string | null | undefined): FinishReason {
 function validate<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new ProviderError('invalid_response', 'upstream response has an unexpected shape', {
-      cause: result.error,
-    });
+    // Where the shape broke (field path and the expected type), never the values: for the log.
+    const issue = result.error.issues[0];
+    const where = issue
+      ? ` at ${issue.path.map(String).join('.') || 'the top'} (${issue.code === 'invalid_type' ? `expected ${issue.expected}` : issue.code})`
+      : '';
+    throw new ProviderError(
+      'invalid_response',
+      `upstream response has an unexpected shape${where}`,
+      {
+        cause: result.error,
+      },
+    );
   }
   return result.data;
 }
@@ -118,7 +140,7 @@ export class OpenAICompatibleProvider implements Provider {
     const completion = validate(completionSchema, parseJson(text));
     const choice = completion.choices[0]!;
     return {
-      content: choice.message.content ?? '',
+      content: toText(choice.message.content),
       finishReason: toFinishReason(choice.finish_reason),
       usage: toUsage(completion.usage),
       rateLimit: rateLimitHeaders(response.headers),
@@ -134,12 +156,17 @@ export class OpenAICompatibleProvider implements Provider {
         if (data === '[DONE]') break;
         const payload = parseJson(data);
         if (streamErrorSchema.safeParse(payload).success) {
-          throw new ProviderError('server_error', 'upstream reported an error mid-stream');
+          throw attachUpstreamDetail(
+            new ProviderError('server_error', 'upstream reported an error mid-stream'),
+            payload,
+            [this.#apiKey],
+            req,
+          );
         }
         const chunk = validate(chunkSchema, payload);
         usage = toUsage(chunk.usage) ?? usage;
         const choice = chunk.choices[0];
-        const text = choice?.delta?.content;
+        const text = toText(choice?.delta?.content);
         if (text) yield { type: 'content', text };
         if (choice?.finish_reason) finishReason = toFinishReason(choice.finish_reason);
       }

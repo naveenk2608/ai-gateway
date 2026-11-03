@@ -208,6 +208,10 @@ class Attempt {
       outcome: outcome === 'success' ? 'ok' : outcome,
       upstreamStatus: error instanceof ProviderError ? error.upstreamStatus : undefined,
       upstreamCode: error instanceof ProviderError ? error.upstreamCode : undefined,
+      // Already cut and cleaned of keys and request text by the adapter (loggableMessage).
+      upstreamMessage: error instanceof ProviderError ? error.upstreamMessage : undefined,
+      // The gateway's own fixed text, e.g. where an unreadable response broke or a timeout's phase.
+      reason: error instanceof ProviderError ? error.message : undefined,
     };
     if (error === undefined || (error instanceof ProviderError && error.kind === 'canceled')) {
       this.log.info(fields, 'provider attempt finished');

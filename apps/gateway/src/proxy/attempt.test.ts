@@ -110,6 +110,32 @@ describe('runChat', () => {
     await clock.advance(0);
     expect(await pending).toMatchObject({ kind: 'server_error', upstreamStatus: 500 });
   });
+
+  it("logs the provider's error code and message on the failed attempt", async () => {
+    const { ctx, lines } = setup();
+    const error = new ProviderError('rate_limited', 'upstream rate limited', {
+      upstreamStatus: 429,
+    });
+    error.upstreamCode = '1305';
+    error.upstreamMessage = 'The service may be temporarily overloaded, please try again later';
+    const failing: Provider = {
+      kind: 'mock',
+      chat: () => Promise.reject(error),
+      chatStream: () => ({ [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) }) }),
+      probe: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    };
+    await expect(
+      runChat({ ...ctx, deployment: { ...ctx.deployment, provider: failing } }, request),
+    ).rejects.toBe(error);
+    expect(lines.find((l) => l.msg === 'provider attempt failed')).toMatchObject({
+      outcome: 'rate_limited',
+      upstreamStatus: 429,
+      upstreamCode: '1305',
+      upstreamMessage: 'The service may be temporarily overloaded, please try again later',
+      reason: 'upstream rate limited',
+    });
+  });
 });
 
 describe('openStream', () => {

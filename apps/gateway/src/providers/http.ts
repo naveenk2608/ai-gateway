@@ -52,25 +52,154 @@ export function parseJson(text: string): unknown {
   }
 }
 
+const SHORT_CODE = /^[a-zA-Z0-9_.-]{1,64}$/;
+
+/** Longest excerpt of an upstream error message that is logged. */
+export const MAX_UPSTREAM_MESSAGE = 200;
+/** Only this much of a message is searched for request text; the rest is cut anyway. */
+const SCANNED_MESSAGE = 2 * MAX_UPSTREAM_MESSAGE;
+// Any run of 17 or more characters that also appears in the request's text contains one of these
+// windows; a window that matches is then widened to the whole run.
+const ECHO_WINDOW = 12;
+const ECHO_STRIDE = 6;
+const KEY_LIKE = [
+  /\bBearer\s+\S+/gi,
+  // Common key prefixes (OpenAI, OpenRouter, Groq, NVIDIA, xAI) and Google's API keys.
+  /\b(?:sk|gsk|nvapi|xai)[-_][\w-]{8,}/g,
+  /\bAIza[\w-]{30,}/g,
+  // Long unbroken tokens; hyphenated model IDs and UUIDs stay readable.
+  /[A-Za-z0-9_]{32,}/g,
+];
+
 /**
- * A short identifier from an upstream error body (OpenAI's `error.code`/`error.type`, Ollama's
- * `error` text is not used), kept for logs only. Free-text messages are never kept: they can echo
- * prompt content.
+ * The code and message of an upstream error body, in the shapes providers use: OpenAI's
+ * `{ error: { code, type, message } }` (Gemini wraps it in an array, Ollama sends `error` as text),
+ * Mistral's top-level `{ code, type, message }` and NVIDIA's `{ status, title, detail }`.
  */
-function upstreamCode(text: string): string | undefined {
-  let parsed: unknown;
+export function upstreamDetail(body: unknown): { code?: string; message?: string } {
+  const outer: unknown = Array.isArray(body) ? body[0] : body;
+  if (typeof outer !== 'object' || outer === null) return {};
+  const { error } = outer as { error?: unknown };
+  const inner = (typeof error === 'object' && error !== null ? error : outer) as Record<
+    string,
+    unknown
+  >;
+  // A named code beats a numeric one (Gemini: `code: 503`, `status: "UNAVAILABLE"`).
+  const fields = [inner.code, inner.type, inner.status];
+  const named = fields.find((f): f is string => typeof f === 'string' && SHORT_CODE.test(f));
+  const numeric = fields.find((f): f is number => Number.isInteger(f));
+  const message = [inner.message, inner.detail, error].find(
+    (m): m is string => typeof m === 'string' && m.trim() !== '',
+  );
+  return {
+    ...(named !== undefined || numeric !== undefined ? { code: named ?? String(numeric) } : {}),
+    ...(message !== undefined ? { message } : {}),
+  };
+}
+
+/**
+ * What of an upstream error message may be logged: credentials (`secrets`, plus anything shaped
+ * like a key) and every stretch of 17 or more characters that repeats the request's own text
+ * (`sent`: its prompt and other strings) are replaced, whitespace is collapsed, and the result is
+ * cut to MAX_UPSTREAM_MESSAGE characters. Providers echo prompt text in some errors.
+ */
+export function loggableMessage(
+  message: string,
+  secrets: readonly string[],
+  sent: unknown,
+): string {
+  let text = message;
+  for (const secret of secrets) {
+    if (secret.length >= 8) text = text.split(secret).join('[redacted]');
+  }
+  for (const pattern of KEY_LIKE) text = text.replace(pattern, '[redacted]');
+  text = withoutRequestText(text.slice(0, SCANNED_MESSAGE), requestStrings(sent));
+  return text
+    .replace(/[\s\p{Cc}]+/gu, ' ')
+    .trim()
+    .slice(0, MAX_UPSTREAM_MESSAGE);
+}
+
+/** Every string in what was sent upstream except the model name. */
+function requestStrings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') {
+    if (value.length >= ECHO_WINDOW) out.push(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) requestStrings(item, out);
+  } else if (typeof value === 'object' && value !== null) {
+    for (const [key, item] of Object.entries(value)) {
+      if (key !== 'model') requestStrings(item, out);
+    }
+  }
+  return out;
+}
+
+function withoutRequestText(text: string, sent: readonly string[]): string {
+  if (sent.length === 0) return text;
+  const hidden = new Uint8Array(text.length);
+  let found = false;
+  for (let i = 0; i + ECHO_WINDOW <= text.length; i += ECHO_STRIDE) {
+    const window = text.slice(i, i + ECHO_WINDOW);
+    for (const s of sent) {
+      const at = s.indexOf(window);
+      if (at < 0) continue;
+      // Widen the match both ways along this occurrence of the window.
+      let start = i;
+      let from = at;
+      while (start > 0 && from > 0 && text[start - 1] === s[from - 1]) {
+        start--;
+        from--;
+      }
+      let end = i + ECHO_WINDOW;
+      let to = at + ECHO_WINDOW;
+      while (end < text.length && to < s.length && text[end] === s[to]) {
+        end++;
+        to++;
+      }
+      hidden.fill(1, start, end);
+      found = true;
+      break;
+    }
+  }
+  if (!found) return text;
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    if (!hidden[i]) out += text[i];
+    else if (i === 0 || !hidden[i - 1]) out += '[request text]';
+  }
+  return out;
+}
+
+/**
+ * Puts an upstream error body's code and the loggable start of its message on `error`. `secrets`
+ * are the credentials sent with the request, `sent` what was sent (see loggableMessage).
+ */
+export function attachUpstreamDetail(
+  error: ProviderError,
+  body: unknown,
+  secrets: readonly string[],
+  sent: unknown,
+): ProviderError {
+  const { code, message } = upstreamDetail(body);
+  error.upstreamCode = code;
+  error.upstreamMessage =
+    message === undefined ? undefined : loggableMessage(message, secrets, sent);
+  return error;
+}
+
+/** Header values that carry credentials, also without their `Bearer ` prefix. */
+function credentialsIn(headers: Record<string, string>): string[] {
+  return Object.entries(headers).flatMap(([name, value]) =>
+    /authorization|key|token/i.test(name) ? [value, value.replace(/^Bearer\s+/i, '')] : [],
+  );
+}
+
+function parseQuietly(text: string): unknown {
   try {
-    parsed = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
     return undefined;
   }
-  const error = (parsed as { error?: unknown } | null)?.error;
-  if (typeof error !== 'object' || error === null) return undefined;
-  const { code, type } = error as { code?: unknown; type?: unknown };
-  const candidate = typeof code === 'string' ? code : typeof type === 'string' ? type : undefined;
-  return candidate !== undefined && /^[a-zA-Z0-9_.-]{1,64}$/.test(candidate)
-    ? candidate
-    : undefined;
 }
 
 /**
@@ -136,8 +265,7 @@ export async function postJson(
       : new ProviderError('invalid_response', `unexpected upstream status ${response.statusCode}`, {
           upstreamStatus: response.statusCode,
         });
-  error.upstreamCode = upstreamCode(text);
-  throw error;
+  throw attachUpstreamDetail(error, parseQuietly(text), credentialsIn(headers), body);
 }
 
 /** A non-negative integer header, or undefined when absent or not a number. */
