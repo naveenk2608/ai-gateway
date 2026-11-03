@@ -66,6 +66,7 @@ their sources in [db/migrations/0009_reference-prices.sql](../db/migrations/0009
 
 ## Real calls
 
-No provider key was set in the environment where M11 was built (2026-11-03), so none of the new
-deployments has been called for real yet; see the "M11 real-provider checks" row in
-[PLAN-NOTES.md](PLAN-NOTES.md). Groq and Gemini were checked with real keys on 2026-10-21.
+No provider key was set in the environment where M11 was built (2026-11-03). Every deployment was
+called through the live demo on 2026-11-04; the results, and the deployments that failed, are in
+the "M11 real-provider checks" table of [PLAN-NOTES.md](PLAN-NOTES.md#m11-real-provider-checks).
+Groq and Gemini were checked with real keys on 2026-10-21.
