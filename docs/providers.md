@@ -24,7 +24,7 @@ Gemini API free tier); never send real data through them.
 | `mistral-small-2603` | Mistral | `mistral-small-2603` (Mistral Small 4) | <https://docs.mistral.ai/models/mistral-small-4-0-26-03> (2026-11-03) | $0.15 / $0.60 | same page; order confirmed by OpenRouter's `mistralai/mistral-small-2603` (2026-11-03) |
 | `mistral-large-4` | Mistral (public preview) | `mistral-large-4` (Mistral Large 4) | <https://docs.mistral.ai/models/mistral-large-4-0> (2026-11-03) | $0.70 / $2.10 | same page (2026-11-03) |
 | `nvidia-deepseek-v4.1-flash` | NVIDIA NIM | `deepseek-ai/deepseek-v4.1-flash` | <https://integrate.api.nvidia.com/v1/models> (2026-11-03) | $0.30 / $1.20: DeepSeek's own API for the same model (`deepseek-flash`, DeepSeek-V4.1-Flash-1017), standard (peak) cache-miss rate | <https://api-docs.deepseek.com/quick_start/pricing> (2026-11-03) |
-| `nvidia-nemotron-3-super` | NVIDIA NIM | `nvidia/nemotron-3-super-120b-a12b` | <https://integrate.api.nvidia.com/v1/models> (2026-11-03) | $0.30 / $2.40: OpenRouter's paid listing of the same model (NVIDIA sells no per-token API for it) | <https://openrouter.ai/api/v1/models> (2026-11-03) |
+| `nvidia-nemotron-3-super` | NVIDIA NIM | `nvidia/nemotron-3-super-120b-a12b` (listed by `GET /models`, but every chat call got 404 on 2026-11-03; out of `chat-variety` since 2026-11-04, see PLAN-NOTES) | <https://integrate.api.nvidia.com/v1/models> (2026-11-03; still listed 2026-11-04) | $0.30 / $2.40: OpenRouter's paid listing of the same model (NVIDIA sells no per-token API for it) | <https://openrouter.ai/api/v1/models> (2026-11-03) |
 | `openrouter-gemma-4-31b-free` | OpenRouter | `google/gemma-4-31b-it:free` | <https://openrouter.ai/api/v1/models> (2026-11-03) | $0.20 / $0.40: OpenRouter's paid `google/gemma-4-31b-it` (the Gemini API offers Gemma 4 free only) | <https://openrouter.ai/api/v1/models> (2026-11-03) |
 | `cloudflare-llama-4-scout` | Cloudflare Workers AI | `@cf/meta/llama-4-scout-17b-16e-instruct` | <https://developers.cloudflare.com/workers-ai/platform/pricing/> (2026-11-03, page updated 2026-10-20) | $0.270 / $0.850 (beyond the free Neurons) | same page (2026-11-03) |
 | `zai-glm-4.7-flash` | Z.AI | `glm-4.7-flash` | GLM-4.7-Flash is listed as free on <https://docs.z.ai/guides/overview/pricing> (2026-11-03); the docs print API codes in lower case (`glm-5.3-flash` for GLM-5.3-Flash), but not this one, so the string is unconfirmed until the first real call | $0.0605 / $0.40: OpenRouter's paid `z-ai/glm-4.7-flash` (Z.AI sells it free only) | <https://openrouter.ai/api/v1/models> (2026-11-03) |
@@ -40,7 +40,9 @@ Cloudflare `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_I
 Health checks: Cloudflare's OpenAI endpoint answers `GET /models` with 405 (checked 2026-11-03),
 and Z.AI documents no model list, so both use `healthCheck: "none"`. NVIDIA's and OpenRouter's
 `GET /models` answer without a key, so their check proves the API is up but not that the key is
-valid.
+valid. A health check never proves a model is served either: `GET /models` can list a model the
+provider answers with 404 (NVIDIA's Nemotron 3 Super, 2026-11-03), and a passing check half-opens
+the breaker those 404s opened, so requests try the deployment again (PLAN-NOTES, 2026-11-04).
 
 ## Free-tier limits and the quotas configured
 

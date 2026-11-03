@@ -355,7 +355,7 @@ deployment is disabled and the model answers 404):
 | `chat-default` | `priority`: Groq `openai/gpt-oss-20b`, Gemini `gemini-3.5-flash-lite`, Mistral Small 4, Cloudflare Llama 4 Scout, NVIDIA DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, OpenRouter Gemma 4 31B, then `mock` | nothing; each provider joins once its key is set |
 | `chat-fast` | `lowest_latency`: Groq gpt-oss-120b and gpt-oss-20b, Gemini 3.1 Flash-Lite, Mistral Small 4, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
 | `chat-cheap` | `cost_aware`: Gemini 3.1 Flash-Lite, Groq gpt-oss-20b, Mistral Small 4, NVIDIA DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
-| `chat-variety` | `weighted`: Groq gpt-oss-120b ×2, Gemini 3.8 Flash ×2, Mistral Large 4, NVIDIA Nemotron 3 Super and DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, OpenRouter Gemma 4 31B, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
+| `chat-variety` | `weighted`: Groq gpt-oss-120b ×2, Gemini 3.8 Flash ×2, Mistral Large 4, NVIDIA DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, OpenRouter Gemma 4 31B, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
 | `gpt-oss-20b`, `gpt-oss-120b`, `qwen3` | Groq (`qwen/qwen3.8-27b` is a preview model there) | `GROQ_API_KEY` |
 | `gemini-3.5-flash-lite`, `gemini-3.8-flash`, `gemini-3.1-flash-lite` | Gemini API | `GEMINI_API_KEY` |
 | `mistral-small`, `mistral-large` | Mistral (`mistral-small-2603`, `mistral-large-4`, a public preview) | `MISTRAL_API_KEY` |
