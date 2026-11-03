@@ -27,7 +27,7 @@ Gemini API free tier); never send real data through them.
 | `nvidia-nemotron-3-super` | NVIDIA NIM | `nvidia/nemotron-3-super-120b-a12b` (listed by `GET /models`, but every chat call got 404 on 2026-11-03; out of `chat-variety` since 2026-11-04, see PLAN-NOTES) | <https://integrate.api.nvidia.com/v1/models> (2026-11-03; still listed 2026-11-04) | $0.30 / $2.40: OpenRouter's paid listing of the same model (NVIDIA sells no per-token API for it) | <https://openrouter.ai/api/v1/models> (2026-11-03) |
 | `openrouter-gemma-4-31b-free` | OpenRouter | `google/gemma-4-31b-it:free` | <https://openrouter.ai/api/v1/models> (2026-11-03) | $0.20 / $0.40: OpenRouter's paid `google/gemma-4-31b-it` (the Gemini API offers Gemma 4 free only) | <https://openrouter.ai/api/v1/models> (2026-11-03) |
 | `cloudflare-llama-4-scout` | Cloudflare Workers AI | `@cf/meta/llama-4-scout-17b-16e-instruct` | <https://developers.cloudflare.com/workers-ai/platform/pricing/> (2026-11-03, page updated 2026-10-20) | $0.270 / $0.850 (beyond the free Neurons) | same page (2026-11-03) |
-| `zai-glm-4.7-flash` | Z.AI | `glm-4.7-flash` | GLM-4.7-Flash is listed as free on <https://docs.z.ai/guides/overview/pricing> (2026-11-03); the docs print API codes in lower case (`glm-5.3-flash` for GLM-5.3-Flash), but not this one, so the string is unconfirmed until the first real call | $0.0605 / $0.40: OpenRouter's paid `z-ai/glm-4.7-flash` (Z.AI sells it free only) | <https://openrouter.ai/api/v1/models> (2026-11-03) |
+| `zai-glm-4.7-flash` | Z.AI | `glm-4.7-flash` | GLM-4.7-Flash is listed as free on <https://docs.z.ai/guides/overview/pricing> (2026-11-03); the docs print API codes in lower case (`glm-5.3-flash` for GLM-5.3-Flash), but not this one; confirmed by real calls through the live demo that answered 200 (2026-11-04) | $0.0605 / $0.40: OpenRouter's paid `z-ai/glm-4.7-flash` (Z.AI sells it free only) | <https://openrouter.ai/api/v1/models> (2026-11-03) |
 
 Base URLs: Groq `https://api.groq.com/openai/v1`; Gemini
 `https://generativelanguage.googleapis.com/v1beta/openai`; Mistral `https://api.mistral.ai/v1`;
@@ -69,6 +69,7 @@ their sources in [db/migrations/0009_reference-prices.sql](../db/migrations/0009
 ## Real calls
 
 No provider key was set in the environment where M11 was built (2026-11-03). Every deployment was
-called through the live demo on 2026-11-04; the results, and the deployments that failed, are in
-the "M11 real-provider checks" table of [PLAN-NOTES.md](PLAN-NOTES.md#m11-real-provider-checks).
+called through the live demo on 2026-11-04, and the failed ones again after the fixes; the results
+are in the "M11 real-provider checks" tables of
+[PLAN-NOTES.md](PLAN-NOTES.md#m11-real-provider-checks).
 Groq and Gemini were checked with real keys on 2026-10-21.
