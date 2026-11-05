@@ -427,7 +427,9 @@ builds and publishes verifiable.
       with `retry-after`).
 - [x] Successful replies carry the six `x-ratelimit` headers (`rate-limit-headers.test.ts`:
       from the tightest scope, on streams and cache hits too, none for a limit not set).
-- [ ] A deployment that lists a model but will not serve it fails its chat health check.
+- [x] A deployment that lists a model but will not serve it fails its chat health check
+      (`chat-health-check.test.ts`: its breaker stays open, while a `models` check of the same
+      provider half-opens; unit tests in `routing/health.test.ts`).
 - [ ] Every action is pinned to a SHA and Dependabot is configured. CI produces an SBOM and a
       Trivy result, and the image on GHCR verifies with cosign.
 
