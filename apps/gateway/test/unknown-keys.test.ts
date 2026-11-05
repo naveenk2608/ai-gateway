@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import { ManualClock, uuidv7 } from '@ai-gateway/shared';
 import { closeRedis, createRedis } from '@ai-gateway/shared/node';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { generateApiKey, hashSecret } from '../src/auth/api-keys.js';
 import { KeyVerifier, type KeyRecord, type VerifyResult } from '../src/auth/key-verifier.js';
 import { UnknownKeyGuard } from '../src/auth/unknown-keys.js';
@@ -12,8 +12,13 @@ import { captureLogger, noModels, testConfig } from './helpers.js';
 /** Unknown API key IDs limited per client IP before any database lookup (M12), on real Redis. */
 const pepper = 'pepper-'.repeat(6);
 const { logger } = captureLogger();
-const redis = createRedis(process.env.REDIS_URL!, logger);
+// Queued until connected: these tests run faster than the connection comes up.
+const redis = createRedis(process.env.REDIS_URL!, logger, { offlineQueue: true });
 const dead = createRedis('redis://127.0.0.1:1', logger);
+
+beforeAll(async () => {
+  await redis.ping();
+});
 
 afterAll(async () => {
   await closeRedis(redis);
