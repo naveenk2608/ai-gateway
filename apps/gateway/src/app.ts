@@ -147,6 +147,20 @@ export function buildApp({
   });
 
   app.decorateRequest('traceContext', null as unknown as TraceContext);
+  // Temporary (M12 follow-up): how many X-Forwarded-For entries the host's proxies add, to set
+  // TRUST_PROXY. Logged once per process, for the first /v1 request; the count only, never an
+  // address. Removed once read.
+  let forwardedCounted = false;
+  app.addHook('onRequest', (request, _reply, done) => {
+    if (!forwardedCounted && request.url.startsWith('/v1/')) {
+      forwardedCounted = true;
+      const header = request.headers['x-forwarded-for'];
+      const joined = Array.isArray(header) ? header.join(',') : (header ?? '');
+      const entries = joined.split(',').filter((part) => part.trim() !== '').length;
+      request.log.info({ forwardedForEntries: entries }, 'x-forwarded-for entries (count only)');
+    }
+    done();
+  });
   app.addHook('onRequest', async (request, reply) => {
     request.traceContext = spans.get(request.raw) ?? startSpan(undefined);
     void reply.header('x-request-id', request.id);
