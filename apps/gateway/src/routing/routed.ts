@@ -32,6 +32,12 @@ export interface RoutingDeps {
    * every deployment may always be tried.
    */
   quotas?: QuotaBoard | undefined;
+  /**
+   * The most a request may take until its response starts, counted from its arrival
+   * (REQUEST_DEADLINE_MS): no try, retry or fallback starts after it, and a try still running is
+   * cut at it. Without it (unit tests), only each deployment's timeout applies.
+   */
+  deadlineMs?: number | undefined;
 }
 
 export interface RoutedRequest {
@@ -97,12 +103,19 @@ export async function runRouted<T>(
   /** Skips for a used-up quota or a 429 cooldown: the error when nothing could be tried. */
   const limited: { kind: 'quota' | 'cooldown'; retryAfterMs: number }[] = [];
   const promptTokens = req.trace.estimatedPromptTokens;
+  const deadlineAt =
+    deps.deadlineMs === undefined ? undefined : req.trace.startedAt + deps.deadlineMs;
+  const timeLeft = () => (deadlineAt === undefined ? Infinity : deadlineAt - clock.now());
+  /** Answered as 504 upstream_timeout, like any timeout. */
+  const deadlinePassed = () =>
+    new ProviderError('timeout', `the request's deadline of ${deps.deadlineMs} ms passed`);
 
   for (const candidate of candidates) {
     const id = candidate.deployment.id;
     const breaker = deps.breakers.get(id);
     let retryNote: string | undefined;
     for (let tryNumber = 1; tryNumber <= perDeployment && attempts < maxAttempts; tryNumber++) {
+      if (timeLeft() <= 0) throw deadlinePassed();
       if (!breaker.tryAcquire()) {
         skipped.push(`${id} (circuit ${breaker.state})`);
         break;
@@ -141,6 +154,7 @@ export async function runRouted<T>(
         trace: req.trace,
         routing: { policy: route.policy, reason },
         passedOver: [...passedOver],
+        ...(deadlineAt === undefined ? {} : { deadlineAt }),
         onEnd: (outcome) => {
           settleHealth(deps, id, outcome);
           settleQuota(deps, candidate.deployment, ticket, outcome, promptTokens);
@@ -161,6 +175,8 @@ export async function runRouted<T>(
         if (!canRetryHere) break;
         const ceiling = Math.min(maxDelayMs, baseDelayMs * 2 ** (tryNumber - 1));
         const delay = Math.max(Math.floor(deps.random() * ceiling), retryAfter ?? 0);
+        // No time left for the wait and a try after it.
+        if (delay >= timeLeft()) throw deadlinePassed();
         retryNote = `retry ${tryNumber} on ${id} after ${err.kind}, waited ${delay} ms`;
         try {
           await clock.sleep(delay, clientSignal);

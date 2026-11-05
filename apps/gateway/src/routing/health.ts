@@ -64,8 +64,12 @@ export interface HealthCheckerOptions {
   logger: Logger;
   intervalMs: number;
   timeoutMs: number;
-  /** The least time between two `chat` health checks of one deployment (ADR 026). */
+  /**
+   * The least time between two `chat` health checks of one deployment (ADR 026). Each failure in a
+   * row doubles it, up to `chatMaxIntervalMs`; a pass starts it over.
+   */
   chatIntervalMs: number;
+  chatMaxIntervalMs: number;
   /** Counts `chat` health checks against the deployment's free-tier quota; absent in unit tests. */
   quotas?: QuotaBoard | undefined;
 }
@@ -87,14 +91,15 @@ class ProbeSkipped extends Error {
  * Active health checks for open breakers (ADR 012): every `intervalMs`, each deployment whose
  * breaker is open is probed; a pass half-opens the breaker so the next request can be the trial,
  * without waiting out the full open period. `models` probes run no model. `chat` probes ask for
- * one token, at most once per `chatIntervalMs`, and a failed one keeps the breaker open until the
- * next (ADR 026), because a provider can list a model it will not serve.
+ * one token, and a failed one keeps the breaker open until the next (ADR 026), because a provider
+ * can list a model it will not serve. They back off: `chatIntervalMs` after a pass or a first
+ * failure, then twice as long after each further failure in a row, up to `chatMaxIntervalMs`.
  */
 export class HealthChecker {
   readonly #o: HealthCheckerOptions;
   readonly #stop = new AbortController();
-  /** When each deployment's last `chat` check started. */
-  readonly #lastChat = new Map<string, number>();
+  /** Each deployment's last `chat` check: when it started, and the failures in a row so far. */
+  readonly #chat = new Map<string, { startedAt: number; failures: number }>();
   #running: Promise<void> | undefined;
 
   constructor(options: HealthCheckerOptions) {
@@ -133,8 +138,14 @@ export class HealthChecker {
   }
 
   #chatDue(deployment: string, now: number): boolean {
-    const last = this.#lastChat.get(deployment);
-    return last === undefined || now - last >= this.#o.chatIntervalMs;
+    const last = this.#chat.get(deployment);
+    return last === undefined || now - last.startedAt >= this.#chatWait(last.failures);
+  }
+
+  /** The wait after a `chat` check, given the failures in a row it ended with: 1, 1, 2, 4, 8... */
+  #chatWait(failures: number): number {
+    const doubled = this.#o.chatIntervalMs * 2 ** Math.max(0, failures - 1);
+    return Math.min(doubled, this.#o.chatMaxIntervalMs);
   }
 
   /** A `chat` check is a real model call, so it gets the deployment's own timeout if longer. */
@@ -155,15 +166,28 @@ export class HealthChecker {
       () => undefined,
     );
     const breaker = this.#o.breakers.get(deployment.id);
+    const chat = deployment.healthCheck === 'chat';
+    const before = this.#chat.get(deployment.id)?.failures ?? 0;
     try {
-      if (deployment.healthCheck === 'chat') await this.#chat(deployment, probe.signal);
+      if (chat) await this.#chatProbe(deployment, probe.signal);
       else await deployment.provider.probe(probe.signal);
+      if (chat) this.#chatEnded(deployment.id, 0);
       breaker.probeSucceeded();
     } catch (err) {
       this.#o.logger.debug({ err, deployment: deployment.id }, 'health check failed');
-      if (deployment.healthCheck === 'chat' && !(err instanceof ProbeSkipped)) {
+      if (chat && !(err instanceof ProbeSkipped)) {
+        const failures = before + 1;
+        this.#chatEnded(deployment.id, failures);
         // Stay open until the next chat check has run (it starts within an interval of being due).
-        breaker.holdOpen(this.#o.chatIntervalMs + this.#o.intervalMs + timeoutMs);
+        breaker.holdOpen(this.#chatWait(failures) + this.#o.intervalMs + timeoutMs);
+        this.#o.logger.info(
+          {
+            deployment: deployment.id,
+            failuresInARow: failures,
+            nextCheckInMs: this.#chatWait(failures),
+          },
+          'chat health check failed; breaker stays open',
+        );
       }
     } finally {
       timer.abort();
@@ -176,8 +200,9 @@ export class HealthChecker {
    * only the request (400): the model is served then. Counted against the deployment's quota, and
    * skipped while that is used up or the deployment is on a 429 cooldown (ADR 025).
    */
-  async #chat(deployment: Deployment, signal: AbortSignal): Promise<void> {
-    this.#lastChat.set(deployment.id, this.#o.clock.now());
+  async #chatProbe(deployment: Deployment, signal: AbortSignal): Promise<void> {
+    const failures = this.#chat.get(deployment.id)?.failures ?? 0;
+    this.#chat.set(deployment.id, { startedAt: this.#o.clock.now(), failures });
     const quotas = this.#o.quotas;
     let ticket: QuotaTicket | null = null;
     if (quotas) {
@@ -201,5 +226,11 @@ export class HealthChecker {
     } finally {
       quotas?.settle(ticket, usedTokens, CHAT_PROBE_PROMPT_TOKENS);
     }
+  }
+
+  /** Records how a `chat` check ended: 0 failures in a row after a pass. */
+  #chatEnded(deployment: string, failures: number): void {
+    const last = this.#chat.get(deployment);
+    if (last) last.failures = failures;
   }
 }

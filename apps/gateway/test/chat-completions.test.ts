@@ -259,3 +259,91 @@ describe('a timeout that opens the breaker', () => {
     },
   );
 });
+
+describe('the request deadline (REQUEST_DEADLINE_MS)', () => {
+  // Without the deadline, `slow-long` would answer after 2 tries of 5 s, and `slow-route` after
+  // 3 tries of 400 ms each (2 on its first deployment, then the fallback).
+  const stuck = { latencyMs: 60_000, ttftMs: 60_000 };
+  const deadlineModels = parseModelsConfig(
+    {
+      deployments: {
+        'slow-long': { provider: 'mock', timeoutMs: 5_000, mock: stuck },
+        'slow-long-stream': { provider: 'mock', timeoutMs: 5_000, mock: stuck },
+        'slow-a': { provider: 'mock', timeoutMs: 400, mock: stuck },
+        'slow-b': { provider: 'mock', timeoutMs: 400, mock: stuck },
+        'slow-a-stream': { provider: 'mock', timeoutMs: 400, mock: stuck },
+        'slow-b-stream': { provider: 'mock', timeoutMs: 400, mock: stuck },
+      },
+      models: {
+        'slow-long': { deployment: 'slow-long' },
+        'slow-long-stream': { deployment: 'slow-long-stream' },
+        'slow-route': {
+          policy: 'priority',
+          targets: [{ deployment: 'slow-a' }, { deployment: 'slow-b' }],
+        },
+        'slow-route-stream': {
+          policy: 'priority',
+          targets: [{ deployment: 'slow-a-stream' }, { deployment: 'slow-b-stream' }],
+        },
+      },
+    },
+    'deadline',
+  );
+  let own: Gateway;
+  let ownUrl: string;
+
+  beforeAll(async () => {
+    own = createGateway(testConfig({ REQUEST_DEADLINE_MS: '700' }), captureLogger().logger, {
+      models: deadlineModels,
+    });
+    await own.start();
+    const { port } = own.app.server.address() as AddressInfo;
+    ownUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    await own.shutdown();
+  });
+
+  const stats = (deployment: string) =>
+    (own.registry.deployment(deployment)?.provider as MockProvider).stats();
+
+  async function timed(model: string, stream: boolean) {
+    const started = Date.now();
+    const res = await fetch(`${ownUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization },
+      body: JSON.stringify({ model, ...hello, stream }),
+    });
+    const body = (await res.json()) as { error?: { code: string } };
+    return { res, body, ms: Date.now() - started };
+  }
+
+  it.each([
+    { stream: false, model: 'slow-long' },
+    { stream: true, model: 'slow-long-stream' },
+  ])('cuts a try that would outlast it (stream: $stream)', async ({ stream, model }) => {
+    const { res, body, ms } = await timed(model, stream);
+    expect(res.status).toBe(504);
+    expect(res.headers.get('content-type')).toMatch(/^application\/json/);
+    expect(body.error?.code).toBe('upstream_timeout');
+    // At the 700 ms deadline, not after the 5 s timeout, and with no retry after it.
+    expect(ms).toBeGreaterThanOrEqual(650);
+    expect(ms).toBeLessThan(3_000);
+    expect(stats(model)).toMatchObject({ requests: 1, canceled: 1, active: 0 });
+  });
+
+  it.each([
+    { stream: false, model: 'slow-route', a: 'slow-a', b: 'slow-b' },
+    { stream: true, model: 'slow-route-stream', a: 'slow-a-stream', b: 'slow-b-stream' },
+  ])('starts no retry or fallback after it (stream: $stream)', async ({ stream, model, a, b }) => {
+    const { res, body, ms } = await timed(model, stream);
+    expect(res.status).toBe(504);
+    expect(body.error?.code).toBe('upstream_timeout');
+    expect(ms).toBeLessThan(3_000);
+    // The first deployment's try timed out at 400 ms and its retry was cut at 700 ms; the
+    // fallback was never tried.
+    expect(stats(a)).toMatchObject({ requests: 2, canceled: 2, active: 0 });
+    expect(stats(b).requests).toBe(0);
+  });
+});

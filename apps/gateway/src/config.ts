@@ -98,6 +98,12 @@ export const gatewayConfigSchema = z
     RETRY_PER_DEPLOYMENT: z.coerce.number().int().min(1).max(5).default(2),
     RETRY_BASE_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(100),
     RETRY_MAX_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(2_000),
+    /**
+     * The most a request may take until its response starts (a stream's first event): no try,
+     * retry or fallback starts after it, a running try is cut at it, and the client gets 504
+     * `upstream_timeout`. Below a deployment's own `timeoutMs`, it also cuts a single try.
+     */
+    REQUEST_DEADLINE_MS: z.coerce.number().int().min(100).max(600_000).default(50_000),
     /** Circuit breakers (ADR 012): consecutive failures that open one, and how long it stays open. */
     BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).max(1_000).default(5),
     BREAKER_OPEN_MS: z.coerce.number().int().min(100).max(3_600_000).default(30_000),
@@ -109,6 +115,8 @@ export const gatewayConfigSchema = z
      * request for one token, so it runs far less often than the free `models` check.
      */
     HEALTH_CHECK_CHAT_INTERVAL_MS: z.coerce.number().int().min(100).default(60_000),
+    /** The longest wait between `chat` checks of a deployment whose checks keep failing. */
+    HEALTH_CHECK_CHAT_MAX_INTERVAL_MS: z.coerce.number().int().min(100).default(3_600_000),
     /**
      * Cooldown after an upstream 429 that sent no Retry-After (ADR 025): every instance skips the
      * deployment for this long. 0 starts none without a Retry-After.

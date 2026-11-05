@@ -234,6 +234,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     intervalMs: config.HEALTH_CHECK_INTERVAL_MS,
     timeoutMs: config.HEALTH_CHECK_TIMEOUT_MS,
     chatIntervalMs: config.HEALTH_CHECK_CHAT_INTERVAL_MS,
+    chatMaxIntervalMs: config.HEALTH_CHECK_CHAT_MAX_INTERVAL_MS,
     quotas,
   });
   const quotaUsage = () => quotas.usage(deployments);
@@ -249,6 +250,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       baseDelayMs: config.RETRY_BASE_DELAY_MS,
       maxDelayMs: config.RETRY_MAX_DELAY_MS,
     },
+    deadlineMs: config.REQUEST_DEADLINE_MS,
   };
 
   const cache = config.CACHE_ENABLED

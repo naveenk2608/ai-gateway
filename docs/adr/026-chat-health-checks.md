@@ -19,7 +19,9 @@ interval, for as long as the deployment stays configured.
 - A deployment can set `healthCheck: "chat"`. Its probe sends one non-streamed request for the
   deployment's model with `max_tokens` 1, instead of `GET /models`.
 - Like every probe, it runs only while the deployment's breaker is open, and at most once per
-  `HEALTH_CHECK_CHAT_INTERVAL_MS` (60 s) per deployment, against 5 s for the free check. Its timeout
+  `HEALTH_CHECK_CHAT_INTERVAL_MS` (60 s) per deployment, against 5 s for the free check. It backs
+  off (added after M12): after each further failure in a row the wait doubles (1, 2, 4, 8 minutes
+  and so on), up to `HEALTH_CHECK_CHAT_MAX_INTERVAL_MS` (an hour); a pass starts it over. Its timeout
   is the deployment's own `timeoutMs` when that is longer than `HEALTH_CHECK_TIMEOUT_MS`, since a
   free endpoint can take tens of seconds to answer.
 - The probe passes when the model answers, or when the provider refuses only the request (400):
@@ -43,10 +45,11 @@ interval, for as long as the deployment stays configured.
 
 ## Consequences
 
-- While a chat-checked deployment is down, it costs one single-token request per
-  `HEALTH_CHECK_CHAT_INTERVAL_MS`, counted in its quota; nothing while its breaker is closed.
-- A deployment that recovers is noticed within `HEALTH_CHECK_CHAT_INTERVAL_MS` plus one
-  `HEALTH_CHECK_INTERVAL_MS`, instead of `BREAKER_OPEN_MS`.
+- While a chat-checked deployment is down, it costs single-token requests further and further
+  apart, then one an hour, counted in its quota; nothing while its breaker is closed.
+- A deployment that recovers is noticed at its next check: within a minute while its checks have
+  just started failing, within an hour (plus one `HEALTH_CHECK_INTERVAL_MS`) once they have backed
+  off fully.
 - A provider that refuses `max_tokens` 1 with something other than a 400 would fail every check;
   such a deployment should keep `models`.
 - Tested: unit tests for the breaker's hold and the checker (one token asked for, counted in the

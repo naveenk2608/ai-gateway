@@ -44,6 +44,7 @@ function setup(answer: () => Promise<ChatResult>, check: QuotaCheck = { ok: true
     intervalMs: 5_000,
     timeoutMs: 5_000,
     chatIntervalMs: CHAT_INTERVAL_MS,
+    chatMaxIntervalMs: 60 * 60_000,
     quotas: quotas as unknown as QuotaBoard,
   });
   const breaker = breakers.get('listed');
@@ -115,4 +116,50 @@ describe('HealthChecker with chat checks (ADR 026)', () => {
     await t.clock.advance(OPEN_MS);
     expect(t.breaker.state).toBe('half_open');
   });
+});
+
+describe('HealthChecker chat check backoff', () => {
+  const MIN = 60_000;
+  /** Every wait below is a whole number of ticks. */
+  const TICK = 15_000;
+
+  it('waits 1, 2, 4, 8 minutes and so on up to an hour while checks fail, and starts over after a pass', async () => {
+    let healthy = false;
+    const t = setup(() =>
+      healthy ? answered() : Promise.reject(new ProviderError('not_found', 'upstream status 404')),
+    );
+    const sentAt: number[] = [];
+    /** One tick: the checker runs, and records when a chat check is sent. */
+    const tick = async (traffic: boolean) => {
+      await t.clock.advance(TICK);
+      // Traffic: a half-open breaker's trial request fails, as the deployment still does.
+      if (traffic && t.breaker.state === 'half_open' && t.breaker.tryAcquire()) {
+        t.breaker.onFailure('not_found');
+      }
+      const before = t.chat.mock.calls.length;
+      await t.checker.checkOpen();
+      if (t.chat.mock.calls.length > before) sentAt.push(t.clock.now());
+    };
+    const run = async (ms: number) => {
+      for (let elapsed = 0; elapsed < ms; elapsed += TICK) await tick(true);
+    };
+    const gaps = () => sentAt.slice(1).map((at, i) => (at - sentAt[i]!) / MIN);
+
+    await run(190 * MIN);
+    expect(gaps().slice(0, 8)).toEqual([1, 2, 4, 8, 16, 32, 60, 60]);
+    expect(t.breaker.state).toBe('open');
+
+    // The deployment recovers: the next check passes and half-opens the breaker.
+    healthy = true;
+    sentAt.length = 0;
+    while (sentAt.length === 0) await tick(false);
+    expect(t.breaker.state).toBe('half_open');
+
+    // It fails again: the interval has started over, a minute after the pass, then 1 and 2.
+    healthy = false;
+    t.breaker.tryAcquire();
+    t.breaker.onFailure('not_found');
+    await run(5 * MIN);
+    expect(gaps()).toEqual([1, 1, 2]);
+  }, 30_000);
 });

@@ -19,7 +19,8 @@ export class ClientClosedError extends Error {
   }
 }
 
-export type TimeoutPhase = 'response' | 'first_event' | 'idle';
+/** `deadline`: the request's own deadline (REQUEST_DEADLINE_MS) came before the deployment's. */
+export type TimeoutPhase = 'response' | 'first_event' | 'idle' | 'deadline';
 
 /** Abort reason when an attempt runs past one of its deadlines. */
 export class AttemptTimeoutError extends Error {
@@ -27,7 +28,11 @@ export class AttemptTimeoutError extends Error {
   readonly timeoutMs: number;
 
   constructor(phase: TimeoutPhase, timeoutMs: number) {
-    super(`no ${phase === 'response' ? 'response' : 'stream event'} within ${timeoutMs} ms`);
+    super(
+      phase === 'deadline'
+        ? `the request's deadline passed after ${timeoutMs} ms of this attempt`
+        : `no ${phase === 'response' ? 'response' : 'stream event'} within ${timeoutMs} ms`,
+    );
     this.name = 'AttemptTimeoutError';
     this.phase = phase;
     this.timeoutMs = timeoutMs;
@@ -58,6 +63,19 @@ export interface AttemptContext {
   passedOver?: readonly string[];
   /** Told how the attempt ended, once: feeds circuit breakers and latency tracking. */
   onEnd?: (outcome: AttemptOutcome) => void;
+  /**
+   * When the whole request must have its response started (clock time, REQUEST_DEADLINE_MS). An
+   * attempt that would run past it is cut at it; nothing limits a stream once its first event came.
+   */
+  deadlineAt?: number;
+}
+
+/** The time an attempt may wait for its response (or first event): its timeout, or less. */
+function untilFirst(ctx: AttemptContext, phase: TimeoutPhase): { ms: number; phase: TimeoutPhase } {
+  const timeoutMs = ctx.deployment.timeoutMs;
+  if (ctx.deadlineAt === undefined) return { ms: timeoutMs, phase };
+  const left = ctx.deadlineAt - ctx.clock.now();
+  return left < timeoutMs ? { ms: Math.max(0, left), phase: 'deadline' } : { ms: timeoutMs, phase };
 }
 
 export interface AttemptOutcome {
@@ -243,10 +261,11 @@ function withTrace(req: ChatRequest, attempt: Attempt): ChatRequest {
 export async function runChat(ctx: AttemptContext, req: ChatRequest): Promise<ChatResult> {
   const attempt = new Attempt(ctx, false);
   try {
+    const limit = untilFirst(ctx, 'response');
     const result = await attempt.within(
       ctx.deployment.provider.chat(withTrace(req, attempt), attempt.signal),
-      ctx.deployment.timeoutMs,
-      'response',
+      limit.ms,
+      limit.phase,
     );
     attempt.report(result.usage, result.rateLimit);
     attempt.end();
@@ -281,9 +300,8 @@ export async function openStream(ctx: AttemptContext, req: ChatRequest): Promise
     void iterator.return?.().catch(noop);
   };
   try {
-    const first = attempt.seen(
-      await attempt.within(iterator.next(), ctx.deployment.timeoutMs, 'first_event'),
-    );
+    const limit = untilFirst(ctx, 'first_event');
+    const first = attempt.seen(await attempt.within(iterator.next(), limit.ms, limit.phase));
     attempt.markFirstEvent();
     return {
       first,
