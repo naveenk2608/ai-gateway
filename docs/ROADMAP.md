@@ -399,23 +399,31 @@ they get no quota (their 429s still put them on cooldown).
 
 ## M12 — Fixes and supply-chain safety
 
-**Goal.** Close two known problems from PLAN-NOTES, and make what CI builds and publishes
-verifiable.
+**Goal.** Close the known problems from PLAN-NOTES and from M11's live checks, and make what CI
+builds and publishes verifiable.
 
 **Scope**
 
+- Streamed requests that time out before their first token get a 504 (found with Gemini 3.8
+  Flash in M11's live checks).
 - The dead-letter fix from PLAN-NOTES: claim a retried batch with `XCLAIM ... JUSTID` before
   each wait.
-- A per-IP limit for unknown API keys.
+- A per-IP limit for unknown API keys, and a short Redis cache of key IDs that do not exist.
 - `x-ratelimit-*` headers on successful replies.
-- GitHub Actions pinned to commit SHAs, Dependabot, an SBOM, a Trivy image scan, and signed
-  images published to GHCR.
+- A chat health check for providers whose model list can include models they will not serve.
+- GitHub Actions pinned to commit SHAs with least-privilege permissions, Dependabot, an SBOM, a
+  Trivy image scan, and signed images published to GHCR.
 
 **Acceptance**
 
-- [ ] A two-worker Postgres-outage test dead-letters nothing.
-- [ ] An unknown-key flood gets 429s without a Postgres lookup each.
-- [ ] The image signature verifies.
+- [ ] A streamed request that times out before its first token gets an HTTP 504 with a JSON
+      error.
+- [ ] A two-worker Postgres-outage test dead-letters nothing and stores every event once.
+- [ ] An unknown-key flood from one IP gets 429s, without a Postgres lookup for each request.
+- [ ] Successful replies carry the six `x-ratelimit` headers.
+- [ ] A deployment that lists a model but will not serve it fails its chat health check.
+- [ ] Every action is pinned to a SHA and Dependabot is configured. CI produces an SBOM and a
+      Trivy result, and the image on GHCR verifies with cosign.
 
 **PLAN-NOTES rows it closes**
 
@@ -423,6 +431,99 @@ verifiable.
   Redis Stream…".
 - 2026-10-20 M4 "Requests with unknown API key IDs are not rate-limited per client IP…".
 - 2026-10-20 M4 "No `x-ratelimit-limit/remaining/reset` headers on successful responses…".
+- Updates: 2026-10-21 M6 "Requests with an invalid, revoked or expired API key…" (its per-IP
+  part), 2026-11-04 M11 "Health checks use `GET /models`…", 2026-11-04 M11 "Gemini 3.8 Flash…",
+  and 2026-10-31 M10 "The instances' first-boot scripts…" (a pre-built image now exists).
+
+### M12 plan (2026-11-05)
+
+Order A → G. Each part is pushed in small commits, and CI is checked after each push. The local
+machine has little free memory, so formatting and syntax are checked per file locally and CI runs
+lint, typecheck and the test suites. Versions and digests come only from each project's official
+repository or registry, with the version next to every pin.
+
+**Part A — streamed timeouts.** Integration tests in `apps/gateway/test/chat-completions.test.ts`:
+
+- A streamed request to a deployment that never sends its first event gets 504 `upstream_timeout`
+  as JSON, and both tries are cancelled.
+- With `BREAKER_FAILURE_THRESHOLD=1`, the first timeout opens the breaker, so there is no retry.
+  A streamed and a non-streamed request still get the 504.
+- The same through the OpenAI-compatible adapter (undici, as with Gemini), against a local HTTP
+  server that takes the request and never answers.
+
+Render's log for the reported request (2026-11-03 23:26:27 UTC) shows the gateway answering 504
+after 60.0 s, without a restart. In M11's first run the gateway answered its 504s only after
+120 s (a timeout plus a retry), but the client's connection had already closed at about 60 s. If
+the tests pass, the reset happened between the client and the gateway, most likely in Render's
+proxy. That evidence then goes to PLAN-NOTES, and the gateway is not changed.
+
+**Part B — dead letters during a long Postgres outage.** While Postgres is down, the
+`UsageConsumer` claims its batch to itself (`XCLAIM <stream> <group> <self> 0 <ids> JUSTID`)
+before each wait. That resets the entries' idle time without raising their delivery count. Each
+wait is capped below `WORKER_CLAIM_IDLE_MS`, so no wait outlasts a claim; the backoff would
+otherwise grow to 30 s. A failed claim is logged and the retry goes on. Test, in
+`apps/worker/test/postgres-outage.test.ts`: two workers, with Postgres switched off for longer than
+`WORKER_MAX_DELIVERIES` × `WORKER_CLAIM_IDLE_MS`. When it comes back, every event is stored once
+and nothing is dead-lettered.
+
+**Part C — unknown API keys.** When a key is not in the in-process cache, one Lua script runs
+before the Postgres lookup:
+
+- If the client IP's unknown-key bucket (`UNKNOWN_KEYS_PER_MINUTE_PER_IP`) is empty, the request
+  gets 429 with `retry-after`.
+- If the key ID is cached as unknown (`UNKNOWN_KEY_CACHE_MS`), the request gets 401 without a
+  lookup, and the miss counts against the bucket.
+- Otherwise Postgres is asked. A miss is cached and counted.
+
+A new key's ID is removed from that cache through the existing invalidation channel, so the key
+works at once. If Redis is down, the check is skipped and the lookup goes to Postgres, as before
+M12. Prometheus counts rejected and limited unknown keys, with no IP label because ADR 017 keeps
+labels bounded; the IP goes in the warning log line. Closes the M4 row and updates the M6 row.
+
+**Part D — rate-limit headers.** The ADMIT script also returns, for each RPM and TPM bucket it
+took from, the limit, what is left, and the time until the bucket is full again. No extra Redis
+call is made. On successful `/v1/chat/completions` replies, cache hits and streams included, the
+gateway sends `x-ratelimit-limit-requests`, `x-ratelimit-remaining-requests` and
+`x-ratelimit-reset-requests`, and the same three for tokens. Each set comes from the tightest scope
+(the one with the least left), with resets in OpenAI's duration format (`1s`, `6m0s`). A set is
+left out when no RPM or TPM limit applies. Token counts are as reserved at admission: the prompt
+estimate plus the output cap. Tests and README; closes the M4 row.
+
+**Part E — chat health checks.** A new per-deployment value, `healthCheck: "chat"`, makes the
+probe one non-streamed request with `max_tokens` 1 instead of `GET /models`:
+
+- Like every probe, it runs only while the deployment's breaker is open (ADR 012), and at most once
+  per `HEALTH_CHECK_CHAT_INTERVAL_MS` per deployment.
+- It counts against the deployment's quota, and is skipped when that quota is used up.
+- A failed chat probe keeps the breaker open until the next probe, so the open period's timer
+  does not half-open it in between.
+
+NVIDIA's deployments use it; every other deployment keeps `models`. ADR 026; the PLAN-NOTES row
+is updated.
+
+**Part F — supply chain.**
+
+- Every `uses:` is pinned to a full commit SHA, with its release in a comment. The SHAs are read
+  from each action's official repository.
+- Workflows default to `contents: read`. Only the publishing steps get `packages: write` and
+  `id-token: write`.
+- `.github/dependabot.yml` covers npm and github-actions: weekly, with minor and patch updates
+  grouped.
+- A `gateway-image` job runs after the checks pass. It builds the Dockerfile's `gateway` stage,
+  writes a CycloneDX SBOM (kept as a build artifact), and scans the image with Trivy. The scan
+  fails on CRITICAL vulnerabilities that have a fix, and `.trivyignore` gives a reason for each
+  entry.
+- On pushes to main, the job then pushes the image to `ghcr.io/naveenk2608/ai-gateway`, tagged
+  with the commit SHA and `main`. It signs the digest with cosign keyless signing (GitHub's OIDC
+  token, no stored key) and verifies the signature in the same job.
+- Plain `docker` commands build, log in and push, so little third-party code runs with write
+  access.
+- README: pulling the image and `cosign verify`. ADR 027. The M10 boot-scripts row notes that a
+  pre-built image now exists; the Terraform is unchanged.
+
+**Part G — wrap-up.** README, `.env.example`, the ADRs, PLAN-NOTES rows closed or updated, ticked
+acceptance checks, and an "M12 run" row with the parts done, what is left, the decisions to
+review, and anything reverted or skipped.
 
 ## M13 — Tools, JSON output and embeddings
 
