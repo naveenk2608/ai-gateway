@@ -6,6 +6,7 @@ import {
   type AdapterKind,
   type Billing,
   type DeploymentConfig,
+  type HealthCheckKind,
   type ModelsConfig,
   type RoutingPolicy,
 } from '../models-config.js';
@@ -26,6 +27,11 @@ export interface Deployment {
   baseUrlHost: string | null;
   /** False when the deployment is never probed (`healthCheck: "none"`). */
   probes: boolean;
+  /**
+   * How an open breaker's deployment is probed: `models` lists models (no model runs), `chat`
+   * asks for one token (ADR 026), `none` sends nothing. The mock is probed in process.
+   */
+  healthCheck: HealthCheckKind;
   /** `free_tier`: the provider charges nothing; the list cost is still recorded (ADR 024). */
   billing: Billing;
   /** Free-tier limits counted in Redis across instances (ADR 025); null without any. */
@@ -137,7 +143,8 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
       providerName: deployment.provider,
       adapter: deployment.adapter,
       baseUrlHost: urlHost(created.baseUrl),
-      probes: deployment.adapter === 'mock' || deployment.healthCheck === 'models',
+      probes: deployment.adapter === 'mock' || deployment.healthCheck !== 'none',
+      healthCheck: deployment.adapter === 'mock' ? 'models' : deployment.healthCheck,
       billing: deployment.billing,
       quota: deployment.quota ?? null,
       providerModel: deployment.model,

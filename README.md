@@ -334,7 +334,10 @@ price or weight, but answers when no provider key is set.
 - **Circuit breakers** (ADR 012): after `BREAKER_FAILURE_THRESHOLD` (5) consecutive failures a
   deployment is skipped for `BREAKER_OPEN_MS` (30 s). Open deployments are health-checked every
   `HEALTH_CHECK_INTERVAL_MS` with a call that runs no model; a pass lets one trial request through,
-  and its success closes the breaker. Breakers are per instance; their state is also published in
+  and its success closes the breaker. A deployment with `healthCheck: "chat"` (ADR 026; NVIDIA's,
+  whose model list can name models it will not serve) is checked instead with a request for one
+  token, at most every `HEALTH_CHECK_CHAT_INTERVAL_MS` (60 s) and counted in its quota; while that
+  fails, the breaker stays open. Breakers are per instance; their state is also published in
   Redis and in `provider_health_events`.
 - **Routing history**: each attempt is stored with its policy and reason, e.g.
   `priority 2 of 2; fallback after mock-error failed (server_error)`. See it in the dashboard or at

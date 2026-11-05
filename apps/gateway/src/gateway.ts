@@ -218,14 +218,6 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       metrics.breakerTransition(t);
     },
   );
-  const healthChecker = new HealthChecker({
-    breakers,
-    deployments,
-    clock,
-    logger,
-    intervalMs: config.HEALTH_CHECK_INTERVAL_MS,
-    timeoutMs: config.HEALTH_CHECK_TIMEOUT_MS,
-  });
   const quotas = new QuotaBoard({
     redis,
     clock,
@@ -233,6 +225,16 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     defaultCooldownMs: config.PROVIDER_COOLDOWN_MS,
     onSkip: (deployment, kind) => metrics.providerSkipped(deployment, kind),
     onCooldown: (deployment) => metrics.cooldownStarted(deployment),
+  });
+  const healthChecker = new HealthChecker({
+    breakers,
+    deployments,
+    clock,
+    logger,
+    intervalMs: config.HEALTH_CHECK_INTERVAL_MS,
+    timeoutMs: config.HEALTH_CHECK_TIMEOUT_MS,
+    chatIntervalMs: config.HEALTH_CHECK_CHAT_INTERVAL_MS,
+    quotas,
   });
   const quotaUsage = () => quotas.usage(deployments);
   const routing: RoutingDeps = {

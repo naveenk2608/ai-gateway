@@ -110,7 +110,7 @@ export interface ModelCatalog {
     adapter?: string;
     /** Host of the base URL; null for the mock or when its URL needs an unset variable. */
     baseUrlHost?: string | null;
-    healthCheck?: 'models' | 'none';
+    healthCheck?: 'models' | 'chat' | 'none';
     providerModel: string;
     enabled: boolean;
     timeoutMs: number;

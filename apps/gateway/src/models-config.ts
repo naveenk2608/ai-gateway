@@ -54,9 +54,13 @@ export function expandBaseUrl(
 /**
  * How an open breaker's deployment is health-checked (ADR 012): `models` lists models (runs no
  * model), `none` sends nothing, for providers without a model list; the breaker then half-opens
- * after BREAKER_OPEN_MS.
+ * after BREAKER_OPEN_MS. `chat` sends one request for a single token, at most once per
+ * HEALTH_CHECK_CHAT_INTERVAL_MS, for providers whose model list can include models they will not
+ * serve (ADR 026); it counts against the deployment's quota.
  */
-const healthCheck = z.enum(['models', 'none']).default('models');
+export const HEALTH_CHECKS = ['models', 'chat', 'none'] as const;
+export type HealthCheckKind = (typeof HEALTH_CHECKS)[number];
+const healthCheck = z.enum(HEALTH_CHECKS).default('models');
 
 export const BILLING = ['free_tier', 'paid'] as const;
 export type Billing = (typeof BILLING)[number];

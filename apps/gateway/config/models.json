@@ -137,6 +137,7 @@
       "model": "deepseek-ai/deepseek-v4.1-flash",
       "baseUrl": "https://integrate.api.nvidia.com/v1",
       "apiKeyEnv": "NVIDIA_API_KEY",
+      "healthCheck": "chat",
       "billing": "free_tier"
     },
     "nvidia-nemotron-3-super": {
@@ -145,6 +146,7 @@
       "model": "nvidia/nemotron-3-super-120b-a12b",
       "baseUrl": "https://integrate.api.nvidia.com/v1",
       "apiKeyEnv": "NVIDIA_API_KEY",
+      "healthCheck": "chat",
       "billing": "free_tier"
     },
     "openrouter-gemma-4-31b-free": {

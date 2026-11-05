@@ -105,6 +105,11 @@ export const gatewayConfigSchema = z
     HEALTH_CHECK_INTERVAL_MS: z.coerce.number().int().min(100).default(5_000),
     HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).default(5_000),
     /**
+     * The least time between two `chat` health checks of one deployment (ADR 026): each is a real
+     * request for one token, so it runs far less often than the free `models` check.
+     */
+    HEALTH_CHECK_CHAT_INTERVAL_MS: z.coerce.number().int().min(100).default(60_000),
+    /**
      * Cooldown after an upstream 429 that sent no Retry-After (ADR 025): every instance skips the
      * deployment for this long. 0 starts none without a Retry-After.
      */

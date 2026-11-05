@@ -42,4 +42,5 @@ once it recovers, without a coordination round trip on every request.
   over, its breaker opens, requests skip it, and after the mock heals the health check half-opens
   the breaker and the next request closes it, with all three transitions recorded.
 - A provider whose probe passes while its chat endpoint fails will be half-opened and re-opened by
-  the trial; the cost is one failed request per health-check interval.
+  the trial; the cost is one failed request per health-check interval. Since M12, a deployment
+  can use a chat health check for this case instead (ADR 026).

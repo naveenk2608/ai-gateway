@@ -1,7 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { ADAPTERS, modelRoute, ROUTING_POLICIES, type ModelsConfig } from '../models-config.js';
+import {
+  ADAPTERS,
+  HEALTH_CHECKS,
+  modelRoute,
+  ROUTING_POLICIES,
+  type ModelsConfig,
+} from '../models-config.js';
 import { urlHost, type ProviderRegistry } from '../providers/registry.js';
 import { errorResponses, type AdminDeps } from './schemas.js';
 
@@ -18,8 +24,11 @@ export const modelCatalogSchema = z.object({
        * for the mock, and for a deployment whose URL needs a variable that is unset.
        */
       baseUrlHost: z.string().nullable(),
-      /** `none`: never probed while its breaker is open; it half-opens after BREAKER_OPEN_MS. */
-      healthCheck: z.enum(['models', 'none']),
+      /**
+       * How an open breaker's deployment is checked: `models` lists models, `chat` asks for one
+       * token (ADR 026), `none` never probes it (it half-opens after BREAKER_OPEN_MS).
+       */
+      healthCheck: z.enum(HEALTH_CHECKS),
       providerModel: z.string(),
       /** False when the deployment could not be created, e.g. its API key variable is unset. */
       enabled: z.boolean(),

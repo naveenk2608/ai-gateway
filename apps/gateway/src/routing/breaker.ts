@@ -49,7 +49,8 @@ export class CircuitBreaker {
   readonly #onTransition: (t: Transition) => void;
   #state: BreakerState = 'closed';
   #failures = 0;
-  #openedAt = 0;
+  /** When an open breaker lets a trial through: `openMs` after it opened, or later (holdOpen). */
+  #openUntil = 0;
   #trialInFlight = false;
 
   constructor(
@@ -66,7 +67,7 @@ export class CircuitBreaker {
 
   /** The current state; an open breaker whose wait has passed is half-open. */
   get state(): BreakerState {
-    if (this.#state === 'open' && this.#clock.now() >= this.#openedAt + this.#settings.openMs) {
+    if (this.#state === 'open' && this.#clock.now() >= this.#openUntil) {
       this.#move('half_open', `no trial for ${this.#settings.openMs} ms`);
     }
     return this.#state;
@@ -75,7 +76,7 @@ export class CircuitBreaker {
   /** Milliseconds until an open breaker allows a trial; 0 otherwise. */
   get retryInMs(): number {
     if (this.state !== 'open') return 0;
-    return Math.max(0, this.#openedAt + this.#settings.openMs - this.#clock.now());
+    return Math.max(0, this.#openUntil - this.#clock.now());
   }
 
   /** Whether a request may use the deployment now. A half-open breaker admits one trial. */
@@ -115,8 +116,17 @@ export class CircuitBreaker {
     if (this.#state === 'open') this.#move('half_open', 'health check passed');
   }
 
+  /**
+   * A health check that runs the model failed (ADR 026): an open breaker stays open for at least
+   * `ms` more, until the next such check, instead of half-opening when its open period ends.
+   */
+  holdOpen(ms: number): void {
+    if (this.#state !== 'open') return;
+    this.#openUntil = Math.max(this.#openUntil, this.#clock.now() + ms);
+  }
+
   #open(reason: string): void {
-    this.#openedAt = this.#clock.now();
+    this.#openUntil = this.#clock.now() + this.#settings.openMs;
     this.#failures = 0;
     this.#move('open', reason);
   }

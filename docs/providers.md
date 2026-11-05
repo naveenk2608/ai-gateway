@@ -40,9 +40,11 @@ Cloudflare `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_I
 Health checks: Cloudflare's OpenAI endpoint answers `GET /models` with 405 (checked 2026-11-03),
 and Z.AI documents no model list, so both use `healthCheck: "none"`. NVIDIA's and OpenRouter's
 `GET /models` answer without a key, so their check proves the API is up but not that the key is
-valid. A health check never proves a model is served either: `GET /models` can list a model the
+valid. A `GET /models` check never proves a model is served either: it can list a model the
 provider answers with 404 (NVIDIA's Nemotron 3 Super, 2026-11-03), and a passing check half-opens
-the breaker those 404s opened, so requests try the deployment again (PLAN-NOTES, 2026-11-04).
+the breaker those 404s opened, so requests try the deployment again. Since M12, NVIDIA's
+deployments use `healthCheck: "chat"` (ADR 026): a request for one token, at most once a minute
+while the breaker is open, which keeps the breaker open while it fails.
 
 ## Free-tier limits and the quotas configured
 

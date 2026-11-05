@@ -194,7 +194,12 @@ describe('the default models file', () => {
       adapter: 'openai-compatible',
       baseUrlHost: 'api.groq.com',
       probes: true,
+      healthCheck: 'models',
     });
+    // NVIDIA's model list can name models it will not serve (ADR 026).
+    for (const id of ['nvidia-deepseek-v4.1-flash', 'nvidia-nemotron-3-super']) {
+      expect(all.deployment(id), id).toMatchObject({ probes: true, healthCheck: 'chat' });
+    }
     await all.close();
 
     const withoutAccount: Record<string, string> = { ...KEYS };

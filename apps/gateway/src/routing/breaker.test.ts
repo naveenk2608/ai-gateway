@@ -67,6 +67,21 @@ describe('CircuitBreaker', () => {
     expect(moves().at(-1)).toBe('open->half_open: health check passed');
   });
 
+  it('stays open past its wait while a failed chat health check holds it, then half-opens', async () => {
+    const { clock, b } = breaker();
+    for (let i = 0; i < 3; i++) b.onFailure('not_found');
+    await clock.advance(2_000);
+    b.holdOpen(30_000);
+    expect(b.retryInMs).toBe(30_000);
+    await clock.advance(29_999);
+    expect(b.state).toBe('open');
+    await clock.advance(1);
+    expect(b.state).toBe('half_open');
+    // Only an open breaker is held.
+    b.holdOpen(30_000);
+    expect(b.state).toBe('half_open');
+  });
+
   it('frees the trial slot when the trial ends without a verdict', async () => {
     const { clock, b } = breaker();
     for (let i = 0; i < 3; i++) b.onFailure('server_error');
