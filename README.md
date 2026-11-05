@@ -261,6 +261,7 @@ can help.
 | 400 | `invalid_request` | The body failed validation. |
 | 400 | `request_exceeds_limit` | The request could never fit: more tokens than the TPM limit, or a worst-case cost above the project's per-request cap or whole budget. Lower `max_tokens`. |
 | 401 | `invalid_api_key` | Missing, unknown, revoked or expired key. |
+| 429 | `too_many_invalid_api_keys` | The client IP sent too many key IDs that do not exist; refused before any key lookup, with `retry-after`. |
 | 403 | `model_not_allowed` | The model is outside the project's allow-list. |
 | 404 | `model_not_found` | No such model, or none of its deployments is enabled. |
 | 429 | `rpm_limit_exceeded`, `tpm_limit_exceeded`, `concurrency_limit_exceeded` | A key or project limit, with `retry-after`. |
@@ -589,6 +590,16 @@ tells every instance through Redis pub/sub, and the TTL bounds the delay if that
 Rotation keeps the old key working for a grace period (default
 `API_KEY_ROTATION_GRACE_SECONDS`). A project's `allowedModels` limits the models its keys may call.
 
+A key ID that is not in the database costs one lookup, then is remembered in Redis for
+`UNKNOWN_KEY_CACHE_MS` (60 s), so repeats are refused without one. Each client IP may send
+`UNKNOWN_KEYS_PER_MINUTE_PER_IP` (30) unknown key IDs a minute; after that, its requests with a
+key ID not known to exist get 429 `too_many_invalid_api_keys` before any lookup. Key IDs found in
+the database are remembered too, and are never limited, so valid keys keep working from an
+address that also sent unknown ones. Creating a key clears its ID through the same pub/sub
+message. If Redis is down, keys are looked up as before. Prometheus counts these requests in
+`gateway_unknown_api_keys_total{result="rejected"|"limited"}`; the client IP is only in the log
+line. Behind a proxy, set `TRUST_PROXY` (below), or every client shares one address.
+
 ### Admin API
 
 `POST /admin/auth/login` sets an HTTP-only, `SameSite=Strict` session cookie that every other admin
@@ -883,7 +894,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Connections | `DATABASE_URL`, `REDIS_URL` (the worker needs no Redis with SQS), `HOST`, `PORT` |
 | Secrets and first run | `API_KEY_PEPPER` (required), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_API_KEY` |
 | Event bus | `EVENT_BUS` (`redis` or `sqs`), `SQS_QUEUE_URL`, `SQS_DLQ_URL`, `AWS_REGION`, `SQS_ENDPOINT` (LocalStack only), `EVENTS_*`, `WORKER_*` |
-| Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*` |
+| Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*`, `UNKNOWN_KEYS_PER_MINUTE_PER_IP`, `UNKNOWN_KEY_CACHE_MS` |
 | Routing | `RETRY_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
 | Cache | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |

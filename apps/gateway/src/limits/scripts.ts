@@ -218,6 +218,45 @@ return expired
 `);
 
 /**
+ * Before an API key's database lookup: what is known about its key ID, and whether the client IP
+ * may look up one more key ID that is not known to exist.
+ * KEYS: 1 the IP's unknown-key bucket, 2 the key ID's marker ('1' exists, '0' does not).
+ * ARGV: 1 now, 2 cap per minute.
+ * Returns {3} when the key ID exists (look it up, no limit), {0, retryAfterMs} when the bucket is
+ * empty, {1} when the key ID is known not to exist (one token taken), {2} when it was never seen
+ * (look it up; a miss takes a token afterwards).
+ */
+export const UNKNOWN_KEY_CHECK = new LuaScript(`${BUCKET}
+local marker = redis.call('GET', KEYS[2])
+if marker == '1' then return {3} end
+local now = tonumber(ARGV[1])
+local cap = tonumber(ARGV[2])
+local tokens, ts = bucket(KEYS[1], cap, now)
+if tokens < 1 then return {0, math.ceil((1 - tokens) * 60000 / cap)} end
+if marker == '0' then
+  redis.call('HSET', KEYS[1], 'tokens', tokens - 1, 'ts', ts)
+  redis.call('PEXPIRE', KEYS[1], 120000)
+  return {1}
+end
+return {2}
+`);
+
+/**
+ * After a database lookup found no such key ID: remembers that for a while, and takes a token from
+ * the client IP's unknown-key bucket (not below zero).
+ * KEYS: 1 the IP's unknown-key bucket, 2 the key ID's marker. ARGV: 1 now, 2 cap, 3 marker TTL ms.
+ */
+export const UNKNOWN_KEY_MISS = new LuaScript(`${BUCKET}
+redis.call('SET', KEYS[2], '0', 'PX', ARGV[3])
+local now = tonumber(ARGV[1])
+local cap = tonumber(ARGV[2])
+local tokens, ts = bucket(KEYS[1], cap, now)
+redis.call('HSET', KEYS[1], 'tokens', math.max(0, tokens - 1), 'ts', ts)
+redis.call('PEXPIRE', KEYS[1], 120000)
+return 1
+`);
+
+/**
  * Takes one token from a bucket of `cap` per minute, for simple rate limits (admin logins).
  * KEYS: 1 bucket. ARGV: 1 now, 2 cap. Returns {1} or {0, retryAfterMs}.
  */

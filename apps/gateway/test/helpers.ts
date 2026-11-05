@@ -34,8 +34,9 @@ export function testConfig(overrides: Record<string, string | undefined> = {}): 
     REDIS_URL: process.env.REDIS_URL,
     PORT: '0',
     API_KEY_PEPPER: TEST_PEPPER,
-    // Every test logs in from 127.0.0.1, across files running at once.
+    // Every test logs in, and sends unknown keys, from 127.0.0.1, across files running at once.
     LOGIN_ATTEMPTS_PER_MINUTE_PER_IP: '100000',
+    UNKNOWN_KEYS_PER_MINUTE_PER_IP: '100000',
     ...overrides,
   });
 }

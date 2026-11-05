@@ -2,6 +2,7 @@ import type { Clock } from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
 import type { UsagePolicy } from '../limits/policy.js';
 import { parseApiKey, secretMatches } from './api-keys.js';
+import type { UnknownKeyGuard } from './unknown-keys.js';
 
 /** The caller behind a verified API key. */
 export interface AuthenticatedKey {
@@ -14,10 +15,13 @@ export interface AuthenticatedKey {
   policy: UsagePolicy;
 }
 
-export type RejectReason = 'malformed' | 'unknown' | 'secret_mismatch' | 'revoked' | 'expired';
+/** `limited`: the client IP sent too many unknown key IDs, so this one was not looked up. */
+export type RejectReason =
+  'malformed' | 'unknown' | 'secret_mismatch' | 'revoked' | 'expired' | 'limited';
 
 export type VerifyResult =
-  { ok: true; key: AuthenticatedKey } | { ok: false; reason: RejectReason; keyId?: string };
+  | { ok: true; key: AuthenticatedKey }
+  | { ok: false; reason: RejectReason; keyId?: string; retryAfterMs?: number };
 
 /** What the database says about a key: the lookup result the cache holds. */
 export interface KeyRecord {
@@ -43,6 +47,8 @@ export interface KeyVerifierOptions {
    */
   ttlMs: number;
   maxEntries?: number;
+  /** Limits lookups of key IDs that do not exist per client IP (M12); absent in unit tests. */
+  unknownKeys?: UnknownKeyGuard;
 }
 
 interface Entry {
@@ -53,7 +59,9 @@ interface Entry {
 /**
  * Verifies API keys with a short-TTL in-process cache, so the request path rarely touches
  * Postgres. The secret is checked against the stored HMAC on every request; only the lookup is
- * cached. Unknown key IDs are not cached, so a key created elsewhere works at once.
+ * cached. Unknown key IDs are not cached in process; with `unknownKeys` they are remembered in
+ * Redis for a short while and limited per client IP, and creating a key clears its ID there
+ * (`forgetMissing`), so a new key works at once.
  */
 export class KeyVerifier {
   readonly #options: KeyVerifierOptions;
@@ -68,12 +76,17 @@ export class KeyVerifier {
     this.#maxEntries = options.maxEntries ?? 10_000;
   }
 
-  async verify(presented: string): Promise<VerifyResult> {
+  /** `client.ip` enables the per-IP limit on unknown key IDs, when `unknownKeys` is set. */
+  async verify(presented: string, client?: { ip: string }): Promise<VerifyResult> {
     const parsed = parseApiKey(presented);
     if (!parsed) return { ok: false, reason: 'malformed' };
     const { keyId } = parsed;
 
-    const record = await this.#lookup(keyId);
+    const found = await this.#find(keyId, client);
+    if ('retryAfterMs' in found) {
+      return { ok: false, reason: 'limited', keyId, retryAfterMs: found.retryAfterMs };
+    }
+    const record = found.record;
     if (!record) return { ok: false, reason: 'unknown', keyId };
     if (!secretMatches(parsed.secret, this.#options.pepper, record.secretHash)) {
       return { ok: false, reason: 'secret_mismatch', keyId };
@@ -92,6 +105,32 @@ export class KeyVerifier {
         policy: record.policy,
       },
     };
+  }
+
+  /**
+   * The key's record from the cache, or from the loader once the unknown-key guard allows it.
+   * Returns the guard's wait when the client IP may not look up another key ID now.
+   */
+  async #find(
+    keyId: string,
+    client: { ip: string } | undefined,
+  ): Promise<{ record: KeyRecord | null } | { retryAfterMs: number }> {
+    const guard = this.#options.unknownKeys;
+    if (!guard || !client || this.#fresh(keyId)) return { record: await this.#lookup(keyId) };
+    const gate = await guard.check(keyId, client.ip);
+    if (gate.kind === 'limited') return { retryAfterMs: gate.retryAfterMs };
+    if (gate.kind === 'unknown') return { record: null };
+    const record = await this.#lookup(keyId);
+    if (gate.checked) {
+      if (!record) await guard.missed(keyId, client.ip);
+      else if (!gate.known) guard.found(keyId);
+    }
+    return { record };
+  }
+
+  /** Clears a key ID remembered as missing, e.g. once a key with that ID was created. */
+  async forgetMissing(keyId: string): Promise<void> {
+    await this.#options.unknownKeys?.forget(keyId);
   }
 
   /** Drops one key, e.g. after it was revoked or rotated. */
@@ -116,6 +155,14 @@ export class KeyVerifier {
 
   get size(): number {
     return this.#cache.size;
+  }
+
+  /** Whether a lookup of `keyId` would be answered from the cache. */
+  #fresh(keyId: string): boolean {
+    const cached = this.#cache.get(keyId);
+    return (
+      cached !== undefined && this.#options.clock.now() - cached.loadedAt < this.#options.ttlMs
+    );
   }
 
   #lookup(keyId: string): Promise<KeyRecord | null> {

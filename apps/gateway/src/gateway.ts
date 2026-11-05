@@ -24,6 +24,7 @@ import { buildApp, type App } from './app.js';
 import { bootstrap } from './auth/bootstrap.js';
 import { AuthInvalidation } from './auth/invalidation.js';
 import { databaseKeyLoader, KeyVerifier } from './auth/key-verifier.js';
+import { UnknownKeyGuard } from './auth/unknown-keys.js';
 import type { GatewayConfig } from './config.js';
 import type { DashboardFiles } from './dashboard.js';
 import type { EventBus } from './events/bus.js';
@@ -126,6 +127,14 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     pepper: config.API_KEY_PEPPER,
     clock,
     ttlMs: config.API_KEY_CACHE_TTL_MS,
+    unknownKeys: new UnknownKeyGuard({
+      redis,
+      clock,
+      logger,
+      perMinutePerIp: config.UNKNOWN_KEYS_PER_MINUTE_PER_IP,
+      cacheMs: config.UNKNOWN_KEY_CACHE_MS,
+      onResult: (result) => metrics.unknownApiKey(result),
+    }),
   });
   const invalidation = new AuthInvalidation({
     verifier,

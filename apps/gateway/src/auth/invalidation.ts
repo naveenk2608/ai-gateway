@@ -59,9 +59,14 @@ export class AuthInvalidation {
     });
   }
 
-  /** Applies the change locally at once, then tells the other instances. */
+  /**
+   * Applies the change locally at once, then tells the other instances. For a key, its ID is also
+   * cleared from the shared record of unknown key IDs first, so a key created a moment after
+   * someone tried its ID works at once on every instance.
+   */
   async publish(message: InvalidationMessage): Promise<void> {
     this.#applyMessage(message);
+    if (message.kind === 'api_key') await this.#options.verifier.forgetMissing(message.keyId);
     try {
       await this.#options.redis.publish(this.#channel, JSON.stringify(message));
     } catch (err) {

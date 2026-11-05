@@ -97,6 +97,7 @@ export class GatewayMetrics {
   readonly #estimateError: Histogram<'deployment'>;
   readonly #providerSkips: Counter<'deployment' | 'reason'>;
   readonly #cooldowns: Counter<'deployment'>;
+  readonly #unknownKeys: Counter<'result'>;
 
   constructor(registry: Registry, labels: MetricLabels) {
     this.registry = registry;
@@ -182,6 +183,17 @@ export class GatewayMetrics {
       labelNames: ['deployment'],
       registers,
     });
+    // No IP label: client addresses are unbounded (ADR 017). The IP is in the warning log line.
+    this.#unknownKeys = new Counter({
+      name: 'gateway_unknown_api_keys_total',
+      help: 'Requests with an API key ID that does not exist: rejected (401), or limited (429) because their client IP sent too many of them.',
+      labelNames: ['result'],
+      registers,
+    });
+  }
+
+  unknownApiKey(result: 'rejected' | 'limited'): void {
+    this.#unknownKeys.inc({ result });
   }
 
   providerSkipped(deployment: string, reason: 'quota' | 'cooldown'): void {

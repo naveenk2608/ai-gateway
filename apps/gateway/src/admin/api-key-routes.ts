@@ -203,6 +203,8 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
         });
         return result;
       });
+      // Clears the new key ID if it was tried before it existed, so the key works at once.
+      await deps.invalidation.publish({ kind: 'api_key', keyId: created.row.key_id });
       void reply.header('cache-control', 'no-store');
       return reply
         .code(201)
@@ -382,6 +384,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, deps: AdminDeps): voi
       });
       // Cached copies of the old key do not know their new expiry yet.
       await deps.invalidation.publish({ kind: 'api_key', keyId: result.previous.key_id });
+      await deps.invalidation.publish({ kind: 'api_key', keyId: result.created.row.key_id });
       void reply.header('cache-control', 'no-store');
       return reply.code(201).send({
         apiKey: toApiKey(result.created.row, now),

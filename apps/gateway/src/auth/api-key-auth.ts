@@ -16,6 +16,7 @@ const REJECT_MESSAGES: Record<RejectReason, string> = {
   // Only reachable with the right secret, so telling the holder why is safe.
   revoked: 'This API key has been revoked.',
   expired: 'This API key has expired.',
+  limited: 'Too many requests with an incorrect API key from this address. Retry later.',
 };
 
 function unauthorized(message: string): GatewayError {
@@ -45,13 +46,21 @@ export function apiKeyAuth(verifier: KeyVerifier) {
     }
     let result;
     try {
-      result = await verifier.verify(token);
+      result = await verifier.verify(token, { ip: request.ip });
     } catch (err) {
       request.log.error({ err }, 'API key lookup failed');
       throw authUnavailable;
     }
     if (!result.ok) {
       request.log.info({ reason: result.reason, keyId: result.keyId }, 'API key rejected');
+      if (result.reason === 'limited') {
+        // Refused before any lookup: this address sent too many key IDs that do not exist.
+        throw new GatewayError('too_many_invalid_api_keys', REJECT_MESSAGES.limited, {
+          httpStatus: 429,
+          retryable: true,
+          retryAfterSeconds: Math.max(1, Math.ceil((result.retryAfterMs ?? 1000) / 1000)),
+        });
+      }
       throw unauthorized(REJECT_MESSAGES[result.reason]);
     }
     request.apiKey = result.key;

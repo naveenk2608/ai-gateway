@@ -140,6 +140,13 @@ export const gatewayConfigSchema = z
       .min(0)
       .max(30 * 24 * 3600)
       .default(24 * 3600),
+    /**
+     * API key IDs that do not exist one client IP may send per minute before its requests get 429
+     * without a database lookup (M12). Key IDs found in the database are never limited.
+     */
+    UNKNOWN_KEYS_PER_MINUTE_PER_IP: z.coerce.number().int().positive().default(30),
+    /** How long a key ID the database does not have is remembered in Redis. */
+    UNKNOWN_KEY_CACHE_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
 
     /** Admin login attempts allowed per minute for one email address, and from one client IP. */
     LOGIN_ATTEMPTS_PER_MINUTE: z.coerce.number().int().positive().default(10),
