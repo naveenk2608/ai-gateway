@@ -3,7 +3,7 @@ import type { AuthenticatedKey } from '../auth/key-verifier.js';
 import { GatewayError } from '../errors.js';
 import type { Deployment } from '../providers/registry.js';
 import type { RequestTrace } from '../proxy/trace.js';
-import type { Limiter, Rejection, Ticket } from './limiter.js';
+import type { Limiter, RateLimitState, Rejection, Ticket } from './limiter.js';
 import { DEFAULT_SOFT_THRESHOLD_PCT, hasLimits, type ScopeLimits } from './policy.js';
 import type { PriceBook } from './prices.js';
 
@@ -40,6 +40,8 @@ export interface Settlement {
    * without a budget, or when limits were not checked (Redis down in open mode).
    */
   readonly budget?: { usedShare: number; softThresholdPct: number };
+  /** The tightest RPM and TPM bucket after this request, for `x-ratelimit-*` headers. */
+  readonly rateLimits?: RateLimitState;
 }
 
 const SCOPE_NAMES = { key: 'API key', project: 'project' } as const;
@@ -131,6 +133,7 @@ export class AdmissionControl {
 
     let ticket: Ticket;
     let budget: Settlement['budget'];
+    let rateLimits: RateLimitState;
     try {
       // Without prices a budget would reserve nothing (Postgres was down at startup).
       if (priced && !this.#o.prices.loaded) throw new Error('model prices are not loaded yet');
@@ -156,6 +159,7 @@ export class AdmissionControl {
         throw rejectionError(result.rejection, input, tokens);
       }
       ticket = result.ticket;
+      rateLimits = result.rateLimits;
       if (result.budget && policy.monthlyBudgetMicroUsd !== null) {
         const used = result.budget.spentMicroUsd + result.budget.reservedMicroUsd;
         budget = {
@@ -190,6 +194,7 @@ export class AdmissionControl {
       tokens,
       costMicroUsd,
       ...(budget ? { budget } : {}),
+      rateLimits,
       release: () => {
         if (released) return;
         released = true;

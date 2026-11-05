@@ -26,12 +26,28 @@ export interface AdmitRequest {
   startedAt: number;
 }
 
+/** A rate-limit bucket after a request took from it, for the `x-ratelimit-*` headers. */
+export interface BucketState {
+  limit: number;
+  /** Whole requests or tokens left. */
+  remaining: number;
+  /** Milliseconds until the bucket is full again. */
+  resetMs: number;
+}
+
+/** The tightest RPM and TPM bucket that applied (key or project); absent when none is set. */
+export interface RateLimitState {
+  requests?: BucketState;
+  tokens?: BucketState;
+}
+
 export type Admission =
   | {
       admitted: true;
       ticket: Ticket;
       /** The month's spend and reservations before this request; null without a budget. */
       budget: { spentMicroUsd: number; reservedMicroUsd: number } | null;
+      rateLimits: RateLimitState;
     }
   | { admitted: false; rejection: Rejection };
 
@@ -53,6 +69,33 @@ export interface LimiterOptions {
 const BUDGET_GRACE_MS = 7 * 24 * 3600 * 1000;
 
 const limit = (value: number | null) => value ?? 0;
+
+/** One bucket from an admitted ADMIT reply (see the script): `at` is its "left" field. */
+function bucketAt(reply: unknown[], at: number, cap: number | null): BucketState | undefined {
+  const remaining = Number(reply[at]);
+  if (!cap || !Number.isFinite(remaining) || remaining < 0) return undefined;
+  return { limit: cap, remaining, resetMs: Math.max(0, Number(reply[at + 1]) || 0) };
+}
+
+/** The bucket with the least left; on a tie, the smaller limit. */
+function tightest(a?: BucketState, b?: BucketState): BucketState | undefined {
+  if (!a || !b) return a ?? b;
+  if (b.remaining < a.remaining || (b.remaining === a.remaining && b.limit < a.limit)) return b;
+  return a;
+}
+
+/** The key's or project's RPM and TPM bucket, whichever is tighter, after an admission. */
+export function rateLimitState(reply: unknown[], policy: UsagePolicy): RateLimitState {
+  const requests = tightest(
+    bucketAt(reply, 3, policy.key.rpm),
+    bucketAt(reply, 5, policy.project.rpm),
+  );
+  const tokens = tightest(
+    bucketAt(reply, 7, policy.key.tpm),
+    bucketAt(reply, 9, policy.project.tpm),
+  );
+  return { ...(requests ? { requests } : {}), ...(tokens ? { tokens } : {}) };
+}
 
 interface Keys {
   rpm: [string, string];
@@ -167,6 +210,7 @@ export class Limiter {
       budget: budgeted
         ? { spentMicroUsd: Number(reply[1] ?? 0), reservedMicroUsd: Number(reply[2] ?? 0) }
         : null,
+      rateLimits: rateLimitState(reply, policy),
     };
   }
 

@@ -482,6 +482,15 @@ curl -s -X PATCH "http://127.0.0.1:8080/admin/projects/$PROJECT_ID" \
 | `budget.maxRequestCostMicroUsd` | The most one request may reserve; a costlier request gets a 400. |
 | `budget.softThresholdPct` | From this share of the monthly budget (default 80%), routing tries the cheapest deployments first, whatever the model's policy, and records why on the attempt (`budget at 82%: cheapest first; ...`). At 100% requests are refused. Editable in Settings → Limits and budget; every change is audited. |
 
+Successful `/v1/chat/completions` replies, streams and cache hits included, carry OpenAI's
+rate-limit headers, taken from the same script with no extra Redis call: `x-ratelimit-limit-requests`,
+`x-ratelimit-remaining-requests` and `x-ratelimit-reset-requests` for `requestsPerMinute`, and the
+same three ending in `-tokens` for `tokensPerMinute`. Each set comes from whichever of the key's
+and the project's limits has less left. Remaining tokens are counted as reserved (the prompt
+estimate plus the output cap), and a reset is the time until the bucket is full again, written as
+OpenAI does (`12s`, `1m0s`). A set is left out when no such limit applies; rejected requests get
+`retry-after` instead.
+
 Rejections are recorded as `rejected` requests. Spend stays within **budget + requests in flight
 x max request cost**: a request costs more than it reserved only when the provider counts more
 prompt tokens than the gateway estimated, or its reservation expired while it ran. Postgres keeps

@@ -53,8 +53,11 @@ end
  *       9 lease and reservation id, 10 lease expiry, 11 budget limit (-1: none), 12 amount to
  *       reserve, 13 member in the open index, 14 budget key TTL, 15 budget period end,
  *       16 lease set TTL. A limit of 0 skips that check.
- * Returns {1} when admitted, {-1} when the budget totals are missing (to be rebuilt from Postgres),
- * or {0, reason, scope, retryAfterMs} (retryAfterMs -1: the request can never fit).
+ * Returns, when admitted, {1, spent, reserved} followed by what each RPM and TPM bucket has left
+ * after this request and the milliseconds until it is full again, as pairs in the order RPM key,
+ * RPM project, TPM key, TPM project ({-1, -1} for a limit that is not set); {-1} when the budget
+ * totals are missing (to be rebuilt from Postgres); or {0, reason, scope, retryAfterMs}
+ * (retryAfterMs -1: the request can never fit).
  */
 export const ADMIT = new LuaScript(`${BUCKET}
 local now = tonumber(ARGV[1])
@@ -126,8 +129,21 @@ if budgetLimit >= 0 and amount > 0 then
   redis.call('PEXPIRE', KEYS[8], ARGV[14])
   redis.call('ZADD', KEYS[9], ARGV[10], ARGV[13])
 end
--- The month's spend and reservations before this request, for the soft threshold.
-return {1, spent, reserved}
+-- The month's spend and reservations before this request, for the soft threshold, then each
+-- bucket's state for the x-ratelimit headers (whole tokens left, ms until full).
+local out = {1, spent, reserved}
+local function state(cap, left)
+  if cap > 0 then
+    table.insert(out, math.floor(left))
+    table.insert(out, math.ceil((cap - left) * 60000 / cap))
+  else
+    table.insert(out, -1)
+    table.insert(out, -1)
+  end
+end
+for i = 1, 2 do state(rpm[i], rpm[i] > 0 and rpmState[i][1] - 1 or 0) end
+for i = 1, 2 do state(tpm[i], tpm[i] > 0 and tpmState[i][1] - need or 0) end
+return out
 `);
 
 /**

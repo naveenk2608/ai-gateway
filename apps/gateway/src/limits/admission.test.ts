@@ -75,7 +75,9 @@ function setup({ policy = keyRpm, admit, failMode = 'closed', noPrices }: SetupO
   const limiter = {
     admit: (request: AdmitRequest): Promise<Admission> => {
       requests.push(request);
-      return admit ? admit(request) : Promise.resolve({ admitted: true, ticket, budget: null });
+      return admit
+        ? admit(request)
+        : Promise.resolve({ admitted: true, ticket, budget: null, rateLimits: {} });
     },
   };
   const app = buildApp({ logger, readiness: { checks: {}, timeoutMs: 50 } });

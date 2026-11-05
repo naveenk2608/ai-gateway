@@ -28,6 +28,7 @@ import {
   type ChatCompletion,
   type ChatCompletionRequest,
 } from './schema.js';
+import { setRateLimitHeaders } from './rate-limit-headers.js';
 import { routingHeaders } from './routing-headers.js';
 import { RequestTrace } from './trace.js';
 import { toGatewayError } from './upstream-errors.js';
@@ -295,6 +296,8 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         clientMaxTokens,
         log: request.log,
       });
+      // On every successful reply: what the key's or project's RPM and TPM limits have left.
+      const limitHeaders = () => setRateLimitHeaders(reply, settlement.rateLimits);
       // From here the settlement is released exactly once: by the stream when it ends, or below.
       let streamOwnsSettlement = false;
       const disconnect = watchDisconnect(reply.raw);
@@ -340,6 +343,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
             trace.markFirstToken();
             trace.setUsage(hit.usage);
             trace.addCompletionText(hit.content);
+            limitHeaders();
             if (body.stream !== true) return toChatCompletion(meta, hit);
             const write = chunkWriter(meta, body.stream_options?.include_usage === true);
             const chunks = [
@@ -361,6 +365,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           try {
             const result = await runRouted(routing, routed, (ctx) => runChat(ctx, requestFor(ctx)));
             routingHeaders(reply, served);
+            limitHeaders();
             trace.setUsage(result.usage);
             trace.addCompletionText(result.content);
             store?.(result);
@@ -378,6 +383,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         }
         trace.markFirstToken();
         routingHeaders(reply, served);
+        limitHeaders();
         const write = chunkWriter(meta, body.stream_options?.include_usage === true);
         void reply
           .header('content-type', 'text/event-stream; charset=utf-8')
