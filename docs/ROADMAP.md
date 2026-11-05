@@ -422,7 +422,9 @@ builds and publishes verifiable.
       happened outside the gateway (PLAN-NOTES).
 - [x] A two-worker Postgres-outage test dead-letters nothing and stores every event once
       (`postgres-outage.test.ts`).
-- [ ] An unknown-key flood from one IP gets 429s, without a Postgres lookup for each request.
+- [x] An unknown-key flood from one IP gets 429s, without a Postgres lookup for each request
+      (`unknown-keys.test.ts`: 50 unknown keys with a limit of 5 cost 5 lookups; over HTTP, 429
+      with `retry-after`).
 - [ ] Successful replies carry the six `x-ratelimit` headers.
 - [ ] A deployment that lists a model but will not serve it fails its chat health check.
 - [ ] Every action is pinned to a SHA and Dependabot is configured. CI produces an SBOM and a
