@@ -430,8 +430,10 @@ builds and publishes verifiable.
 - [x] A deployment that lists a model but will not serve it fails its chat health check
       (`chat-health-check.test.ts`: its breaker stays open, while a `models` check of the same
       provider half-opens; unit tests in `routing/health.test.ts`).
-- [ ] Every action is pinned to a SHA and Dependabot is configured. CI produces an SBOM and a
-      Trivy result, and the image on GHCR verifies with cosign.
+- [x] Every action is pinned to a SHA and Dependabot is configured. CI produces an SBOM and a
+      Trivy result, and the image on GHCR verifies with cosign (CI run for `84fe3ae`: the
+      `gateway-sbom-and-scan` artifact, no fixable CRITICAL finding, and `cosign verify` with the
+      workflow's identity passed on `ghcr.io/naveenk2608/ai-gateway@sha256:89c83ccf…`).
 
 **PLAN-NOTES rows it closes**
 

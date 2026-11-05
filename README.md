@@ -10,11 +10,12 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: milestones M0-M11 are built.** The MVP (M0-M5), the analytics API (M6), the full
+**Status: milestones M0-M12 are built.** The MVP (M0-M5), the analytics API (M6), the full
 dashboard (M7), observability (M8), benchmarks (M9), the AWS deployment code (M10: Terraform
-tested with a mocked provider, [never applied](docs/aws-deployment.md)) and real free providers
-with honest costs (M11; the new providers have not been called with real keys yet, see
-[docs/providers.md](docs/providers.md)). What comes next is in [docs/ROADMAP.md](docs/ROADMAP.md).
+tested with a mocked provider, [never applied](docs/aws-deployment.md)), real free providers with
+honest costs (M11, see [docs/providers.md](docs/providers.md)), and fixes and supply-chain safety
+(M12: per-IP limits on unknown API keys, rate-limit headers, chat health checks, and a scanned,
+signed image on GHCR). What comes next is in [docs/ROADMAP.md](docs/ROADMAP.md).
 Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trade-offs in
 [docs/trade-offs.md](docs/trade-offs.md).
 
@@ -426,9 +427,10 @@ is used to improve its products (on the paid tier it is not); check each provide
 sending real data. `qwen3` and Mistral Large 4 are preview models: they may be withdrawn at short
 notice, so neither is in `chat-default`.
 
-Groq and Gemini were checked with real keys on 2026-10-21. No key for the providers added in M11
-was available when they were built (2026-11-03), so they are configured from their documentation
-and have not been called yet; the first real call of each is a step in PLAN-NOTES.
+Groq and Gemini were checked with real keys on 2026-10-21. The providers added in M11 were
+configured from their documentation, then called through the live demo on 2026-11-04: 9 of the 13
+real models answered, streaming and not. The results, and what the other four answered, are in
+the "M11 real-provider checks" section of [docs/PLAN-NOTES.md](docs/PLAN-NOTES.md).
 
 ## Playground
 
@@ -848,6 +850,25 @@ new `bench/results/<run>/` together with the regenerated report.
 | `ratelimit.js` | One key with an RPM limit, traffic alternating between both instances: admitted requests against the token bucket's ceiling |
 | `accounting.js` | Load across both instances while Postgres is paused and the worker is killed and restarted: requests sent against rows stored, distinct request IDs and rollup counts |
 | `cache.js` | A fixed set of temperature-0 prompts repeated across both instances: hit ratio against the best possible, and calls that reached the mock |
+
+## Container image
+
+Every push to `main` that passes CI publishes the gateway image to the GitHub Container
+Registry, tagged with the commit SHA and `main`, and signs it with cosign keyless signing (GitHub
+Actions' OIDC identity, no stored key; ADR 027). Before that, CI scans the image with Trivy and
+fails on CRITICAL vulnerabilities that have a fix (exceptions, each with a reason, go in
+`.trivyignore`), and keeps a CycloneDX SBOM and the full scan result as build artifacts
+(`gateway-sbom-and-scan` on each CI run).
+
+```bash
+docker pull ghcr.io/naveenk2608/ai-gateway:main
+# The signature must come from this repository's CI workflow, run on main:
+cosign verify ghcr.io/naveenk2608/ai-gateway:main   --certificate-identity https://github.com/naveenk2608/ai-gateway/.github/workflows/ci.yml@refs/heads/main   --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Pin a deployment to a digest (`ghcr.io/naveenk2608/ai-gateway@sha256:...`) rather than a tag, and
+verify that. Every GitHub Action in the workflows is pinned to the commit of its release, with the
+version in a comment; Dependabot proposes npm and Actions updates weekly.
 
 ## Deploying (Render, or any host without a shell)
 
