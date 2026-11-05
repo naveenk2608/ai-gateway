@@ -416,9 +416,12 @@ builds and publishes verifiable.
 
 **Acceptance**
 
-- [ ] A streamed request that times out before its first token gets an HTTP 504 with a JSON
-      error.
-- [ ] A two-worker Postgres-outage test dead-letters nothing and stores every event once.
+- [x] A streamed request that times out before its first token gets an HTTP 504 with a JSON
+      error (`chat-completions.test.ts` through the mock, also when the timeout opens the breaker;
+      `hosted-provider.test.ts` through the HTTP adapter). It did already: the reset seen in M11
+      happened outside the gateway (PLAN-NOTES).
+- [x] A two-worker Postgres-outage test dead-letters nothing and stores every event once
+      (`postgres-outage.test.ts`).
 - [ ] An unknown-key flood from one IP gets 429s, without a Postgres lookup for each request.
 - [ ] Successful replies carry the six `x-ratelimit` headers.
 - [ ] A deployment that lists a model but will not serve it fails its chat health check.
