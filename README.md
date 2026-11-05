@@ -332,13 +332,19 @@ price or weight, but answers when no provider key is set.
   `RETRY_BASE_DELAY_MS x 2^n` (capped at `RETRY_MAX_DELAY_MS`), then the next target is tried.
   `RETRY_MAX_ATTEMPTS` (3) caps attempts per request. A 400 is never retried, and nothing is
   retried once a stream has sent its first byte.
+- **Deadline**: a request whose response has not started (for a stream, its first event) within
+  `REQUEST_DEADLINE_MS` (50 s) of arriving gets 504 `upstream_timeout`. No try, retry or fallback
+  starts after it, and a try still running is cut at it, so a slow provider can no longer keep a
+  client waiting for three tries of 60 s. A stream that has started is not cut; a non-streamed
+  answer that takes longer than the deadline is.
 - **Circuit breakers** (ADR 012): after `BREAKER_FAILURE_THRESHOLD` (5) consecutive failures a
   deployment is skipped for `BREAKER_OPEN_MS` (30 s). Open deployments are health-checked every
   `HEALTH_CHECK_INTERVAL_MS` with a call that runs no model; a pass lets one trial request through,
   and its success closes the breaker. A deployment with `healthCheck: "chat"` (ADR 026; NVIDIA's,
   whose model list can name models it will not serve) is checked instead with a request for one
-  token, at most every `HEALTH_CHECK_CHAT_INTERVAL_MS` (60 s) and counted in its quota; while that
-  fails, the breaker stays open. Breakers are per instance; their state is also published in
+  token, counted in its quota; while that fails, the breaker stays open. Such checks back off: a
+  minute (`HEALTH_CHECK_CHAT_INTERVAL_MS`) after a pass or a first failure, then 2, 4, 8 minutes
+  and so on after each further failure, up to an hour (`HEALTH_CHECK_CHAT_MAX_INTERVAL_MS`). Breakers are per instance; their state is also published in
   Redis and in `provider_health_events`.
 - **Routing history**: each attempt is stored with its policy and reason, e.g.
   `priority 2 of 2; fallback after mock-error failed (server_error)`. See it in the dashboard or at
@@ -364,7 +370,7 @@ deployment is disabled and the model answers 404):
 | `gpt-oss-20b`, `gpt-oss-120b`, `qwen3` | Groq (`qwen/qwen3.8-27b` is a preview model there) | `GROQ_API_KEY` |
 | `gemini-3.5-flash-lite`, `gemini-3.8-flash`, `gemini-3.1-flash-lite` | Gemini API | `GEMINI_API_KEY` |
 | `mistral-small`, `mistral-large` | Mistral (`mistral-small-2603`, `mistral-large-4`, a public preview) | `MISTRAL_API_KEY` |
-| `deepseek-v4.1-flash`, `nemotron-3-super` | NVIDIA NIM | `NVIDIA_API_KEY` |
+| `deepseek-v4.1-flash` | NVIDIA NIM | `NVIDIA_API_KEY` |
 | `gemma-4-31b` | OpenRouter, `google/gemma-4-31b-it:free` | `OPENROUTER_API_KEY` |
 | `llama-4-scout` | Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` |
 | `glm-4.7-flash` | Z.AI | `ZAI_API_KEY` |
@@ -884,7 +890,7 @@ host with no background workers, run the usage consumer inside the gateway.
 | `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` | First owner, to log in to the dashboard | your email; 12+ characters |
 | `BOOTSTRAP_API_KEY` | First API key | `pnpm key:generate` on your machine |
 | `RUN_WORKER_IN_PROCESS` | Run the usage consumer in the gateway | `true` |
-| `TRUST_PROXY` | Proxies in front, for the client IP in login limits | how many your host puts in front (0 trusts none) |
+| `TRUST_PROXY` | Proxies in front, for the client IP in login and unknown-key limits | how many your host puts in front (0 trusts none); Render: `3` (measured 2026-11-05) |
 | `METRICS_TOKEN` | Bearer token for `GET /metrics`; unset, the route does not exist | 32+ random characters, or the host's *Generate* |
 
 A Redis without persistence (Render's free plan) is fine: rate limits restart, budgets are
