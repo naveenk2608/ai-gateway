@@ -13,7 +13,7 @@ const models = parseModelsConfig(
     deployments: {
       quick: { provider: 'mock', mock: { latencyMs: 20, completionTokens: 6 } },
       stuck: { provider: 'mock', timeoutMs: 300, mock: { latencyMs: 60_000, ttftMs: 60_000 } },
-      stuckStream: {
+      'stuck-stream': {
         provider: 'mock',
         timeoutMs: 300,
         mock: { latencyMs: 60_000, ttftMs: 60_000 },
@@ -29,7 +29,7 @@ const models = parseModelsConfig(
     models: {
       'mock-quick': { deployment: 'quick' },
       'mock-stuck': { deployment: 'stuck' },
-      'mock-stuck-stream': { deployment: 'stuckStream' },
+      'mock-stuck-stream': { deployment: 'stuck-stream' },
       'mock-hanging': { deployment: 'hanging' },
       'mock-streamer': { deployment: 'streamer' },
       'mock-endless': { deployment: 'endless' },
@@ -161,7 +161,7 @@ describe('chat completions over HTTP against the mock (streaming)', () => {
     expect(res.headers.get('content-type')).toMatch(/^application\/json/);
     expect(await res.json()).toMatchObject({ error: { code: 'upstream_timeout' } });
     expect(Date.now() - started).toBeLessThan(10_000);
-    expect(mockFor('stuckStream').stats()).toMatchObject({ requests: 2, canceled: 2, active: 0 });
+    expect(mockFor('stuck-stream').stats()).toMatchObject({ requests: 2, canceled: 2, active: 0 });
   });
 
   it('closing the client socket mid-stream cancels the upstream request', async () => {
@@ -242,7 +242,7 @@ describe('a timeout that opens the breaker', () => {
 
   it.each([
     { stream: false, model: 'mock-stuck', deployment: 'stuck' },
-    { stream: true, model: 'mock-stuck-stream', deployment: 'stuckStream' },
+    { stream: true, model: 'mock-stuck-stream', deployment: 'stuck-stream' },
   ])(
     'still answers 504 with a JSON error (stream: $stream), without a retry',
     async ({ stream, model, deployment }) => {

@@ -61,7 +61,7 @@ beforeAll(async () => {
           timeoutMs: 500,
         },
         // The same upstream, with its own breaker for the streamed timeout tests.
-        hostedStream: {
+        'hosted-stream': {
           provider: 'openai-compatible',
           model: 'upstream-model-v2',
           baseUrl: `${upstream.url}/v1`,
@@ -71,7 +71,7 @@ beforeAll(async () => {
       },
       models: {
         'hosted-model': { deployment: 'hosted' },
-        'hosted-stream-model': { deployment: 'hostedStream' },
+        'hosted-stream-model': { deployment: 'hosted-stream' },
       },
     },
     'hosted-test',
