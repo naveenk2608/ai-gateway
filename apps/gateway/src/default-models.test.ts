@@ -77,7 +77,8 @@ describe('the default models file', () => {
       ['cloudflare', 'CLOUDFLARE_API_TOKEN'],
       ['zai', 'ZAI_API_KEY'],
     ]);
-    expect(hosted.length).toBeGreaterThanOrEqual(13);
+    // 12 since NVIDIA's Nemotron 3 Super was removed (PLAN-NOTES, 2026-11-05).
+    expect(hosted.length).toBeGreaterThanOrEqual(12);
     for (const [id, d] of hosted) {
       expect(keyOf.get(d.provider), id).toBe(d.apiKeyEnv);
       expect(id.startsWith(d.provider), id).toBe(true);
@@ -197,9 +198,13 @@ describe('the default models file', () => {
       healthCheck: 'models',
     });
     // NVIDIA's model list can name models it will not serve (ADR 026).
-    for (const id of ['nvidia-deepseek-v4.1-flash', 'nvidia-nemotron-3-super']) {
-      expect(all.deployment(id), id).toMatchObject({ probes: true, healthCheck: 'chat' });
-    }
+    expect(all.deployment('nvidia-deepseek-v4.1-flash')).toMatchObject({
+      probes: true,
+      healthCheck: 'chat',
+    });
+    // Turned off after M12: NVIDIA answers every call for it with "not found for account".
+    expect(all.deployment('nvidia-nemotron-3-super')).toBeUndefined();
+    expect(all.route('nemotron-3-super')).toBeUndefined();
     await all.close();
 
     const withoutAccount: Record<string, string> = { ...KEYS };

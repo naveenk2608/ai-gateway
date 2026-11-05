@@ -140,15 +140,6 @@
       "healthCheck": "chat",
       "billing": "free_tier"
     },
-    "nvidia-nemotron-3-super": {
-      "adapter": "openai-compatible",
-      "provider": "nvidia",
-      "model": "nvidia/nemotron-3-super-120b-a12b",
-      "baseUrl": "https://integrate.api.nvidia.com/v1",
-      "apiKeyEnv": "NVIDIA_API_KEY",
-      "healthCheck": "chat",
-      "billing": "free_tier"
-    },
     "openrouter-gemma-4-31b-free": {
       "adapter": "openai-compatible",
       "provider": "openrouter",
@@ -232,9 +223,6 @@
     },
     "deepseek-v4.1-flash": {
       "deployment": "nvidia-deepseek-v4.1-flash"
-    },
-    "nemotron-3-super": {
-      "deployment": "nvidia-nemotron-3-super"
     },
     "gemma-4-31b": {
       "deployment": "openrouter-gemma-4-31b-free"
