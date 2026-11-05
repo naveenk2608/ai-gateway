@@ -425,7 +425,8 @@ builds and publishes verifiable.
 - [x] An unknown-key flood from one IP gets 429s, without a Postgres lookup for each request
       (`unknown-keys.test.ts`: 50 unknown keys with a limit of 5 cost 5 lookups; over HTTP, 429
       with `retry-after`).
-- [ ] Successful replies carry the six `x-ratelimit` headers.
+- [x] Successful replies carry the six `x-ratelimit` headers (`rate-limit-headers.test.ts`:
+      from the tightest scope, on streams and cache hits too, none for a limit not set).
 - [ ] A deployment that lists a model but will not serve it fails its chat health check.
 - [ ] Every action is pinned to a SHA and Dependabot is configured. CI produces an SBOM and a
       Trivy result, and the image on GHCR verifies with cosign.
