@@ -12,15 +12,23 @@ let upstream: FakeUpstream;
 let gateway: Gateway;
 let authorization: string;
 let baseUrl: string;
-let behaviour: 'normal' | 'trickle' | 'unauthorized' | 'silent' = 'normal';
+let behaviour: 'normal' | 'trickle' | 'unauthorized' | 'silent' | 'headers-only' = 'normal';
+/** Upstream responses not closed yet, so a test can wait for the previous one's to settle. */
+let openResponses = 0;
 
 beforeAll(async () => {
   upstream = await startFakeUpstream((req, res) => {
+    openResponses++;
+    res.on('close', () => openResponses--);
     const body = JSON.parse(req.body) as { stream?: boolean };
     if (behaviour === 'unauthorized') {
       sendJson(res, 401, { error: { message: 'Incorrect API key', code: 'invalid_api_key' } });
     } else if (behaviour === 'silent') {
       // Never answers; the gateway's timeout must give up and hang up.
+    } else if (behaviour === 'headers-only') {
+      // Starts a stream but never sends an event.
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.flushHeaders();
     } else if (behaviour === 'trickle') {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const timer = setInterval(() => {
@@ -52,8 +60,19 @@ beforeAll(async () => {
           apiKeyEnv: 'TEST_UPSTREAM_KEY',
           timeoutMs: 500,
         },
+        // The same upstream, with its own breaker for the streamed timeout tests.
+        hostedStream: {
+          provider: 'openai-compatible',
+          model: 'upstream-model-v2',
+          baseUrl: `${upstream.url}/v1`,
+          apiKeyEnv: 'TEST_UPSTREAM_KEY',
+          timeoutMs: 500,
+        },
       },
-      models: { 'hosted-model': { deployment: 'hosted' } },
+      models: {
+        'hosted-model': { deployment: 'hosted' },
+        'hosted-stream-model': { deployment: 'hostedStream' },
+      },
     },
     'hosted-test',
   );
@@ -164,4 +183,23 @@ describe('gateway with an OpenAI-compatible upstream', () => {
     expect(res.status).toBe(504);
     await vi.waitFor(() => expect(upstream.closedEarly).toBe(before + 1));
   });
+
+  it.each(['silent', 'headers-only'] as const)(
+    'answers a stream with a 504 JSON error when the upstream sends no event (%s)',
+    async (upstreamBehaviour) => {
+      behaviour = upstreamBehaviour;
+      await vi.waitFor(() => expect(openResponses).toBe(0));
+      const before = upstream.closedEarly;
+      const sent = upstream.requests.length;
+      const res = await chat({ model: 'hosted-stream-model', stream: true });
+      // Nothing reached the client before the first event, so it gets a normal HTTP error.
+      expect(res.status).toBe(504);
+      expect(res.headers.get('content-type')).toMatch(/^application\/json/);
+      expect(await res.json()).toMatchObject({ error: { code: 'upstream_timeout' } });
+      // Both tries (the first and its retry) reached the upstream, and both hung up on it.
+      expect(upstream.requests.length - sent).toBe(2);
+      await vi.waitFor(() => expect(openResponses).toBe(0));
+      expect(upstream.closedEarly - before).toBe(2);
+    },
+  );
 });

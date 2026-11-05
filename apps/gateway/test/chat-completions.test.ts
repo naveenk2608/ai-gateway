@@ -13,6 +13,11 @@ const models = parseModelsConfig(
     deployments: {
       quick: { provider: 'mock', mock: { latencyMs: 20, completionTokens: 6 } },
       stuck: { provider: 'mock', timeoutMs: 300, mock: { latencyMs: 60_000, ttftMs: 60_000 } },
+      stuckStream: {
+        provider: 'mock',
+        timeoutMs: 300,
+        mock: { latencyMs: 60_000, ttftMs: 60_000 },
+      },
       hanging: { provider: 'mock', mock: { latencyMs: 60_000 } },
       streamer: {
         provider: 'mock',
@@ -24,6 +29,7 @@ const models = parseModelsConfig(
     models: {
       'mock-quick': { deployment: 'quick' },
       'mock-stuck': { deployment: 'stuck' },
+      'mock-stuck-stream': { deployment: 'stuckStream' },
       'mock-hanging': { deployment: 'hanging' },
       'mock-streamer': { deployment: 'streamer' },
       'mock-endless': { deployment: 'endless' },
@@ -147,6 +153,17 @@ describe('chat completions over HTTP against the mock (streaming)', () => {
     expect(chunks.at(-1)?.choices[0]?.finish_reason).toBe('stop');
   });
 
+  it('answers a stream whose first event never comes with a 504 JSON error, cancelling each try', async () => {
+    const started = Date.now();
+    const res = await chat({ model: 'mock-stuck-stream', ...hello, stream: true });
+    // Nothing was sent before the first event, so the failure is a normal HTTP error (ADR 011).
+    expect(res.status).toBe(504);
+    expect(res.headers.get('content-type')).toMatch(/^application\/json/);
+    expect(await res.json()).toMatchObject({ error: { code: 'upstream_timeout' } });
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(mockFor('stuckStream').stats()).toMatchObject({ requests: 2, canceled: 2, active: 0 });
+  });
+
   it('closing the client socket mid-stream cancels the upstream request', async () => {
     const mock = mockFor('endless');
     await new Promise<void>((resolve, reject) => {
@@ -202,4 +219,43 @@ describe('chat completions over HTTP against the mock (streaming)', () => {
     // Without closing the finished stream's socket, the drain would wait for keep-alive (72 s).
     expect(Date.now() - started).toBeLessThan(10_000);
   });
+});
+
+describe('a timeout that opens the breaker', () => {
+  // With a threshold of 1, the first timeout opens the deployment's breaker, so the retry is
+  // skipped and the request fails at once. Gemini 3.8 Flash did this in M11's live checks.
+  let own: Gateway;
+  let ownUrl: string;
+
+  beforeAll(async () => {
+    own = createGateway(testConfig({ BREAKER_FAILURE_THRESHOLD: '1' }), captureLogger().logger, {
+      models,
+    });
+    await own.start();
+    const { port } = own.app.server.address() as AddressInfo;
+    ownUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    await own.shutdown();
+  });
+
+  it.each([
+    { stream: false, model: 'mock-stuck', deployment: 'stuck' },
+    { stream: true, model: 'mock-stuck-stream', deployment: 'stuckStream' },
+  ])(
+    'still answers 504 with a JSON error (stream: $stream), without a retry',
+    async ({ stream, model, deployment }) => {
+      const res = await fetch(`${ownUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization },
+        body: JSON.stringify({ model, ...hello, stream }),
+      });
+      expect(res.status).toBe(504);
+      expect(res.headers.get('content-type')).toMatch(/^application\/json/);
+      expect(await res.json()).toMatchObject({ error: { code: 'upstream_timeout' } });
+      const mock = own.registry.deployment(deployment)?.provider as MockProvider;
+      expect(mock.stats()).toMatchObject({ requests: 1, canceled: 1, active: 0 });
+    },
+  );
 });
