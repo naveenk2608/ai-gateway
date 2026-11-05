@@ -126,6 +126,46 @@ describe('Postgres unavailable', () => {
     expect(consumer.stats.deadLettered).toBe(0);
   });
 
+  it('two Redis consumers: an outage longer than deliveries x claim idle time dead-letters nothing', async () => {
+    const pg = await switchablePostgres();
+    cleanup.push(pg.close);
+    // A 1 s claim idle time, one delivery allowed, and an outage of 4 s: if the second worker's
+    // XAUTOCLAIM took the batch the first one is retrying, that second delivery would send valid
+    // events to the dead-letter stream.
+    const settings = isolatedSettings({
+      WORKER_BLOCK_MS: 1_000,
+      WORKER_CLAIM_IDLE_MS: 1_000,
+      WORKER_MAX_DELIVERIES: 1,
+    });
+    const ready = await Promise.all(
+      Array.from({ length: 3 }, async () => makeEvent({ projectId: await createProject(db) })),
+    );
+    for (const e of ready) await publish(redis, settings.EVENTS_STREAM, JSON.stringify(e));
+
+    const first = await consumerOnProxy(settings, pg.url);
+    await vi.waitFor(() => expect(retrying(first.lines)).toBe(true), { timeout: 10_000 });
+    const second = await consumerOnProxy(settings, pg.url);
+    // Several claim idle times pass while Postgres is down.
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    expect(await pendingCount(redis, settings)).toBe(3);
+
+    pg.set(true);
+    const ids = ready.map((e) => e.request.id);
+    await vi.waitFor(async () => expect(await usageRows(ids)).toHaveLength(3), {
+      timeout: 20_000,
+    });
+    await vi.waitFor(async () => expect(await pendingCount(redis, settings)).toBe(0), {
+      timeout: 20_000,
+    });
+    // The first worker kept its batch: the second never claimed it, so nothing was delivered
+    // twice, and nothing reached the dead-letter stream.
+    const all: EventConsumer[] = [first.consumer, second.consumer];
+    expect(all.map((c) => c.stats.reclaimed)).toEqual([0, 0]);
+    expect(all.map((c) => c.stats.deadLettered)).toEqual([0, 0]);
+    expect(first.consumer.stats.processed).toBe(3);
+    expect(second.consumer.stats.processed).toBe(0);
+  });
+
   it.skipIf(!sqsAvailable)(
     'the SQS consumer keeps its batch hidden from other workers until Postgres is back (LocalStack)',
     async () => {

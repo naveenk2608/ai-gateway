@@ -24,7 +24,10 @@ Streams (or SQS); at-least-once is.
 - Invalid events are left pending (not acknowledged) and reach the DLQ through the same path. A
   batch the database rejects is retried one event at a time, so one bad event cannot hold back
   the others. While Postgres is unreachable, the batch is retried in place without re-delivery,
-  so an outage does not use up delivery attempts.
+  so an outage does not use up delivery attempts. Since M12 the worker also claims the batch to
+  itself again before each wait (`XCLAIM ... JUSTID`, which resets its idle time without counting
+  a delivery), and no wait is longer than half of `WORKER_CLAIM_IDLE_MS`, so another worker's
+  `XAUTOCLAIM` does not take the batch over during a long outage.
 
 ## Alternatives considered
 
@@ -36,7 +39,9 @@ Streams (or SQS); at-least-once is.
 
 - Tested: the same event published 3 times gives one row; a worker stopped by fault injection
   just before and just after the commit, then restarted, leaves every event stored once; malformed
-  events reach the DLQ after 6 deliveries while valid ones are stored at once.
+  events reach the DLQ after 6 deliveries while valid ones are stored at once; with two workers,
+  a Postgres outage four times longer than the claim idle time leaves the retried batch with its
+  worker and dead-letters nothing (M12).
 - The kill test uses injected faults at the two crash points rather than killing a real process,
   so it is deterministic.
 - The DLQ has no replay tool yet; `failed_events.payload` holds the original event for one.

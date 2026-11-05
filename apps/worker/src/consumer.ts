@@ -164,7 +164,8 @@ export function logStored(logger: Logger, events: UsageEvent[]): void {
  * - claims entries left pending too long (a dead consumer, or ones that failed) with XAUTOCLAIM;
  * - moves an entry delivered more than `maxDeliveries` times to the dead-letter stream and the
  *   failed_events table, so one bad event never blocks the rest;
- * - retries in place while Postgres is unreachable, so an outage does not use up deliveries;
+ * - retries in place while Postgres is unreachable, claiming the batch to itself before each wait
+ *   (XCLAIM ... JUSTID), so an outage does not use up deliveries even with several workers;
  * - trims entries every consumer has acknowledged, so the stream does not grow without bound.
  */
 export class UsageConsumer implements EventConsumer {
@@ -336,7 +337,8 @@ export class UsageConsumer implements EventConsumer {
 
   async #insertAndAck(batch: Extract<Parsed, { ok: true }>[]): Promise<void> {
     const metrics = this.#o.metrics;
-    await this.#retryWhileDbDown(async () => {
+    const ids = batch.map((p) => p.entry.id);
+    await this.#retryWhileDbDown(ids, async () => {
       const started = performance.now();
       await this.#o.db.transaction().execute(async (trx) => {
         await ingestEvents(
@@ -349,7 +351,6 @@ export class UsageConsumer implements EventConsumer {
       metrics?.batch((performance.now() - started) / 1000);
     });
     this.#o.faults?.crash?.('after-commit');
-    const ids = batch.map((p) => p.entry.id);
     await this.#o.redis.call('XACK', this.#o.stream, this.#o.group, ...ids);
     for (const id of ids) this.#lastErrors.delete(id);
     this.#stats.processed += ids.length;
@@ -360,18 +361,48 @@ export class UsageConsumer implements EventConsumer {
     );
   }
 
-  /** Retries `work` while Postgres is unreachable; other errors are thrown at once. */
-  async #retryWhileDbDown<T>(work: () => Promise<T>): Promise<T> {
+  /**
+   * Retries `work` on the entries `ids` while Postgres is unreachable; other errors are thrown at
+   * once. Before each wait the entries are claimed again by this consumer, and no wait is longer
+   * than half the claim idle time, so another worker's XAUTOCLAIM never takes them over and an
+   * outage does not raise their delivery count (see #holdEntries).
+   */
+  async #retryWhileDbDown<T>(ids: readonly string[], work: () => Promise<T>): Promise<T> {
+    const longestWaitMs = Math.max(1, Math.floor(this.#o.claimIdleMs / 2));
     let backoffMs = 500;
     for (;;) {
       try {
         return await work();
       } catch (err) {
         if (!isTransientDbError(err) || this.#stopping) throw err;
-        this.#o.logger.warn({ err, retryInMs: backoffMs }, 'postgres unavailable, retrying batch');
-        await this.#sleep(backoffMs);
+        const waitMs = Math.min(backoffMs, longestWaitMs);
+        this.#o.logger.warn({ err, retryInMs: waitMs }, 'postgres unavailable, retrying batch');
+        await this.#holdEntries(ids);
+        await this.#sleep(waitMs);
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
       }
+    }
+  }
+
+  /**
+   * Claims pending entries for this consumer again (XCLAIM with JUSTID), which resets their idle
+   * time without counting a delivery. Best effort: if Redis does not answer, the retry goes on and
+   * the entries may be claimed by another worker, as before.
+   */
+  async #holdEntries(ids: readonly string[]): Promise<void> {
+    if (ids.length === 0) return;
+    try {
+      await this.#o.redis.call(
+        'XCLAIM',
+        this.#o.stream,
+        this.#o.group,
+        this.#o.consumer,
+        0,
+        ...ids,
+        'JUSTID',
+      );
+    } catch (err) {
+      this.#o.logger.warn({ err, count: ids.length }, 'could not hold entries during the retry');
     }
   }
 
@@ -430,7 +461,7 @@ export class UsageConsumer implements EventConsumer {
     const error =
       this.#lastErrors.get(entry.id) ??
       (parsed.ok ? 'not processed after repeated deliveries' : parsed.error);
-    await this.#retryWhileDbDown(() =>
+    await this.#retryWhileDbDown([entry.id], () =>
       this.#o.db
         .insertInto('failed_events')
         .values({
