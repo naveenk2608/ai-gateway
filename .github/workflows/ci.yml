@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
 
+# Every job only reads the repository; publish-image alone may write packages and sign (M12).
+# Each action is pinned to the commit of its release, named in the comment.
 permissions:
   contents: read
 
@@ -18,8 +20,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
       - run: corepack enable
@@ -63,10 +67,12 @@ jobs:
       # The SQS tests (ADR 023) must run here, not skip: the setup fails without LocalStack.
       REQUIRE_LOCALSTACK: 'true'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # A local SQS, started the same way as on a developer machine. No AWS account is involved.
       - run: docker compose --profile aws-local up -d --wait localstack
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
       - run: corepack enable
@@ -78,8 +84,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
       - run: corepack enable
@@ -92,7 +100,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: docker compose --profile full --profile observability --profile aws-local config --quiet
       # The demo instance's override (infra/terraform/demo).
       - run: >-
@@ -124,8 +134,10 @@ jobs:
       TF_IN_AUTOMATION: '1'
       TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugins
     steps:
-      - uses: actions/checkout@v7
-      - uses: hashicorp/setup-terraform@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.16.6
           terraform_wrapper: false
@@ -144,3 +156,105 @@ jobs:
         run: |
           terraform -chdir=infra/terraform/full providers schema -json > "$RUNNER_TEMP/schema.json"
           node infra/terraform/scripts/check.mjs "$RUNNER_TEMP/schema.json"
+
+  gateway-image:
+    name: Gateway image (SBOM and vulnerability scan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGE: ghcr.io/naveenk2608/ai-gateway
+      # Trivy runs from its release archive, checked against the SHA-256 in that release's
+      # trivy_0.76.2_checksums.txt (releases are immutable since March 2026, GHSA-69fq-xp46-6x23).
+      TRIVY_VERSION: 0.76.2
+      TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the gateway image (the Dockerfile's last stage, which Render also runs)
+        run: >-
+          docker build --target gateway
+          --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+          --label "org.opencontainers.image.revision=${GITHUB_SHA}"
+          -t "$IMAGE:$GITHUB_SHA" .
+      - name: Install Trivy
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/trivy.tar.gz"             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  $RUNNER_TEMP/trivy.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP" trivy
+      - name: SBOM (CycloneDX) and the full vulnerability list (JSON)
+        run: |
+          "$RUNNER_TEMP/trivy" image --format cyclonedx --output gateway-sbom.cdx.json "$IMAGE:$GITHUB_SHA"
+          "$RUNNER_TEMP/trivy" image --scanners vuln --format json --output gateway-trivy.json             "$IMAGE:$GITHUB_SHA"
+      - name: Fail on CRITICAL vulnerabilities that have a fix (.trivyignore lists exceptions)
+        run: >-
+          "$RUNNER_TEMP/trivy" image --scanners vuln --severity CRITICAL --ignore-unfixed
+          --ignorefile .trivyignore --exit-code 1 "$IMAGE:$GITHUB_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: gateway-sbom-and-scan
+          path: |
+            gateway-sbom.cdx.json
+            gateway-trivy.json
+          if-no-files-found: ignore
+      - name: Save the image for the publish job
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker save "$IMAGE:$GITHUB_SHA" | gzip > gateway-image.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: gateway-image
+          path: gateway-image.tar.gz
+          retention-days: 1
+
+  publish-image:
+    name: Publish and sign the gateway image (main only)
+    # Only the image that was scanned, and only once every other check has passed.
+    needs: [check, integration, dashboard-e2e, images, terraform, gateway-image]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      github.repository == 'naveenk2608/ai-gateway'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Push to ghcr.io, and sign with cosign keyless signing: GitHub's OIDC token, no stored key.
+      packages: write
+      id-token: write
+    env:
+      IMAGE: ghcr.io/naveenk2608/ai-gateway
+      # cosign runs from its release binary, checked against the SHA-256 in that release's
+      # cosign_checksums.txt (an immutable release).
+      COSIGN_VERSION: v3.1.4
+      COSIGN_SHA256: 424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gateway-image
+      - name: Load the scanned image
+        run: gunzip -c gateway-image.tar.gz | docker load
+      - name: Install cosign
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/cosign"             "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/cosign" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/cosign"
+      - name: Push to ghcr.io, tagged with the commit SHA and main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:main"
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:main"
+          ref=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$GITHUB_SHA")
+          case "$ref" in "$IMAGE@sha256:"*) ;; *) echo "unexpected digest: $ref"; exit 1 ;; esac
+          echo "IMAGE_REF=$ref" >> "$GITHUB_ENV"
+      - name: Sign the digest
+        run: '"$RUNNER_TEMP/cosign" sign --yes "$IMAGE_REF"'
+      - name: Verify the signature, as a user would
+        run: >-
+          "$RUNNER_TEMP/cosign" verify
+          --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main"
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          "$IMAGE_REF" > /dev/null

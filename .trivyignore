@@ -1,0 +1,4 @@
+# Vulnerabilities the gateway image scan in CI may skip (.github/workflows/ci.yml, gateway-image).
+# The scan fails on CRITICAL vulnerabilities that have a fix. Add an ID here only with a comment
+# above it: why it does not apply to this image, who checked, when, and when to look again.
+# Nothing is ignored.

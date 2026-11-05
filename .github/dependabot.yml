@@ -1,0 +1,19 @@
+# Weekly dependency updates (M12). Minor and patch updates are grouped into one pull request per
+# ecosystem; major updates come one by one. Every pull request runs CI, image scan included.
+# The Trivy and cosign binaries in ci.yml are pinned by version and checksum and are updated by hand.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
