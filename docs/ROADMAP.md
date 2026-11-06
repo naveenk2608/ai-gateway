@@ -551,13 +551,127 @@ the same limits, budgets and accounting as text, and embeddings get their own en
 
 **Acceptance**
 
-- [ ] The OpenAI SDK's tool-calling example works through the gateway, streaming and not.
-- [ ] An embeddings request is recorded with its cost.
+- [ ] A try the deadline cuts short doesn't count against the breaker; a try that runs its full
+      timeout still does.
+- [ ] The OpenAI SDK's tool-calling loop works through the gateway, streaming and not, with
+      `finish_reason` `tool_calls`.
+- [ ] A `json_schema` request returns JSON that matches the schema (the mock in CI; a real model
+      in the live checks).
+- [ ] A tools request on a route with no tool-capable deployment gets a 400 before any provider
+      call.
+- [ ] An embeddings request is rate-limited, budgeted, cached and recorded with its endpoint,
+      tokens and cost.
+- [ ] Config validation rejects an embeddings route that mixes models or dimensions.
+- [ ] CI is green, and the git log and git grep checks are clean.
 
 **PLAN-NOTES rows it closes**
 
 - 2026-10-20 M1 "Unsupported OpenAI parameters are rejected with a 400…", for tools,
   `response_format` and image content (`logprobs` and `n > 1` stay rejected).
+- 2026-11-05 M12 "Decision to review: `REQUEST_DEADLINE_MS`…" (its breaker part).
+
+### M13 plan (2026-11-06)
+
+Order A → E. Each part is pushed in small commits, and CI is checked after each push. The local
+machine has little free memory, so formatting is checked per file, the typecheck per package and
+only the affected unit tests run locally; CI runs lint and every suite. Model IDs, capabilities,
+dimensions, limits and prices come only from each provider's official docs or pricing page, with
+the URL and the date checked in `docs/providers.md`; what the docs do not clearly state counts as
+unsupported. Migrations only add (new columns with defaults, new price rows).
+
+**Part A — deadline cuts and the breaker.** A try's outcome carries the timeout's phase. A try cut
+by `REQUEST_DEADLINE_MS` that ran for less than its deployment's `timeoutMs` is neutral: no breaker
+failure (`onNeutral`, which also frees a half-open trial), no latency sample and no cooldown. Its
+attempt is still stored as `timeout`, and the client still gets the 504. A try that ran its full
+`timeoutMs` counts as before. Unit tests in `routing/routed.test.ts` and
+`proxy/chat-completions.test.ts`, streamed and not: a try cut after 5 s of a 60 s timeout (failure
+threshold 1) leaves the breaker closed with no failure counted; a try that runs its whole timeout
+opens it. A dated note in ADR 012, and the PLAN-NOTES row is closed.
+
+**Part B — tools, JSON output and images on `/v1/chat/completions`.**
+
+- Schema: messages become a union by role. `system` and `developer` take text; `user` takes text
+  and `image_url` parts (an `https:` URL or a `data:image/...;base64` URL, with `detail`);
+  `assistant` takes text or null content with `tool_calls` (and `refusal: null`, so the SDK's loop
+  can send a reply back as it got it); `tool` takes `tool_call_id`. The request takes `tools`
+  (functions only: name, description, `parameters`, `strict`), `tool_choice`, `parallel_tool_calls`
+  and `response_format` (`text`, `json_object`, `json_schema` with name, schema and strict).
+  Checks: `tool_choice` and `parallel_tool_calls` need `tools`, a named `tool_choice` must name a
+  listed tool, and the number of images and the size of each `data:` URL are capped (400 above).
+  `functions`, `function_call` and the `function` role get a 400 that says to use `tools`. Anything
+  else stays a 400.
+- Provider seam: the normalized request carries tools, tool choice, parallel calls, the response
+  format, tool calls, tool-call IDs and image parts; results carry `toolCalls`; streams yield
+  tool-call deltas; `finishReason` gains `tool_calls`.
+- Adapters: openai-compatible sends the fields and reads `message.tool_calls` and
+  `delta.tool_calls`, as pieces or as a whole call in one chunk, with or without `index`. One shared
+  accumulator gives every call an ID (a generated `call_…` when the provider sends none) and emits
+  each call's ID and name before its argument pieces. A table keyed by the provider name adapts what
+  a provider's docs say it rejects or limits: the field is dropped, or tool-call IDs are mapped both
+  ways (Mistral's documented ID format, if confirmed). Ollama maps tools, `format` (JSON or a
+  schema), `images` (data URLs only; the gateway never fetches URLs) and argument objects. The mock
+  answers a deterministic tool call (the named tool, else the first) whose arguments fill the
+  schema's required fields, and JSON that matches a `json_schema`.
+- Replies: `message.tool_calls`, `content: null` when the model only calls tools, `finish_reason`
+  `tool_calls`; SSE deltas in OpenAI's shape (index, id, type and name with empty arguments first,
+  then the arguments in pieces), in order.
+- Capabilities: each deployment gets `capabilities` (`tools`, `json_object`, `json_schema`,
+  `vision`), filled from the provider's docs for that exact model; unknown is false, the mock has
+  all four. Before admission, a route keeps only the deployments that have what the request uses;
+  the others are named in the first try's routing reason (`skipped x (no tools)`), like breaker
+  skips. If none is left, the request gets 400 `model_capability_unsupported` naming the
+  capability, before any provider call or budget reservation.
+- Tokens and money: tool definitions, tool calls, tool results and JSON schemas count in the
+  prompt estimate (and so in TPM and the budget reservation); each image counts a fixed estimate,
+  documented in the README. Billing still uses reported usage.
+- Cache: the key (version 2) adds tools, `tool_choice`, `parallel_tool_calls`, `response_format`,
+  image parts, assistant tool calls and `tool_call_id`; entries keep tool calls.
+- Tests: unit tests for the schema, the adapters (deltas split across chunks, whole calls in one
+  chunk, ID mapping), the mock, capability routing, the estimate and the cache key; integration
+  tests with the openai SDK (7.30.0): the tool-calling loop streamed and not, `json_schema`, and a
+  tools request on a route without tool support (400, no upstream call).
+- Docs: a README tool-calling example and a table of what each model supports; ADR 028
+  (capabilities and capability-aware routing); every provider difference in `docs/providers.md`.
+
+**Part C — `/v1/embeddings`.**
+
+- Config: a deployment can be `"type": "embeddings"` (default `chat`) with its documented
+  `dimensions`, whether (and to which sizes) the client may change them, and its documented input
+  limits. Validation rejects an embeddings model whose deployments differ in model or dimensions or
+  mix the mock with real ones, a chat model that lists an embedding deployment, and the reverse.
+- Provider seam: `embed()` on the adapters: openai-compatible `POST /embeddings`, Ollama
+  `/api/embed`, and the mock's deterministic unit vectors (seeded from a hash of the input, size
+  configurable).
+- `POST /v1/embeddings` in OpenAI's format (`model`, `input` as a string or strings, token arrays
+  400, `encoding_format` float or base64, `dimensions` only where supported, `user`), with caps on
+  the number of inputs and their total size. It goes through the same path as chat: API key and
+  allow-list, admission (RPM, TPM from the estimated input tokens, the budget at the input price),
+  quotas and cooldowns, breakers, retries, the deadline, the trace and the usage event.
+- Records: migration 0010 adds `request_records.endpoint` (default `chat`); events carry
+  `endpoint`; the worker stores it; the admin request list and detail return it; the dashboard's
+  request list shows it.
+- Prices: migration 0011 adds the embedding models' input prices (output 0), with sources and
+  dates. Free deployments are billed `free_tier` (ADR 024).
+- Deployments: embedding models from Gemini, Mistral and Cloudflare Workers AI where their docs
+  show a free one, plus Ollama and the mock; each ID, size, limit and price confirmed on the
+  official page first.
+- Cache: exact match on project, model, inputs, dimensions and encoding format.
+- `/v1/models` lists the embedding models; `scripts/traffic.mjs` sends one small embeddings
+  request a run.
+- Tests: unit and integration (openai SDK: one input, a batch, base64, dimensions; limits, budget,
+  the request record's endpoint, tokens and cost). README section, `docs/providers.md` rows, ADR
+  029 (routes that never mix models, prices, caching).
+
+**Part D — live checks.** With `DEMO_BASE_URL` and `DEMO_API_KEY` set, wait until the demo runs the
+new code (`/v1/embeddings` stops answering 404), then check through the openai SDK: a tool call on
+Groq's gpt-oss-20b and a Gemini model, streamed and not; a `json_schema` answer; embeddings on
+Gemini and Mistral. Each failed check is retried up to 3 times a minute apart; results go to a
+PLAN-NOTES table "M13 real-provider checks". Without the values, the exact commands are written
+down instead.
+
+**Part E — wrap-up.** README, ADRs, PLAN-NOTES rows closed or updated, ticked acceptance checks, and
+the "M13 run" row (parts and commits, what is left, decisions to review, anything reverted or
+skipped).
 
 ## M14 — Smarter routing
 
