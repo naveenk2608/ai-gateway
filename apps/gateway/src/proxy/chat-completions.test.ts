@@ -28,9 +28,14 @@ const deployments = {
     mock: { tokensPerSecond: 1, completionTokens: 3 },
   },
   'stream-drop': { provider: 'mock', mock: { completionTokens: 10, dropAfterTokens: 2 } },
+  // Never answers within its 60 s timeout, so only a timeout ends a try.
+  stuck: { provider: 'mock', timeoutMs: 60_000, mock: { latencyMs: 600_000, ttftMs: 600_000 } },
 };
 
-function setup() {
+function setup({
+  deadlineMs,
+  failureThreshold,
+}: { deadlineMs?: number; failureThreshold?: number } = {}) {
   const clock = new ManualClock(Date.UTC(2026, 9, 20, 12, 0, 0));
   const { logger, lines } = captureLogger();
   const models = parseModelsConfig(
@@ -45,6 +50,7 @@ function setup() {
         'mock-stream-ttft': { deployment: 'stream-ttft' },
         'mock-stream-idle': { deployment: 'stream-idle' },
         'mock-stream-drop': { deployment: 'stream-drop' },
+        'mock-stuck': { deployment: 'stuck' },
       },
     },
     'test',
@@ -59,7 +65,10 @@ function setup() {
   const { verifier, authorization } = inMemoryVerifier(clock);
   const events = new RecordingBus();
   const admission = testAdmission(clock, logger);
-  const routing = testRouting(registry, clock);
+  const routing = testRouting(registry, clock, {
+    ...(deadlineMs === undefined ? {} : { deadlineMs }),
+    ...(failureThreshold === undefined ? {} : { failureThreshold }),
+  });
   registerChatCompletions(app, { registry, clock, verifier, events, admission, routing });
 
   /** Sends a request, then advances the manual clock once its sleeps are queued. */
@@ -78,7 +87,7 @@ function setup() {
     }
     return pending;
   }
-  return { app, clock, registry, lines, post, authorization, events };
+  return { app, clock, registry, routing, lines, post, authorization, events };
 }
 
 const hello = { messages: [{ role: 'user', content: 'Say hello' }] };
@@ -466,4 +475,34 @@ describe('usage events', () => {
     expect(res.statusCode).toBe(400);
     expect(events.events).toEqual([]);
   });
+});
+
+describe('a try cut by the request deadline (REQUEST_DEADLINE_MS)', () => {
+  // One counted failure would open the breaker, so a closed breaker means none was counted.
+  it.each([false, true])(
+    'is not a breaker failure when it ran only part of its timeout (stream: %s)',
+    async (stream) => {
+      const { post, routing, registry } = setup({ deadlineMs: 5_000, failureThreshold: 1 });
+      const res = await post({ model: 'mock-stuck', ...hello, stream }, { advance: 5_000 });
+      expect(res.statusCode).toBe(504);
+      expect(res.headers['content-type']).toMatch(/^application\/json/);
+      expect(res.json()).toMatchObject({ error: { code: 'upstream_timeout' } });
+      expect(routing.breakers.get('stuck').state).toBe('closed');
+      expect(routing.latency.get('stuck')).toBeUndefined();
+      const mock = registry.deployment('stuck')?.provider as MockProvider;
+      expect(mock.stats()).toMatchObject({ requests: 1, canceled: 1, active: 0 });
+    },
+  );
+
+  it.each([false, true])(
+    'still counts when the try ran its whole timeout (stream: %s)',
+    async (stream) => {
+      // The deadline is longer than the deployment's 60 s timeout, so the timeout cuts the try.
+      const { post, routing } = setup({ deadlineMs: 120_000, failureThreshold: 1 });
+      const res = await post({ model: 'mock-stuck', ...hello, stream }, { advance: 60_000 });
+      expect(res.statusCode).toBe(504);
+      expect(res.json()).toMatchObject({ error: { code: 'upstream_timeout' } });
+      expect(routing.breakers.get('stuck').state).toBe('open');
+    },
+  );
 });

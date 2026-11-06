@@ -87,6 +87,14 @@ export interface AttemptOutcome {
   usage: Usage | null;
   /** The provider's own rate-limit counts, from its response headers. */
   rateLimit?: RateLimitHeaders | undefined;
+  /** Which of the attempt's limits cut it, when it timed out (`deadline`: the request's own). */
+  timeoutPhase?: TimeoutPhase | undefined;
+}
+
+/** The phase of the gateway's own timeout behind a failure, if one cut the attempt. */
+function timeoutPhaseOf(error: unknown): TimeoutPhase | undefined {
+  if (!(error instanceof ProviderError) || error.kind !== 'timeout') return undefined;
+  return error.cause instanceof AttemptTimeoutError ? error.cause.phase : undefined;
 }
 
 const noop = () => undefined;
@@ -199,6 +207,7 @@ class Attempt {
       ttftMs,
       usage: this.#usage,
       rateLimit: this.#rateLimit,
+      timeoutPhase: timeoutPhaseOf(error),
     });
     this.#ctx.trace?.recordAttempt({
       id: this.id,

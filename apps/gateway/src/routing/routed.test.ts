@@ -6,13 +6,19 @@ import { PriceBook } from '../limits/prices.js';
 import type { RoutingPolicy } from '../models-config.js';
 import { ProviderError, type ProviderErrorKind } from '../providers/errors.js';
 import type { Deployment, Route } from '../providers/registry.js';
-import type { AttemptContext } from '../proxy/attempt.js';
+import type { AttemptContext, TimeoutPhase } from '../proxy/attempt.js';
 import { RequestTrace } from '../proxy/trace.js';
 import { BreakerBoard } from './breaker.js';
 import { runRouted, type RetrySettings } from './routed.js';
 import { LatencyTracker } from './router.js';
 
-type Outcome = 'ok' | ProviderErrorKind | ProviderError;
+/** A timeout the gateway imposed: which limit cut the try, and after how long. */
+interface Cut {
+  cut: TimeoutPhase;
+  afterMs: number;
+}
+
+type Outcome = 'ok' | ProviderErrorKind | ProviderError | Cut;
 
 const deployment = (id: string) =>
   ({
@@ -21,6 +27,7 @@ const deployment = (id: string) =>
     provider: { kind: 'mock' },
     providerName: 'mock',
     maxOutputTokens: 100,
+    timeoutMs: 60_000,
   }) as unknown as Deployment;
 
 /** A clock whose sleeps resolve at once, recording how long each would have been. */
@@ -68,13 +75,22 @@ function setup(
     calls.push({ id, reason: ctx.routing?.reason ?? '' });
     passed.push([id, ctx.passedOver]);
     const next = outcomes[id]!.shift() ?? 'ok';
+    const cut = typeof next === 'object' && 'cut' in next ? next : undefined;
     const error =
       next === 'ok'
         ? undefined
         : next instanceof ProviderError
           ? next
-          : new ProviderError(next, next);
-    ctx.onEnd?.({ error, latencyMs: 10, ttftMs: null, usage: null });
+          : cut
+            ? new ProviderError('timeout', `cut at ${cut.afterMs} ms (${cut.cut})`)
+            : new ProviderError(next as ProviderErrorKind, next as string);
+    ctx.onEnd?.({
+      error,
+      latencyMs: cut?.afterMs ?? 10,
+      ttftMs: null,
+      usage: null,
+      timeoutPhase: cut?.cut,
+    });
     return error ? Promise.reject(error) : Promise.resolve(`served by ${id}`);
   };
   const run = (signal = new AbortController().signal) => {
@@ -207,6 +223,43 @@ describe('runRouted', () => {
       code: 'deployments_unavailable',
       retryAfterSeconds: 60,
     });
+  });
+
+  it('counts no breaker failure for a try the request deadline cut before its timeout', async () => {
+    // One try: in the gateway, no retry starts once the deadline has passed.
+    const t = setup(
+      { only: [{ cut: 'deadline', afterMs: 5_000 }] },
+      { failureThreshold: 1, retry: { perDeployment: 1 } },
+    );
+    await expect(t.run()).rejects.toMatchObject({ kind: 'timeout' });
+    expect(t.breakers.get('only').state).toBe('closed');
+  });
+
+  it('still counts a try that ran its whole timeout, whichever limit cut it', async () => {
+    for (const cut of [
+      { cut: 'deadline', afterMs: 60_000 },
+      { cut: 'response', afterMs: 60_000 },
+    ] as const) {
+      const t = setup({ only: [cut] }, { failureThreshold: 1, retry: { perDeployment: 1 } });
+      await expect(t.run()).rejects.toMatchObject({ kind: 'timeout' });
+      expect(t.breakers.get('only').state).toBe('open');
+    }
+  });
+
+  it('frees a half-open trial that the deadline cut short', async () => {
+    const t = setup(
+      { only: ['server_error', { cut: 'deadline', afterMs: 5_000 }, 'ok'] },
+      { failureThreshold: 1, retry: { perDeployment: 1 } },
+    );
+    await expect(t.run()).rejects.toMatchObject({ kind: 'server_error' });
+    // Past the open period: the next request is the trial.
+    t.breakers.get('only').probeSucceeded();
+    expect(t.breakers.get('only').state).toBe('half_open');
+    await expect(t.run()).rejects.toMatchObject({ kind: 'timeout' });
+    // Neither opened again nor stuck: the next request may be the trial.
+    expect(t.breakers.get('only').state).toBe('half_open');
+    expect(await t.run()).toBe('served by only');
+    expect(t.breakers.get('only').state).toBe('closed');
   });
 
   it('stops waiting to retry when the client leaves', async () => {

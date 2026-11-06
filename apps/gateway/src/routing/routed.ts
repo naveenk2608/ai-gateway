@@ -156,7 +156,7 @@ export async function runRouted<T>(
         passedOver: [...passedOver],
         ...(deadlineAt === undefined ? {} : { deadlineAt }),
         onEnd: (outcome) => {
-          settleHealth(deps, id, outcome);
+          settleHealth(deps, candidate.deployment, outcome);
           settleQuota(deps, candidate.deployment, ticket, outcome, promptTokens);
         },
       };
@@ -239,11 +239,22 @@ function settleQuota(
   }
 }
 
-function settleHealth(deps: RoutingDeps, deployment: string, outcome: AttemptOutcome): void {
-  const breaker = deps.breakers.get(deployment);
+/**
+ * A try the request's deadline (REQUEST_DEADLINE_MS) cut before it had run for its deployment's
+ * own `timeoutMs`: the time the request had left ran out, not the deployment's, so it says nothing
+ * about the deployment's health or speed (ADR 012).
+ */
+export function cutShortByDeadline(deployment: Deployment, outcome: AttemptOutcome): boolean {
+  return outcome.timeoutPhase === 'deadline' && outcome.latencyMs < deployment.timeoutMs;
+}
+
+function settleHealth(deps: RoutingDeps, deployment: Deployment, outcome: AttemptOutcome): void {
+  const breaker = deps.breakers.get(deployment.id);
   if (outcome.error === undefined) {
     breaker.onSuccess();
-    deps.latency.record(deployment, outcome.ttftMs ?? outcome.latencyMs);
+    deps.latency.record(deployment.id, outcome.ttftMs ?? outcome.latencyMs);
+  } else if (cutShortByDeadline(deployment, outcome)) {
+    breaker.onNeutral();
   } else if (outcome.error instanceof ProviderError && countsAsFailure(outcome.error.kind)) {
     breaker.onFailure(outcome.error.kind);
   } else {

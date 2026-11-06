@@ -21,7 +21,8 @@ once it recovers, without a coordination round trip on every request.
 - Half-open admits one trial request at a time; its success closes the breaker, its failure opens
   it again. A trial that ends without a verdict (the client left) frees the slot.
 - Failures that count: timeouts, rate limits, server errors, connection errors, invalid responses,
-  rejected credentials and unknown models. Rejected requests and client disconnects do not.
+  rejected credentials and unknown models. Rejected requests and client disconnects do not, and
+  neither does a try that the request's deadline cut short (note of 2026-11-06 below).
 - If every deployment of a model is open, the request fails at once with 503
   `deployments_unavailable` and a `retry-after` until the earliest trial.
 - Transitions are written, off the request path, to a Redis hash per deployment (one field per
@@ -44,3 +45,17 @@ once it recovers, without a coordination round trip on every request.
 - A provider whose probe passes while its chat endpoint fails will be half-opened and re-opened by
   the trial; the cost is one failed request per health-check interval. Since M12, a deployment
   can use a chat health check for this case instead (ADR 026).
+
+## Note (2026-11-06, M13): tries the request deadline cuts short
+
+Since M12, `REQUEST_DEADLINE_MS` (50 s) bounds a whole request until its response starts, so a try
+can be cut long before its deployment's `timeoutMs` (60 s by default) when earlier tries used up
+the time. Such a cut used to count as a timeout against the deployment, so a slow first
+deployment could open the breaker of the next one, which had run for only a few seconds. Now a
+try cut by the deadline counts as a failure only if it had already run for its deployment's full
+`timeoutMs`; otherwise it is neutral: no breaker failure (a half-open trial's slot is freed), no
+latency sample for `lowest_latency`, and no cooldown. The attempt is still stored as `timeout`,
+and the client still gets 504 `upstream_timeout`. Tested in `routing/routed.test.ts` and, through
+real attempts, in `proxy/chat-completions.test.ts`, streamed and not: a try cut after 5 s of a 60 s
+timeout leaves a breaker with a failure threshold of 1 closed, and a try that runs its whole
+timeout opens it.

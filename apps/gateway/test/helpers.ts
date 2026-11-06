@@ -161,11 +161,14 @@ export function testRouting(
     failureThreshold = 1_000,
     openMs = 30_000,
     random = () => 0.5,
+    deadlineMs,
   }: {
     retry?: Partial<RetrySettings>;
     failureThreshold?: number;
     openMs?: number;
     random?: () => number;
+    /** REQUEST_DEADLINE_MS; none by default, so only each deployment's timeout applies. */
+    deadlineMs?: number;
   } = {},
 ): RoutingDeps {
   const { logger } = captureLogger();
@@ -180,5 +183,6 @@ export function testRouting(
     prices: PriceBook.of([], clock, logger),
     random,
     retry: { maxAttempts: 1, perDeployment: 1, baseDelayMs: 100, maxDelayMs: 2_000, ...retry },
+    deadlineMs,
   };
 }
