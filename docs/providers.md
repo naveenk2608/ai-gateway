@@ -150,4 +150,6 @@ No provider key was set in the environment where M11 was built (2026-11-03). Eve
 called through the live demo on 2026-11-04, and the failed ones again after the fixes; the results
 are in the "M11 real-provider checks" tables of
 [PLAN-NOTES.md](PLAN-NOTES.md#m11-real-provider-checks).
-Groq and Gemini were checked with real keys on 2026-10-21.
+Groq and Gemini were checked with real keys on 2026-10-21. M13's tool calls, JSON output and
+embeddings were checked through the live demo on 2026-11-06 (Groq, Gemini and Mistral): the
+"M13 real-provider checks" table in [PLAN-NOTES.md](PLAN-NOTES.md#m13-real-provider-checks).

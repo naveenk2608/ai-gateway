@@ -1118,6 +1118,10 @@ docs/providers.md        every provider's model IDs, prices and free limits, wit
 - Circuit breakers are per instance, so instances can briefly disagree about a deployment.
 - The cache is exact-match only and off by default; sampled requests are cached only on request.
 - No response-quality evaluation: routing weighs latency, cost and failures only.
+- Model capabilities (tools, JSON output, images) are set only where a provider's docs state
+  them, so some deployments that could serve a request are skipped; an embeddings model never
+  falls back to another model, so it fails while its one deployment is down. The gateway never
+  checks a JSON answer against its schema; it relies on the provider.
 - Redis Cluster is not supported (one Redis primary is).
 - Analytics percentiles are approximate (histogram buckets), and days are UTC days.
 - Metrics are per process: Prometheus must scrape every gateway instance. Traces exist only as

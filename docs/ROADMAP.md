@@ -551,18 +551,26 @@ the same limits, budgets and accounting as text, and embeddings get their own en
 
 **Acceptance**
 
-- [ ] A try the deadline cuts short doesn't count against the breaker; a try that runs its full
-      timeout still does.
-- [ ] The OpenAI SDK's tool-calling loop works through the gateway, streaming and not, with
-      `finish_reason` `tool_calls`.
-- [ ] A `json_schema` request returns JSON that matches the schema (the mock in CI; a real model
-      in the live checks).
-- [ ] A tools request on a route with no tool-capable deployment gets a 400 before any provider
-      call.
-- [ ] An embeddings request is rate-limited, budgeted, cached and recorded with its endpoint,
-      tokens and cost.
-- [ ] Config validation rejects an embeddings route that mixes models or dimensions.
-- [ ] CI is green, and the git log and git grep checks are clean.
+- [x] A try the deadline cuts short doesn't count against the breaker; a try that runs its full
+      timeout still does (`proxy/chat-completions.test.ts`, streamed and not: cut after 5 s of a
+      60 s timeout, the breaker with a threshold of 1 stays closed; a full timeout opens it; and
+      `routing/routed.test.ts`).
+- [x] The OpenAI SDK's tool-calling loop works through the gateway, streaming and not, with
+      `finish_reason` `tool_calls` (`test/openai-sdk-tools.test.ts`: by hand, and with
+      `runTools` streamed and not; live on Groq gpt-oss-20b and Gemini 3.1 Flash-Lite).
+- [x] A `json_schema` request returns JSON that matches the schema (the mock in CI:
+      `test/openai-sdk-tools.test.ts`, streamed and not; live: Groq gpt-oss-20b, also streamed).
+- [x] A tools request on a route with no tool-capable deployment gets a 400 before any provider
+      call (`model_capability_unsupported`; the mock's request count stays 0, in
+      `test/openai-sdk-tools.test.ts` and `proxy/chat-tools.test.ts`).
+- [x] An embeddings request is rate-limited, budgeted, cached and recorded with its endpoint,
+      tokens and cost (`test/embeddings.test.ts`: 429 `rpm_limit_exceeded`, the per-request cost
+      cap, the budget period's spend, a cache hit with no upstream call, and the record's
+      `endpoint`, tokens and cost through the worker; live on Gemini and Mistral).
+- [x] Config validation rejects an embeddings route that mixes models or dimensions
+      (`models-config.test.ts`, also the mock, and chat with embeddings either way).
+- [x] CI is green, and the git log and git grep checks are clean (every M13 push; the checks ran
+      before each push).
 
 **PLAN-NOTES rows it closes**
 
