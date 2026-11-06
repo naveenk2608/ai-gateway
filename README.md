@@ -237,10 +237,10 @@ for await (const chunk of stream) process.stdout.write(chunk.choices[0]?.delta.c
 | `GET /health` | The process is up. |
 | `GET /ready` | 200 when Postgres and Redis answer within `READY_CHECK_TIMEOUT_MS`, else 503 naming the failing check. |
 
-The body accepts OpenAI's text chat parameters (`messages`, `max_tokens` or
-`max_completion_tokens`, `temperature`, `top_p`, `stop`, `seed`, penalties, `user`) and rejects
-anything else (tools, `response_format`, images, `n > 1`) with a 400 naming the field. Bodies
-over 1 MiB get 413. Every response has a server-generated `x-request-id`; the logs for that
+The body accepts OpenAI's chat parameters (`messages`, `max_tokens` or `max_completion_tokens`,
+`temperature`, `top_p`, `stop`, `seed`, penalties, `user`), plus tools, JSON output and image
+input (see [Tools, JSON output and images](#tools-json-output-and-images)), and rejects anything
+else (`logprobs`, `n > 1`, audio, ...) with a 400 naming the field. Bodies over 1 MiB get 413. Every response has a server-generated `x-request-id`; the logs for that
 request carry it as `requestId`, and each upstream call is logged once with its `attemptId`.
 A completion also names the deployment that answered in `x-gateway-deployment` and, after a
 fallback, the deployments passed over first in `x-gateway-fallback-from` (they failed, or their
@@ -251,6 +251,94 @@ Browser pages on other origins may call `/v1` when their origin is listed in `AL
 read `x-request-id`, the two routing headers, `x-gateway-cache` and `retry-after`. The admin API
 and every other path never answer other origins.
 
+### Tools, JSON output and images
+
+`/v1/chat/completions` takes OpenAI's `tools` (functions: `name`, `description`, `parameters` as a
+JSON Schema, `strict`), `tool_choice` (`none`, `auto`, `required` or a named function),
+`parallel_tool_calls`, `response_format` (`text`, `json_object`, or `json_schema` with `name`,
+`schema` and `strict`), assistant messages with `tool_calls` and null content, `tool` messages
+with `tool_call_id`, and `image_url` parts in user messages (an `https:` URL or a
+`data:image/(png|jpeg|gif|webp);base64` URL, with `detail`). The old `functions` and
+`function_call` fields get a 400 that says to use `tools`. A request may hold at most 3 images
+(the fewest any configured vision model takes: Groq's Qwen) and 128 tools, and a `data:` URL at
+most 512 KiB; the gateway never fetches an image URL itself.
+
+Replies follow OpenAI: `message.tool_calls`, `content: null` when the model only called tools,
+and `finish_reason: "tool_calls"`. Streams send each tool call's index, ID, type and name in one
+delta, then its arguments in pieces, in order, whatever form the provider sent them in (pieces, or
+a whole call in one chunk). The OpenAI SDK's own tool loop works unchanged
+([apps/gateway/test/openai-sdk-tools.test.ts](apps/gateway/test/openai-sdk-tools.test.ts)):
+
+```ts
+import OpenAI from 'openai';
+
+const client = new OpenAI({ baseURL: 'http://127.0.0.1:8080/v1', apiKey: process.env.GW_KEY });
+const runner = client.chat.completions.runTools({
+  model: 'chat-default',
+  messages: [{ role: 'user', content: 'What is the weather in Paris?' }],
+  tools: [
+    {
+      type: 'function',
+      function: {
+        name: 'get_weather',
+        description: 'Current weather for a city',
+        parameters: {
+          type: 'object',
+          properties: { city: { type: 'string' } },
+          required: ['city'],
+        },
+        parse: JSON.parse,
+        function: ({ city }: { city: string }) => ({ city, temperature: 18 }),
+      },
+    },
+  ],
+});
+console.log(await runner.finalContent());
+```
+
+**Capabilities and routing** (ADR 028). Each deployment says what its model can do, from the
+provider's docs for that exact model: `capabilities: { tools, json_object, json_schema, vision }`,
+all false unless set (the mock has all four). A request that uses tools (or holds tool calls),
+`response_format` or images only goes to deployments that can serve it; the others are skipped
+and named in the routing history (`priority 2 of 8; skipped zai-glm-4.7-flash (no tools)`). If no
+deployment of the model fits, the request gets 400 `model_capability_unsupported` naming what is
+missing, before any provider call or budget reservation. Some limits are the provider's API rather
+than the model: `tool_choice` values a provider does not document, images by URL where only
+`data:` URLs are documented, and Groq's structured output together with tools make a deployment
+unfit too. Where a provider only lacks a field that the request does not need to mean the same
+(`strict` on a tool, `parallel_tool_calls`), the adapter leaves it out; Mistral gets tool-call IDs
+in the nine-letter form its docs show, mapped back in the answer; and Groq, which cannot stream
+structured output, gets a streamed `json_schema` request as one plain call that the gateway
+replays as a stream. [docs/providers.md](docs/providers.md#tools-json-output-and-images) lists
+every difference with its source.
+
+| Model (deployment) | `tools` | `json_object` | `json_schema` | `vision` |
+| --- | --- | --- | --- | --- |
+| `gpt-oss-20b`, `gpt-oss-120b` (Groq) | yes | yes | yes | no |
+| `qwen3` (Groq `qwen/qwen3.8-27b`) | yes | yes | yes | yes |
+| `gemini-3.5-flash-lite`, `gemini-3.8-flash`, `gemini-3.1-flash-lite` | yes | no (not in Google's OpenAI-compatibility docs) | yes | yes (`data:` URLs only) |
+| `mistral-small`, `mistral-large` | yes | yes | yes | no |
+| `gemma-4-31b` (OpenRouter `:free`) | yes | yes | no | yes |
+| `deepseek-v4.1-flash` (NVIDIA), `llama-4-scout` (Cloudflare), `glm-4.7-flash` (Z.AI) | no | no | no | no |
+| `llama3.2` (Ollama) | yes | yes | yes | no |
+| every `mock-*` model | yes | yes | yes | yes |
+
+So a tools request on `chat-default` goes to Groq, Gemini, Mistral or OpenRouter (then the mock),
+while one on `deepseek-v4.1-flash` gets the 400. "No" means the docs do not say so for that model
+on that endpoint, not that the model cannot.
+
+The mock answers a tool call when tools are given: the tool `tool_choice` names, else the first,
+with arguments that fill the schema's required fields; with `auto` it answers in text once the
+last message is a tool result, so a loop ends. For `json_object` and `json_schema` it answers JSON
+that matches the schema.
+
+**Tokens and the cache.** Tool definitions, tool calls, tool results and a `json_schema` count in
+the prompt estimate that limits and budget reservations use, and each image counts a fixed 2,048
+tokens (Groq's documented count per image for its vision model, more than a typical image costs
+elsewhere). What is billed is still the usage the provider reports. The cache key includes tools,
+`tool_choice`, `parallel_tool_calls`, `response_format`, image parts, tool calls and tool results,
+and cached answers keep their tool calls.
+
 ### Errors
 
 Errors use the OpenAI shape `{"error": {"message", "type", "param", "code"}}` and never include
@@ -260,6 +348,7 @@ can help.
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | The body failed validation. |
+| 400 | `model_capability_unsupported` | No deployment of the model supports what the request uses (tools, a `tool_choice`, a response format, images); `param` names the field. |
 | 400 | `request_exceeds_limit` | The request could never fit: more tokens than the TPM limit, or a worst-case cost above the project's per-request cap or whole budget. Lower `max_tokens`. |
 | 401 | `invalid_api_key` | Missing, unknown, revoked or expired key. |
 | 429 | `too_many_invalid_api_keys` | The client IP sent too many key IDs that do not exist; refused before any key lookup, with `retry-after`. |
@@ -303,6 +392,8 @@ per deployment:
   account ID); the deployment is disabled while one is unset.
 - `healthCheck`: `models` (default) probes an open breaker with `GET /models`; `none` sends
   nothing, for providers without a model list, and the breaker half-opens after `BREAKER_OPEN_MS`.
+- `capabilities`: what the model can do (`tools`, `json_object`, `json_schema`, `vision`), false
+  unless set, see [Tools, JSON output and images](#tools-json-output-and-images).
 - `billing`: `free_tier` or `paid` (default), see [Costs](#costs-list-price-and-what-was-billed).
 - `quota`: the provider's published free limits, see
   [Free-tier quotas and cooldowns](#free-tier-quotas-and-cooldowns).

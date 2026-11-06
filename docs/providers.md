@@ -47,6 +47,53 @@ a minute after the last, then 2, 4, 8 minutes and so on up to an hour while it k
 keeps the breaker open. Nemotron 3 Super was removed from the models file after M12, since NVIDIA
 answers it with "Not found for account"; its price rows stay in migration 0006 (ADR 016).
 
+## Tools, JSON output and images
+
+Each deployment's `capabilities` in the models file (ADR 028) come from the provider's docs for
+that exact model, checked on 2026-11-06. A capability the docs do not state is false.
+
+| Deployment | `tools` | `json_object` | `json_schema` | `vision` | Source (checked 2026-11-06) |
+| --- | --- | --- | --- | --- | --- |
+| `groq-gpt-oss-20b`, `groq-gpt-oss-120b` | yes | yes | yes | no | Model pages list "Tool Use", "JSON Object Mode", "JSON Schema Mode", input "Text" only: <https://console.groq.com/docs/model/openai/gpt-oss-20b>, <https://console.groq.com/docs/model/openai/gpt-oss-120b>; strict structured outputs for both on <https://console.groq.com/docs/structured-outputs> |
+| `groq-qwen3.8-27b` | yes | yes | yes | yes | <https://console.groq.com/docs/model/qwen/qwen3.8-27b> (input "Text, images"); <https://console.groq.com/docs/vision> |
+| `gemini-3.5-flash-lite`, `gemini-3.8-flash`, `gemini-3.1-flash-lite` | yes | no | yes | yes | Model pages: inputs "Text, Image, Video, Audio, and PDF", "Function calling" and "Structured outputs" supported (<https://aistudio.google.com/docs/models/gemini-3.5-flash-lite>, `/gemini-3.8-flash`, `/gemini-3.1-flash-lite`). The OpenAI-compatibility page shows structured output through `response_format` with a schema, and does not mention `json_object` (<https://aistudio.google.com/docs/openai>) |
+| `mistral-small-2603` | yes | yes | yes | no | "Function Calling" and "Structured Outputs" on /v1/chat/completions (<https://docs.mistral.ai/models/mistral-small-4-0-26-03>); `json_object` and `json_schema` are the endpoint's documented formats (<https://docs.mistral.ai/api/endpoint/chat>); not on the vision page's model list (<https://docs.mistral.ai/capabilities/vision>) |
+| `mistral-large-4` | yes | yes | yes | no | Same features (<https://docs.mistral.ai/models/mistral-large-4-0>). The page calls it multimodal with a vision encoder but does not list image input among its API features, and the vision page does not list it, so `vision` stays false |
+| `openrouter-gemma-4-31b-free` | yes | yes | no | yes | `supported_parameters` of `google/gemma-4-31b-it:free` include `tools`, `tool_choice` and `response_format` but not `structured_outputs`; `input_modalities` include `image` (<https://openrouter.ai/api/v1/models>) |
+| `nvidia-deepseek-v4.1-flash` | no | no | no | no | No tool, JSON or image documentation for this model on NVIDIA's API (only for DeepSeek V4 Pro's NIM) |
+| `cloudflare-llama-4-scout` | no | no | no | no | The model page lists function calling and vision, but Cloudflare's OpenAI-compatible endpoint documents neither tools nor images (<https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/>), and JSON mode lists other models (<https://developers.cloudflare.com/workers-ai/features/json-mode/>) |
+| `zai-glm-4.7-flash` | no | no | no | no | The GLM-4.7 page lists function calling and structured output for GLM-4.7, not for GLM-4.7-Flash, and both as text input only (<https://docs.z.ai/guides/llm/glm-4.7>) |
+| `ollama-llama3.2` | yes | yes | yes | no | The library page tags llama3.2 "tools", input "Text" (<https://ollama.com/library/llama3.2>); `/api/chat` takes `format` as `json` or a JSON schema (<https://docs.ollama.com/api/chat>) |
+| every mock deployment | yes | yes | yes | yes | The mock fakes them (ADR 028) |
+
+### Provider differences the adapters handle
+
+What a provider's API takes of the fields the gateway accepts (`providers/dialects.ts`). A field
+a provider's docs do not mention counts as not taken. "Dropped" fields leave a request that means
+the same in practice; the other differences make the deployment unfit, and capability routing
+skips it.
+
+| Provider | Difference | What the gateway does | Source (checked 2026-11-06) |
+| --- | --- | --- | --- |
+| Groq | No `strict` on function definitions in the docs | `strict` dropped | <https://console.groq.com/docs/tool-use>, <https://console.groq.com/docs/api-reference> |
+| Groq | "Streaming and tool use are not currently supported with Structured Outputs" | A streamed `json_schema` request is sent as one non-streamed call and replayed as a stream; `json_schema` with tools makes the deployment unfit | <https://console.groq.com/docs/structured-outputs> |
+| Groq | `parallel_tool_calls` documented; gpt-oss models do not make parallel calls | Sent as given | <https://console.groq.com/docs/tool-use> |
+| Gemini | Only `tool_choice: "auto"` is shown; no `parallel_tool_calls` or `strict` | `strict` and `parallel_tool_calls` dropped; another `tool_choice` makes it unfit | <https://aistudio.google.com/docs/openai> |
+| Gemini | Images are shown only as base64 `data:` URLs | Images by URL make it unfit | <https://aistudio.google.com/docs/openai> |
+| Mistral | Tool-call IDs: the docs state no format, but every ID they show is nine letters and digits (`D681PevKs`) | IDs that are not are replaced, the same in tool calls and tool results, by nine letters and digits derived from them, and turned back in the answer | <https://docs.mistral.ai/capabilities/function_calling> |
+| Mistral | No `strict` on function definitions | `strict` dropped | <https://docs.mistral.ai/capabilities/function_calling> |
+| Mistral | `tool_choice` takes `auto`, `none`, `any`, `required` and a named function; `parallel_tool_calls` documented | Sent as given | <https://docs.mistral.ai/api/endpoint/chat> |
+| OpenRouter | `tool_choice` `none`, `auto` and a named function; `required` not documented; no `strict` | `strict` dropped; `required` makes it unfit | <https://openrouter.ai/docs/guides/features/tool-calling> |
+| OpenRouter | Images by `https:` URL or `data:` URL | Sent as given | <https://openrouter.ai/docs/guides/overview/multimodal/image-understanding> |
+| Z.AI | "only auto is supported" for `tool_choice` | Another value makes it unfit (its model has no `tools` anyway) | <https://docs.z.ai/api-reference/llm/chat-completion> |
+| Cloudflare | "JSON Mode currently doesn't support streaming"; tools and images not documented for the OpenAI endpoint | Streamed `json_schema` replayed from one plain call; images by URL make it unfit | <https://developers.cloudflare.com/workers-ai/features/json-mode/> |
+| Ollama | No `tool_choice`; tool calls without IDs and with arguments as objects; images as base64 only | Tools sent with `auto` behaviour (another value makes it unfit); IDs generated and arguments turned into JSON text; `data:` images sent as base64, images by URL make it unfit; `format` is `json` or the schema | <https://docs.ollama.com/api/chat> |
+
+Every adapter also reads tool calls in whichever form the provider streams them: pieces with an
+`index` (OpenAI's form), whole calls in one chunk, calls without an `index` or without an ID (one
+is generated, `call_` and 24 hex digits), and providers that end with `finish_reason: "stop"`
+after calling tools (answered as `tool_calls`).
+
 ## Free-tier limits and the quotas configured
 
 | Provider | Published free limit | Source (checked) | `quota` in the models file |
