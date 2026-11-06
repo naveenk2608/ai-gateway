@@ -11,8 +11,11 @@ import {
   readText,
 } from './http.js';
 import { splitLines } from './line-stream.js';
+import { ToolCallAssembler } from './tool-calls.js';
 import {
+  messageImages,
   messageText,
+  type ChatMessage,
   type ChatRequest,
   type ChatResult,
   type FinishReason,
@@ -30,8 +33,17 @@ export interface OllamaOptions {
 
 // One object per response (non-streaming) or per line (streaming); untrusted, so only the fields
 // we use are validated.
+const toolCall = z.object({
+  function: z.object({
+    name: z.string(),
+    arguments: z.union([z.record(z.string(), z.unknown()), z.string()]).nullish(),
+  }),
+});
+
 const chatPart = z.object({
-  message: z.object({ content: z.string() }).nullish(),
+  message: z
+    .object({ content: z.string().nullish(), tool_calls: z.array(toolCall).nullish() })
+    .nullish(),
   done: z.boolean(),
   done_reason: z.string().nullish(),
   prompt_eval_count: z.number().int().min(0).nullish(),
@@ -66,8 +78,59 @@ function toUsage(part: ChatPart): Usage | null {
   };
 }
 
-function toFinishReason(reason: string | null | undefined): FinishReason {
-  return reason === 'length' ? 'length' : 'stop';
+function toFinishReason(reason: string | null | undefined, calledTools: boolean): FinishReason {
+  if (reason === 'length') return 'length';
+  return calledTools ? 'tool_calls' : 'stop';
+}
+
+/** Ollama's tool calls carry no ID: the assembler gives each one. */
+function pushCalls(calls: ToolCallAssembler, part: ChatPart) {
+  return (part.message?.tool_calls ?? []).flatMap((call) =>
+    calls.push({
+      index: calls.count,
+      name: call.function.name,
+      arguments:
+        typeof call.function.arguments === 'string'
+          ? call.function.arguments
+          : JSON.stringify(call.function.arguments ?? {}),
+    }),
+  );
+}
+
+/** Arguments as the object Ollama expects; text that is not a JSON object becomes `{}`. */
+function argumentsObject(text: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The base64 payload of a `data:` URL; Ollama takes no image URLs, and the gateway fetches none. */
+function base64Image(url: string): string {
+  const match = /^data:image\/[a-z+.-]+;base64,(.*)$/s.exec(url);
+  if (!match) throw new ProviderError('bad_request', 'Ollama takes images only as data: URLs');
+  return match[1]!;
+}
+
+function ollamaMessage(m: ChatMessage) {
+  const images = messageImages(m.content).map((image) => base64Image(image.url));
+  return {
+    // Ollama has no `developer` role and takes plain-text content.
+    role: m.role === 'developer' ? 'system' : m.role,
+    content: messageText(m.content),
+    ...(images.length > 0 ? { images } : {}),
+    ...(m.toolCalls && m.toolCalls.length > 0
+      ? {
+          tool_calls: m.toolCalls.map((c) => ({
+            function: { name: c.name, arguments: argumentsObject(c.arguments) },
+          })),
+        }
+      : {}),
+  };
 }
 
 /** Ollama's native chat API (`/api/chat`): JSON, or newline-delimited JSON when streaming. */
@@ -97,9 +160,13 @@ export class OllamaProvider implements Provider {
     }
     const part = readPart(parseJson(text));
     if (!part.done) throw new ProviderError('invalid_response', 'Ollama response is not final');
+    const calls = new ToolCallAssembler();
+    pushCalls(calls, part);
+    const toolCalls = calls.calls();
     return {
       content: part.message?.content ?? '',
-      finishReason: toFinishReason(part.done_reason),
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      finishReason: toFinishReason(part.done_reason, toolCalls.length > 0),
       usage: toUsage(part),
     };
   }
@@ -107,12 +174,14 @@ export class OllamaProvider implements Provider {
   async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncGenerator<StreamEvent> {
     const response = await this.#post(req, true, signal);
     let final: ChatPart | undefined;
+    const calls = new ToolCallAssembler();
     try {
       for await (const line of splitLines(response.body)) {
         if (line.trim() === '') continue;
         const part = readPart(parseJson(line));
         const text = part.message?.content;
         if (text) yield { type: 'content', text };
+        yield* pushCalls(calls, part);
         if (part.done) {
           final = part;
           break;
@@ -126,7 +195,7 @@ export class OllamaProvider implements Provider {
     if (!final) throw new ProviderError('connection', 'Ollama stream ended before the final line');
     yield {
       type: 'finish',
-      finishReason: toFinishReason(final.done_reason),
+      finishReason: toFinishReason(final.done_reason, calls.count > 0),
       usage: toUsage(final),
     };
   }
@@ -141,14 +210,22 @@ export class OllamaProvider implements Provider {
   }
 
   #post(req: ChatRequest, stream: boolean, signal: AbortSignal) {
+    const format = req.responseFormat;
     const body = {
       model: req.model,
-      // Ollama has no `developer` role and takes plain-text content.
-      messages: req.messages.map((m) => ({
-        role: m.role === 'developer' ? 'system' : m.role,
-        content: messageText(m.content),
-      })),
+      messages: req.messages.map(ollamaMessage),
       stream,
+      // No tool_choice in Ollama's API: a request with tools lets the model decide (`auto`).
+      tools: req.tools?.map((t) => ({
+        type: 'function',
+        function: { name: t.name, description: t.description, parameters: t.parameters },
+      })),
+      format:
+        format?.type === 'json_object'
+          ? 'json'
+          : format?.type === 'json_schema'
+            ? (format.schema ?? 'json')
+            : undefined,
       options: {
         num_predict: req.maxTokens,
         temperature: req.temperature,

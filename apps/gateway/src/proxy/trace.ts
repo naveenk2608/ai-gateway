@@ -15,7 +15,10 @@ export interface TraceStart {
   apiKeyId: string | null;
   model: string;
   stream: boolean;
-  messages: readonly ChatMessage[];
+  /** The prompt, for the token estimate when `estimatedPromptTokens` is not given. */
+  messages?: readonly ChatMessage[];
+  /** The prompt-token estimate, when the caller made it (tools, images, embedding inputs). */
+  estimatedPromptTokens?: number;
   /** The request's span (ADR 017): attempts become its children, the event carries it. */
   traceContext?: TraceContext;
 }
@@ -51,9 +54,11 @@ export class RequestTrace {
     this.#start = start;
     this.#clock = clock;
     this.startedAt = clock.now();
-    this.estimatedPromptTokens = estimatePromptTokens(
-      start.messages.map((m) => ({ text: messageText(m.content), name: m.name })),
-    );
+    this.estimatedPromptTokens =
+      start.estimatedPromptTokens ??
+      estimatePromptTokens(
+        (start.messages ?? []).map((m) => ({ text: messageText(m.content), name: m.name })),
+      );
   }
 
   get requestId(): string {

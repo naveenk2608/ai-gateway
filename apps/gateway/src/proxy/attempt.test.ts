@@ -4,6 +4,7 @@ import { captureLogger, sleepsQueued } from '../../test/helpers.js';
 import { ProviderError } from '../providers/errors.js';
 import { MockProvider, type MockSettings } from '../providers/mock.js';
 import type { Deployment } from '../providers/registry.js';
+import { dialectFor } from '../providers/dialects.js';
 import type { ChatRequest, Provider } from '../providers/types.js';
 import { ClientClosedError, openStream, runChat, type AttemptContext } from './attempt.js';
 
@@ -34,6 +35,8 @@ function setup(settings: Partial<MockSettings> = {}, timeouts = { timeoutMs: 1_0
     probes: true,
     healthCheck: 'models',
     billing: 'paid',
+    capabilities: { tools: true, json_object: true, json_schema: true, vision: true },
+    dialect: dialectFor('mock', 'mock'),
     quota: null,
     providerModel: 'mock',
     timeoutMs: timeouts.timeoutMs,

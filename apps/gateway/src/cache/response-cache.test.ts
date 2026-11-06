@@ -53,6 +53,75 @@ describe('cacheKey', () => {
     const keys = variants.map((v) => cacheKey(project, { ...base, ...v }));
     expect(new Set([key, ...keys]).size).toBe(variants.length + 1);
   });
+
+  it('changes with tools, tool choice, response format, images and tool messages', () => {
+    const tool = (name: string, parameters: Record<string, unknown> = { type: 'object' }) => ({
+      type: 'function' as const,
+      function: { name, parameters },
+    });
+    const withTools: ChatCompletionRequest = { ...base, tools: [tool('a')] };
+    const call = { id: 'c1', type: 'function' as const, function: { name: 'a', arguments: '{}' } };
+    const variants: ChatCompletionRequest[] = [
+      base,
+      withTools,
+      { ...base, tools: [tool('b')] },
+      { ...base, tools: [tool('a', { type: 'object', required: ['x'] })] },
+      { ...withTools, tool_choice: 'required' },
+      { ...withTools, tool_choice: { type: 'function', function: { name: 'a' } } },
+      { ...withTools, parallel_tool_calls: false },
+      { ...base, response_format: { type: 'json_object' } },
+      { ...base, response_format: { type: 'json_schema', json_schema: { name: 's' } } },
+      {
+        ...base,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Say hello' },
+              { type: 'image_url', image_url: { url: 'https://example.com/a.png' } },
+            ],
+          },
+        ],
+      },
+      {
+        ...base,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Say hello' },
+              { type: 'image_url', image_url: { url: 'https://example.com/b.png' } },
+            ],
+          },
+        ],
+      },
+      { ...base, messages: [...base.messages, { role: 'assistant', tool_calls: [call] }] },
+      {
+        ...base,
+        messages: [
+          ...base.messages,
+          { role: 'assistant', tool_calls: [call] },
+          { role: 'tool', tool_call_id: 'c1', content: 'x' },
+        ],
+      },
+      {
+        ...base,
+        messages: [
+          ...base.messages,
+          { role: 'assistant', tool_calls: [call] },
+          { role: 'tool', tool_call_id: 'c2', content: 'x' },
+        ],
+      },
+    ];
+    const keys = variants.map((v) => cacheKey(project, v));
+    expect(new Set(keys).size).toBe(variants.length);
+  });
+
+  it('treats response_format text as no response format', () => {
+    expect(cacheKey(project, { ...base, response_format: { type: 'text' } })).toBe(
+      cacheKey(project, base),
+    );
+  });
 });
 
 describe('cacheable', () => {

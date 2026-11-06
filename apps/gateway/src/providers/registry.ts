@@ -5,12 +5,14 @@ import {
   modelRoute,
   type AdapterKind,
   type Billing,
+  type Capabilities,
   type DeploymentConfig,
   type HealthCheckKind,
   type ModelsConfig,
   type RoutingPolicy,
 } from '../models-config.js';
 import type { QuotaLimits } from '../routing/quota.js';
+import { dialectFor, type Dialect } from './dialects.js';
 import { MockProvider } from './mock.js';
 import { OllamaProvider } from './ollama.js';
 import { OpenAICompatibleProvider } from './openai-compatible.js';
@@ -34,6 +36,10 @@ export interface Deployment {
   healthCheck: HealthCheckKind;
   /** `free_tier`: the provider charges nothing; the list cost is still recorded (ADR 024). */
   billing: Billing;
+  /** What its model can do: tools, JSON output, image input (ADR 028). */
+  capabilities: Capabilities;
+  /** What its provider's API takes of the gateway's fields (dialects.ts). */
+  dialect: Dialect;
   /** Free-tier limits counted in Redis across instances (ADR 025); null without any. */
   quota: QuotaLimits | null;
   /** The provider's model name, sent upstream. */
@@ -111,6 +117,7 @@ function createProvider(config: DeploymentConfig, deps: RegistryDeps): Created {
           baseUrl: expanded.url,
           apiKey,
           clock: deps.clock,
+          dialect: dialectFor(config.adapter, config.provider),
         }),
         baseUrl: expanded.url,
       };
@@ -146,6 +153,8 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
       probes: deployment.adapter === 'mock' || deployment.healthCheck !== 'none',
       healthCheck: deployment.adapter === 'mock' ? 'models' : deployment.healthCheck,
       billing: deployment.billing,
+      capabilities: deployment.capabilities,
+      dialect: dialectFor(deployment.adapter, deployment.provider),
       quota: deployment.quota ?? null,
       providerModel: deployment.model,
       timeoutMs: deployment.timeoutMs,

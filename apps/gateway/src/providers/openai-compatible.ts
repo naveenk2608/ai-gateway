@@ -13,12 +13,17 @@ import {
   readText,
 } from './http.js';
 import { parseSse } from './line-stream.js';
+import { dialectFor, type Dialect } from './dialects.js';
+import { resultEvents, ToolCallAssembler, ToolCallIdMap } from './tool-calls.js';
 import type {
+  ChatMessage,
   ChatRequest,
   ChatResult,
   FinishReason,
   Provider,
+  ResponseFormat,
   StreamEvent,
+  ToolChoice,
   Usage,
 } from './types.js';
 
@@ -28,6 +33,8 @@ export interface OpenAICompatibleOptions {
   apiKey: string;
   clock: Clock;
   maxResponseBytes?: number;
+  /** What the provider takes of the gateway's fields (dialects.ts); OpenAI's by default. */
+  dialect?: Dialect;
 }
 
 const wireUsage = z.object({
@@ -42,12 +49,25 @@ const wireContent = z
   .union([z.string(), z.array(z.object({ type: z.string(), text: z.string().nullish() }))])
   .nullish();
 
+// A tool call, whole or as a streamed piece. Arguments are JSON text, or an object from
+// providers that send them parsed.
+const wireToolCall = z.object({
+  index: z.number().int().min(0).nullish(),
+  id: z.string().nullish(),
+  function: z
+    .object({
+      name: z.string().nullish(),
+      arguments: z.union([z.string(), z.record(z.string(), z.unknown())]).nullish(),
+    })
+    .nullish(),
+});
+
 // Upstream payloads are untrusted: validate only the fields we use and ignore the rest.
 const completionSchema = z.object({
   choices: z
     .array(
       z.object({
-        message: z.object({ content: wireContent }),
+        message: z.object({ content: wireContent, tool_calls: z.array(wireToolCall).nullish() }),
         finish_reason: z.string().nullish(),
       }),
     )
@@ -59,7 +79,9 @@ const chunkSchema = z.object({
   choices: z
     .array(
       z.object({
-        delta: z.object({ content: wireContent }).nullish(),
+        delta: z
+          .object({ content: wireContent, tool_calls: z.array(wireToolCall).nullish() })
+          .nullish(),
         finish_reason: z.string().nullish(),
       }),
     )
@@ -84,8 +106,68 @@ function toText(content: z.output<typeof wireContent>): string {
   return (content ?? []).map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('');
 }
 
-function toFinishReason(reason: string | null | undefined): FinishReason {
-  return reason === 'length' || reason === 'content_filter' ? reason : 'stop';
+/** A model that called tools finished with `tool_calls`, whatever the provider says, unless cut. */
+export function toFinishReason(
+  reason: string | null | undefined,
+  calledTools = false,
+): FinishReason {
+  if (reason === 'length' || reason === 'content_filter') return reason;
+  return calledTools || reason === 'tool_calls' ? 'tool_calls' : 'stop';
+}
+
+function argumentsText(value: string | Record<string, unknown> | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function toDelta(call: z.output<typeof wireToolCall>, fallbackIndex?: number) {
+  return {
+    index: call.index ?? fallbackIndex,
+    id: call.id,
+    name: call.function?.name,
+    arguments: argumentsText(call.function?.arguments),
+  };
+}
+
+/** A message in OpenAI's wire format, with tool-call IDs the provider takes. */
+function wireMessage(m: ChatMessage, ids: ToolCallIdMap) {
+  const content =
+    m.content === null || typeof m.content === 'string'
+      ? m.content
+      : m.content.map((part) =>
+          part.type === 'text'
+            ? { type: 'text', text: part.text }
+            : {
+                type: 'image_url',
+                image_url: { url: part.url, ...(part.detail ? { detail: part.detail } : {}) },
+              },
+        );
+  return {
+    role: m.role,
+    content,
+    ...(m.name !== undefined ? { name: m.name } : {}),
+    ...(m.toolCalls && m.toolCalls.length > 0
+      ? {
+          tool_calls: m.toolCalls.map((c) => ({
+            id: ids.out(c.id),
+            type: 'function',
+            function: { name: c.name, arguments: c.arguments },
+          })),
+        }
+      : {}),
+    ...(m.toolCallId !== undefined ? { tool_call_id: ids.out(m.toolCallId) } : {}),
+  };
+}
+
+function wireToolChoice(choice: ToolChoice | undefined) {
+  if (choice === undefined || typeof choice === 'string') return choice;
+  return { type: 'function', function: { name: choice.name } };
+}
+
+function wireResponseFormat(format: ResponseFormat | undefined) {
+  if (format?.type !== 'json_schema') return format;
+  const { type, ...json_schema } = format;
+  return { type, json_schema };
 }
 
 function validate<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -109,7 +191,8 @@ function validate<T>(schema: z.ZodType<T>, value: unknown): T {
 
 /**
  * Any server that speaks OpenAI's chat-completions API (ADR 004: undici, one AbortSignal per
- * attempt). Streams ask for usage in the final chunk via `stream_options.include_usage`.
+ * attempt). Streams ask for usage in the final chunk via `stream_options.include_usage`. Fields a
+ * provider does not take are adapted per its dialect (dialects.ts).
  */
 export class OpenAICompatibleProvider implements Provider {
   readonly kind = 'openai-compatible' as const;
@@ -118,6 +201,7 @@ export class OpenAICompatibleProvider implements Provider {
   readonly #apiKey: string;
   readonly #clock: Clock;
   readonly #maxResponseBytes: number;
+  readonly #dialect: Dialect;
   readonly #agent = new Agent({ connect: { timeout: 10_000 } });
 
   constructor(options: OpenAICompatibleOptions) {
@@ -127,10 +211,12 @@ export class OpenAICompatibleProvider implements Provider {
     this.#apiKey = options.apiKey;
     this.#clock = options.clock;
     this.#maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
+    this.#dialect = options.dialect ?? dialectFor('openai-compatible', 'openai-compatible');
   }
 
   async chat(req: ChatRequest, signal: AbortSignal): Promise<ChatResult> {
-    const response = await this.#post(req, false, signal);
+    const ids = new ToolCallIdMap(this.#dialect.toolCallIds);
+    const response = await this.#post(req, false, ids, signal);
     let text: string;
     try {
       text = await readText(response.body, this.#maxResponseBytes);
@@ -139,18 +225,29 @@ export class OpenAICompatibleProvider implements Provider {
     }
     const completion = validate(completionSchema, parseJson(text));
     const choice = completion.choices[0]!;
+    const calls = new ToolCallAssembler();
+    (choice.message.tool_calls ?? []).forEach((call, i) => calls.push(toDelta(call, i)));
+    const toolCalls = calls.calls().map((call) => ({ ...call, id: ids.back(call.id) }));
     return {
       content: toText(choice.message.content),
-      finishReason: toFinishReason(choice.finish_reason),
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      finishReason: toFinishReason(choice.finish_reason, toolCalls.length > 0),
       usage: toUsage(completion.usage),
       rateLimit: rateLimitHeaders(response.headers),
     };
   }
 
   async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncGenerator<StreamEvent> {
-    const response = await this.#post(req, true, signal);
-    let finishReason: FinishReason | undefined;
+    if (req.responseFormat?.type === 'json_schema' && !this.#dialect.streamJsonSchema) {
+      // The provider cannot stream structured output: one plain call, replayed as a stream.
+      yield* resultEvents(await this.chat(req, signal));
+      return;
+    }
+    const ids = new ToolCallIdMap(this.#dialect.toolCallIds);
+    const response = await this.#post(req, true, ids, signal);
+    let finishReason: string | undefined;
     let usage: Usage | null = null;
+    const calls = new ToolCallAssembler();
     try {
       for await (const { data } of parseSse(response.body)) {
         if (data === '[DONE]') break;
@@ -168,7 +265,12 @@ export class OpenAICompatibleProvider implements Provider {
         const choice = chunk.choices[0];
         const text = toText(choice?.delta?.content);
         if (text) yield { type: 'content', text };
-        if (choice?.finish_reason) finishReason = toFinishReason(choice.finish_reason);
+        for (const call of choice?.delta?.tool_calls ?? []) {
+          for (const event of calls.push(toDelta(call))) {
+            yield event.type === 'tool_call' ? { ...event, id: ids.back(event.id) } : event;
+          }
+        }
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
       }
     } catch (err) {
       throw networkError(err, signal);
@@ -179,7 +281,14 @@ export class OpenAICompatibleProvider implements Provider {
     if (finishReason === undefined) {
       throw new ProviderError('connection', 'upstream stream ended before a finish_reason');
     }
-    yield { type: 'finish', finishReason, usage, rateLimit: rateLimitHeaders(response.headers) };
+    // Throws if a tool call never got its name.
+    const calledTools = calls.calls().length > 0;
+    yield {
+      type: 'finish',
+      finishReason: toFinishReason(finishReason, calledTools),
+      usage,
+      rateLimit: rateLimitHeaders(response.headers),
+    };
   }
 
   /** Lists models: the API is up and accepts the key, and no tokens are billed. */
@@ -196,10 +305,21 @@ export class OpenAICompatibleProvider implements Provider {
     await this.#agent.close();
   }
 
-  #post(req: ChatRequest, stream: boolean, signal: AbortSignal) {
-    const body = {
+  /** The request body, with what the provider does not take adapted (dialects.ts). */
+  #body(req: ChatRequest, stream: boolean, ids: ToolCallIdMap) {
+    const dialect = this.#dialect;
+    const tools = req.tools?.map((t) => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+        strict: dialect.toolStrict ? t.strict : undefined,
+      },
+    }));
+    return {
       model: req.model,
-      messages: req.messages,
+      messages: req.messages.map((m) => wireMessage(m, ids)),
       stream,
       ...(stream ? { stream_options: { include_usage: true } } : {}),
       max_tokens: req.maxTokens,
@@ -210,8 +330,15 @@ export class OpenAICompatibleProvider implements Provider {
       frequency_penalty: req.frequencyPenalty,
       seed: req.seed,
       user: req.user,
+      tools,
+      tool_choice: tools ? wireToolChoice(req.toolChoice) : undefined,
+      parallel_tool_calls: tools && dialect.parallelToolCalls ? req.parallelToolCalls : undefined,
+      response_format: wireResponseFormat(req.responseFormat),
     };
-    return postJson(this.#url, body, {
+  }
+
+  #post(req: ChatRequest, stream: boolean, ids: ToolCallIdMap, signal: AbortSignal) {
+    return postJson(this.#url, this.#body(req, stream, ids), {
       agent: this.#agent,
       headers: {
         authorization: `Bearer ${this.#apiKey}`,

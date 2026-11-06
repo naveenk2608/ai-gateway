@@ -12,8 +12,16 @@ import type { AdmissionControl } from '../limits/admission.js';
 import type { GatewayMetrics } from '../metrics.js';
 import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
+import { fitRoute, needsOf } from '../routing/capabilities.js';
 import { runRouted, type RoutingDeps } from '../routing/routed.js';
-import type { ChatRequest, ChatResult, FinishReason, Usage } from '../providers/types.js';
+import type {
+  ChatMessage,
+  ChatRequest,
+  ChatResult,
+  FinishReason,
+  ToolCall,
+  Usage,
+} from '../providers/types.js';
 import {
   ClientClosedError,
   openStream,
@@ -21,11 +29,13 @@ import {
   type AttemptContext,
   type OpenStream,
 } from './attempt.js';
+import { estimateChatPromptTokens } from './estimate.js';
 import {
   chatCompletionRequestSchema,
   chatCompletionSchema,
   errorBodySchema,
   type ChatCompletion,
+  type ChatCompletionMessage,
   type ChatCompletionRequest,
 } from './schema.js';
 import { setRateLimitHeaders } from './rate-limit-headers.js';
@@ -73,16 +83,53 @@ function watchDisconnect(res: ServerResponse) {
   return { signal: controller.signal, dispose: () => res.off('close', onClose) };
 }
 
-function toProviderRequest(
-  body: ChatCompletionRequest,
-  model: string,
-  maxTokens: number,
-): ChatRequest {
+/** A message in the provider seam's form (providers/types.ts). */
+function toProviderMessage(m: ChatCompletionMessage): ChatMessage {
+  switch (m.role) {
+    case 'user':
+      return {
+        role: 'user',
+        content:
+          typeof m.content === 'string'
+            ? m.content
+            : m.content.map((part) =>
+                part.type === 'text'
+                  ? part
+                  : {
+                      type: 'image',
+                      url: part.image_url.url,
+                      detail: part.image_url.detail ?? undefined,
+                    },
+              ),
+        name: m.name,
+      };
+    case 'assistant':
+      return {
+        role: 'assistant',
+        content: m.content ?? null,
+        name: m.name,
+        toolCalls: m.tool_calls?.map((c) => ({
+          id: c.id,
+          name: c.function.name,
+          arguments: c.function.arguments,
+        })),
+      };
+    case 'tool':
+      return { role: 'tool', content: m.content, toolCallId: m.tool_call_id };
+    default:
+      return { role: m.role, content: m.content, name: m.name };
+  }
+}
+
+/** The provider request without the deployment's model and output cap. */
+type BaseRequest = Omit<ChatRequest, 'model' | 'maxTokens'>;
+
+function toBaseRequest(body: ChatCompletionRequest): BaseRequest {
   const stop = body.stop ?? undefined;
+  const choice = body.tool_choice ?? undefined;
+  const format = body.response_format ?? undefined;
   return {
-    model,
-    messages: body.messages,
-    maxTokens,
+    messages: body.messages.map(toProviderMessage),
     temperature: body.temperature ?? undefined,
     topP: body.top_p ?? undefined,
     stop: typeof stop === 'string' ? [stop] : stop,
@@ -90,8 +137,36 @@ function toProviderRequest(
     frequencyPenalty: body.frequency_penalty ?? undefined,
     seed: body.seed ?? undefined,
     user: body.user ?? undefined,
+    tools: body.tools?.map((t) => ({
+      name: t.function.name,
+      description: t.function.description ?? undefined,
+      parameters: t.function.parameters ?? undefined,
+      strict: t.function.strict ?? undefined,
+    })),
+    toolChoice: typeof choice === 'object' ? { name: choice.function.name } : choice,
+    parallelToolCalls: body.parallel_tool_calls ?? undefined,
+    // `text` is what a model does without a format, so it is not sent.
+    responseFormat:
+      format === undefined || format.type === 'text'
+        ? undefined
+        : format.type === 'json_object'
+          ? format
+          : {
+              type: 'json_schema',
+              name: format.json_schema.name,
+              description: format.json_schema.description ?? undefined,
+              schema: format.json_schema.schema ?? undefined,
+              strict: format.json_schema.strict ?? undefined,
+            },
   };
 }
+
+const wireToolCalls = (calls: readonly ToolCall[]) =>
+  calls.map((c) => ({
+    id: c.id,
+    type: 'function' as const,
+    function: { name: c.name, arguments: c.arguments },
+  }));
 
 function wireUsage(usage: Usage) {
   return {
@@ -102,13 +177,20 @@ function wireUsage(usage: Usage) {
 }
 
 function toChatCompletion(meta: ResponseMeta, result: ChatResult): ChatCompletion {
+  const toolCalls = result.toolCalls ?? [];
   return {
     ...meta,
     object: 'chat.completion',
     choices: [
       {
         index: 0,
-        message: { role: 'assistant', content: result.content, refusal: null },
+        message: {
+          role: 'assistant',
+          // OpenAI's shape: null content when the model only called tools.
+          content: toolCalls.length > 0 && result.content === '' ? null : result.content,
+          refusal: null,
+          ...(toolCalls.length > 0 ? { tool_calls: wireToolCalls(toolCalls) } : {}),
+        },
         finish_reason: result.finishReason,
         logprobs: null,
       },
@@ -142,6 +224,15 @@ function chunkWriter(meta: ResponseMeta, includeUsage: boolean) {
     includeUsage,
     role: () => chunk([choice({ role: 'assistant', content: '' })]),
     content: (text: string) => chunk([choice({ content: text })]),
+    // A tool call's first delta has its index, ID, type and name; its arguments follow in pieces.
+    toolCall: (index: number, id: string, name: string) =>
+      chunk([
+        choice({
+          tool_calls: [{ index, id, type: 'function', function: { name, arguments: '' } }],
+        }),
+      ]),
+    toolArguments: (index: number, text: string) =>
+      chunk([choice({ tool_calls: [{ index, function: { arguments: text } }] })]),
     finish: (reason: FinishReason) => chunk([choice({}, reason)]),
     usage: (usage: Usage) => chunk([], usage),
     error: (error: GatewayError) => sseData(JSON.stringify(error.toBody())),
@@ -164,6 +255,7 @@ async function* sseBody(
   let completed = false;
   let failure: unknown;
   const text: string[] = [];
+  const calls: ToolCall[] = [];
   try {
     yield write.role();
     let next = stream.first;
@@ -173,10 +265,21 @@ async function* sseBody(
         trace.addCompletionText(event.text);
         if (onComplete) text.push(event.text);
         if (event.text !== '') yield write.content(event.text);
+      } else if (event.type === 'tool_call') {
+        trace.addCompletionText(event.name);
+        calls[event.index] = { id: event.id, name: event.name, arguments: '' };
+        yield write.toolCall(event.index, event.id, event.name);
+      } else if (event.type === 'tool_arguments') {
+        trace.addCompletionText(event.text);
+        const call = calls[event.index];
+        if (call) call.arguments += event.text;
+        yield write.toolArguments(event.index, event.text);
       } else {
         trace.setUsage(event.usage);
+        const toolCalls = calls.filter((call) => call !== undefined);
         onComplete?.({
           content: text.join(''),
+          ...(toolCalls.length > 0 ? { toolCalls } : {}),
           finishReason: event.finishReason,
           usage: event.usage,
         });
@@ -256,6 +359,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
       const body = request.body;
       const apiKey = request.apiKey;
       if (!apiKey) throw internalError; // The onRequest hook guarantees it.
+      const base = toBaseRequest(body);
       const trace = new RequestTrace(
         {
           requestId: request.id,
@@ -263,7 +367,8 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           apiKeyId: apiKey.apiKeyId,
           model: body.model,
           stream: body.stream === true,
-          messages: body.messages,
+          // Tools, tool calls, schemas and images count too (ADR 028).
+          estimatedPromptTokens: estimateChatPromptTokens(base),
           traceContext: request.traceContext,
         },
         clock,
@@ -278,12 +383,24 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           { httpStatus: 403, param: 'model' },
         );
       }
-      const route = registry.route(body.model);
-      if (!route) {
+      const modelRoute = registry.route(body.model);
+      if (!modelRoute) {
         throw new GatewayError('model_not_found', `The model \`${body.model}\` does not exist.`, {
           httpStatus: 404,
           param: 'model',
         });
+      }
+      // Only deployments that can serve tools, JSON output or images, as the request needs
+      // (ADR 028); none left is a 400 before any provider call or budget reservation.
+      const fitted = fitRoute(modelRoute, needsOf(base));
+      const route = fitted.route;
+      if (!route) {
+        const missing = fitted.missing!;
+        throw new GatewayError(
+          'model_capability_unsupported',
+          `No deployment of the model \`${body.model}\` supports ${missing.what}.`,
+          { httpStatus: 400, param: missing.param },
+        );
       }
 
       const clientMaxTokens = body.max_completion_tokens ?? body.max_tokens ?? undefined;
@@ -310,17 +427,18 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           log: request.log,
           maxTokens: clientMaxTokens ?? Math.max(...deployments.map((d) => d.maxOutputTokens)),
           budget: settlement.budget,
+          unfit: fitted.unfit,
         };
         // Each deployment gets its own model name and, unless the client set one, output cap.
         // The last attempt started is the one that answered when runRouted resolves.
         let served: AttemptContext | undefined;
         const requestFor = (ctx: AttemptContext) => {
           served = ctx;
-          return toProviderRequest(
-            body,
-            ctx.deployment.providerModel,
-            clientMaxTokens ?? ctx.deployment.maxOutputTokens,
-          );
+          return {
+            ...base,
+            model: ctx.deployment.providerModel,
+            maxTokens: clientMaxTokens ?? ctx.deployment.maxOutputTokens,
+          };
         };
         const meta: ResponseMeta = {
           id: `chatcmpl-${request.id}`,
@@ -348,7 +466,11 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
             const write = chunkWriter(meta, body.stream_options?.include_usage === true);
             const chunks = [
               write.role(),
-              write.content(hit.content),
+              ...(hit.content !== '' || !hit.toolCalls?.length ? [write.content(hit.content)] : []),
+              ...(hit.toolCalls ?? []).flatMap((call, index) => [
+                write.toolCall(index, call.id, call.name),
+                write.toolArguments(index, call.arguments),
+              ]),
               write.finish(hit.finishReason),
               ...(write.includeUsage && hit.usage ? [write.usage(hit.usage)] : []),
               SSE_DONE,
@@ -368,6 +490,9 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
             limitHeaders();
             trace.setUsage(result.usage);
             trace.addCompletionText(result.content);
+            for (const call of result.toolCalls ?? []) {
+              trace.addCompletionText(`${call.name} ${call.arguments}`);
+            }
             store?.(result);
             return toChatCompletion(meta, result);
           } catch (err) {

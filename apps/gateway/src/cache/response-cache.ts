@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { Logger, Redis } from '@ai-gateway/shared/node';
 import { z } from 'zod';
-import { messageText, type ChatResult } from '../providers/types.js';
-import type { ChatCompletionRequest } from '../proxy/schema.js';
+import type { ChatResult } from '../providers/types.js';
+import type { ChatCompletionMessage, ChatCompletionRequest } from '../proxy/schema.js';
 
 /** `x-gateway-cache: on` opts a request in; `off` keeps it out even at temperature 0. */
 export const CACHE_HEADER = 'x-gateway-cache';
@@ -19,18 +19,51 @@ export function cacheable(body: ChatCompletionRequest, header: string | undefine
 }
 
 /**
+ * A message's content for the key: its text, with text parts joined as before tools existed
+ * (so `"hi"` and `[{type: "text", text: "hi"}]` match), or every part in order when it has images.
+ */
+function keyContent(content: ChatCompletionMessage['content']): unknown {
+  if (content === null || content === undefined || typeof content === 'string') {
+    return content ?? null;
+  }
+  if (!content.some((part) => part.type === 'image_url')) {
+    return content.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
+  }
+  return content.map((part) =>
+    part.type === 'text'
+      ? ['text', part.text]
+      : ['image', part.image_url.url, part.image_url.detail ?? 'auto'],
+  );
+}
+
+function keyMessage(m: ChatCompletionMessage): unknown[] {
+  return [
+    m.role,
+    'name' in m ? (m.name ?? null) : null,
+    keyContent(m.content),
+    m.role === 'assistant'
+      ? (m.tool_calls ?? []).map((c) => [c.id, c.function.name, c.function.arguments])
+      : null,
+    m.role === 'tool' ? m.tool_call_id : null,
+  ];
+}
+
+/**
  * The cache key: SHA-256 over the project, the logical model and every field that can change the
  * answer, in a fixed order. The project comes first, so two projects never share an entry. Fields
  * that do not change the answer (`stream`, `stream_options`, `user`) are left out, so a streamed
- * and a non-streamed request share one.
+ * and a non-streamed request share one. Version 2 (M13) adds tools, tool choice, parallel tool
+ * calls, the response format, image parts, tool calls and tool results.
  */
 export function cacheKey(projectId: string, body: ChatCompletionRequest): string {
   const stop = body.stop ?? null;
+  const choice = body.tool_choice ?? null;
+  const format = body.response_format ?? null;
   const canonical = JSON.stringify([
-    'v1',
+    'v2',
     projectId,
     body.model,
-    body.messages.map((m) => [m.role, m.name ?? null, messageText(m.content)]),
+    body.messages.map(keyMessage),
     body.max_completion_tokens ?? body.max_tokens ?? null,
     body.temperature ?? null,
     body.top_p ?? null,
@@ -38,13 +71,26 @@ export function cacheKey(projectId: string, body: ChatCompletionRequest): string
     body.presence_penalty ?? null,
     body.frequency_penalty ?? null,
     body.seed ?? null,
+    (body.tools ?? []).map((t) => [
+      t.function.name,
+      t.function.description ?? null,
+      t.function.parameters ?? null,
+      t.function.strict ?? null,
+    ]),
+    typeof choice === 'object' && choice !== null ? ['function', choice.function.name] : choice,
+    body.parallel_tool_calls ?? null,
+    // `text` is the default: the same answer as no response format.
+    format?.type === 'text' ? null : format,
   ]);
   return createHash('sha256').update(canonical).digest('hex');
 }
 
 const entrySchema = z.object({
   content: z.string(),
-  finishReason: z.enum(['stop', 'length', 'content_filter']),
+  toolCalls: z
+    .array(z.object({ id: z.string(), name: z.string(), arguments: z.string() }))
+    .optional(),
+  finishReason: z.enum(['stop', 'length', 'content_filter', 'tool_calls']),
   usage: z
     .object({
       promptTokens: z.number().int().min(0),
@@ -92,6 +138,7 @@ export class ResponseCache {
   set(key: string, result: ChatResult): void {
     const value = JSON.stringify({
       content: result.content,
+      ...(result.toolCalls && result.toolCalls.length > 0 ? { toolCalls: result.toolCalls } : {}),
       finishReason: result.finishReason,
       usage: result.usage,
     });

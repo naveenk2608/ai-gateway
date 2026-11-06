@@ -3,18 +3,61 @@
  * interface with the same normalized request, results and errors.
  */
 
-export type ChatRole = 'system' | 'developer' | 'user' | 'assistant';
+export type ChatRole = 'system' | 'developer' | 'user' | 'assistant' | 'tool';
 
 export interface TextPart {
   type: 'text';
   text: string;
 }
 
+/** An image in a user message: an `https:` URL or a `data:image/...;base64,` URL. */
+export interface ImagePart {
+  type: 'image';
+  url: string;
+  detail?: 'auto' | 'low' | 'high' | undefined;
+}
+
+export type ContentPart = TextPart | ImagePart;
+
+/** A function call the model made: `arguments` is the JSON text the model wrote. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export interface ChatMessage {
   role: ChatRole;
-  content: string | TextPart[];
-  name?: string;
+  /** Null only on an assistant message that calls tools. */
+  content: string | ContentPart[] | null;
+  name?: string | undefined;
+  /** Assistant messages: the tools the model called. */
+  toolCalls?: ToolCall[] | undefined;
+  /** Tool messages: the call this message answers. */
+  toolCallId?: string | undefined;
 }
+
+/** A function the model may call; `parameters` is a JSON Schema. */
+export interface ToolDefinition {
+  name: string;
+  description?: string | undefined;
+  parameters?: Record<string, unknown> | undefined;
+  strict?: boolean | undefined;
+}
+
+/** Whether, and which, tools the model must call. */
+export type ToolChoice = 'none' | 'auto' | 'required' | { name: string };
+
+export type ResponseFormat =
+  | { type: 'text' }
+  | { type: 'json_object' }
+  | {
+      type: 'json_schema';
+      name: string;
+      description?: string | undefined;
+      schema?: Record<string, unknown> | undefined;
+      strict?: boolean | undefined;
+    };
 
 export interface ChatRequest {
   /** The provider's own model name (from the deployment), not the client's logical name. */
@@ -28,6 +71,10 @@ export interface ChatRequest {
   frequencyPenalty?: number;
   seed?: number;
   user?: string;
+  tools?: ToolDefinition[] | undefined;
+  toolChoice?: ToolChoice | undefined;
+  parallelToolCalls?: boolean | undefined;
+  responseFormat?: ResponseFormat | undefined;
   /**
    * W3C `traceparent` naming this attempt's span (ADR 017). HTTP adapters send it as a header,
    * never in the body.
@@ -35,7 +82,7 @@ export interface ChatRequest {
   traceparent?: string;
 }
 
-export type FinishReason = 'stop' | 'length' | 'content_filter';
+export type FinishReason = 'stop' | 'length' | 'content_filter' | 'tool_calls';
 
 export interface Usage {
   promptTokens: number;
@@ -56,6 +103,8 @@ export interface RateLimitHeaders {
 
 export interface ChatResult {
   content: string;
+  /** The tools the model called, in order; empty or absent when it called none. */
+  toolCalls?: ToolCall[] | undefined;
   finishReason: FinishReason;
   /** Null when the provider did not report usage. */
   usage: Usage | null;
@@ -68,6 +117,10 @@ export interface ChatResult {
  */
 export type StreamEvent =
   | { type: 'content'; text: string }
+  /** A tool call starts: always before any of its argument pieces. */
+  | { type: 'tool_call'; index: number; id: string; name: string }
+  /** A piece of a started tool call's arguments (JSON text). */
+  | { type: 'tool_arguments'; index: number; text: string }
   | {
       type: 'finish';
       finishReason: FinishReason;
@@ -92,7 +145,15 @@ export interface Provider {
   close(): Promise<void>;
 }
 
-/** The text of a message, with text parts joined by newlines. */
+/** The text of a message, with text parts joined by newlines; images and null add nothing. */
 export function messageText(content: ChatMessage['content']): string {
-  return typeof content === 'string' ? content : content.map((part) => part.text).join('\n');
+  if (content === null) return '';
+  if (typeof content === 'string') return content;
+  return content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+}
+
+/** The images of a message, in order. */
+export function messageImages(content: ChatMessage['content']): ImagePart[] {
+  if (content === null || typeof content === 'string') return [];
+  return content.filter((part): part is ImagePart => part.type === 'image');
 }

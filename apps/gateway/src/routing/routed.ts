@@ -50,6 +50,11 @@ export interface RoutedRequest {
   maxTokens: number;
   /** The project's budget use at admission and its soft threshold, when it has a budget. */
   budget?: { usedShare: number; softThresholdPct: number } | undefined;
+  /**
+   * Deployments of the model left out because they cannot serve the request (ADR 028), e.g.
+   * `x (no tools)`: named in the first try's reason, like breaker skips.
+   */
+  unfit?: readonly string[] | undefined;
 }
 
 /** The budget use in whole percent when it has reached the soft threshold; undefined otherwise. */
@@ -97,7 +102,7 @@ export async function runRouted<T>(
   let lastError: ProviderError | undefined;
   /** The previous failure, named in the next deployment's reason. */
   let failed: { id: string; kind: ProviderErrorKind } | undefined;
-  const skipped: string[] = [];
+  const skipped: string[] = [...(req.unfit ?? [])];
   /** Deployments left behind so far, for the answering attempt's `passedOver`. */
   const passedOver: string[] = [];
   /** Skips for a used-up quota or a 429 cooldown: the error when nothing could be tried. */

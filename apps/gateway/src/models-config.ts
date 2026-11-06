@@ -72,6 +72,30 @@ export type Billing = (typeof BILLING)[number];
  */
 const billing = z.enum(BILLING).default('paid');
 
+/** What a deployment's model can do with a request (ADR 028). */
+export const CAPABILITIES = ['tools', 'json_object', 'json_schema', 'vision'] as const;
+export type Capability = (typeof CAPABILITIES)[number];
+export type Capabilities = Record<Capability, boolean>;
+
+const capabilityFlags = (byDefault: boolean) =>
+  z
+    .object({
+      tools: z.boolean().default(byDefault),
+      json_object: z.boolean().default(byDefault),
+      json_schema: z.boolean().default(byDefault),
+      vision: z.boolean().default(byDefault),
+    })
+    .strict()
+    .prefault({});
+
+/**
+ * What the deployment's model can do, from the provider's docs for that exact model: tools,
+ * JSON mode (`json_object`), schema-constrained JSON (`json_schema`) and image input (`vision`).
+ * Unknown is false, so a request that uses one is never sent where the docs do not promise it
+ * (ADR 028). Every value has its source in docs/providers.md.
+ */
+const capabilities = capabilityFlags(false);
+
 const perWindow = z.number().int().positive().max(1_000_000_000).optional();
 
 /**
@@ -124,6 +148,8 @@ const mockDeployment = z
     provider: providerName.default('mock'),
     model: z.string().min(1).default('mock'),
     mock: mockSettingsSchema.prefault({}),
+    // The mock fakes every capability (tool calls, JSON), so tests can use any route shape.
+    capabilities: capabilityFlags(true),
     billing,
     quota,
     ...attemptTimeouts,
@@ -142,6 +168,7 @@ const openAICompatibleDeployment = z
       .string()
       .regex(/^[A-Z][A-Z0-9_]*$/, 'use an environment variable name, e.g. GROQ_API_KEY'),
     healthCheck,
+    capabilities,
     billing,
     quota,
     ...attemptTimeouts,
@@ -156,6 +183,7 @@ const ollamaDeployment = z
     /** Server root; defaults to OLLAMA_BASE_URL. */
     baseUrl: z.url({ protocol: /^https?$/ }).optional(),
     healthCheck,
+    capabilities,
     billing,
     quota,
     ...attemptTimeouts,

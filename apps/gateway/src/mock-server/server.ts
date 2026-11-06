@@ -164,6 +164,8 @@ async function completions(
         await writeEvent(res, chunk({ content: event.text }, null));
         continue;
       }
+      // Its requests carry no tools, so the mock makes no tool calls here.
+      if (event.type !== 'finish') continue;
       await writeEvent(res, chunk({}, event.finishReason));
       if (includeUsage && event.usage) {
         await writeEvent(res, {

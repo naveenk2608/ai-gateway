@@ -30,6 +30,7 @@ describe('models config', () => {
       provider: 'mock',
       model: 'mock',
       billing: 'paid',
+      capabilities: { tools: true, json_object: true, json_schema: true, vision: true },
       timeoutMs: 60_000,
       streamIdleTimeoutMs: 30_000,
       maxOutputTokens: 4_096,

@@ -200,9 +200,9 @@ describe('POST /v1/chat/completions validation', () => {
     ['empty messages', { model: 'mock-fast', messages: [] }, 'messages', /messages/],
     [
       'unsupported role',
-      { model: 'mock-fast', messages: [{ role: 'tool', content: 'x' }] },
+      { model: 'mock-fast', messages: [{ role: 'function', name: 'f', content: 'x' }] },
       'messages[0].role',
-      /messages\[0\]\.role/,
+      /use tools and tool messages/,
     ],
     [
       'temperature out of range',
@@ -211,7 +211,169 @@ describe('POST /v1/chat/completions validation', () => {
       /temperature/,
     ],
     ['n > 1', { model: 'mock-fast', ...hello, n: 2 }, 'n', /only n = 1 is supported/],
-    ['unknown field', { model: 'mock-fast', ...hello, tools: [] }, 'tools', /Unrecognized key/],
+    [
+      'unknown field',
+      { model: 'mock-fast', ...hello, logprobs: true },
+      'logprobs',
+      /Unrecognized key/,
+    ],
+    [
+      'the old functions field',
+      { model: 'mock-fast', ...hello, functions: [{ name: 'f' }] },
+      'functions',
+      /use tools/,
+    ],
+    [
+      'the old function_call field',
+      { model: 'mock-fast', ...hello, function_call: 'auto' },
+      'function_call',
+      /use tools/,
+    ],
+    ['empty tools', { model: 'mock-fast', ...hello, tools: [] }, 'tools', /tools/],
+    [
+      'a tool that is not a function',
+      { model: 'mock-fast', ...hello, tools: [{ type: 'retrieval' }] },
+      'tools[0].type',
+      /only function tools/,
+    ],
+    [
+      'a tool name with spaces',
+      { model: 'mock-fast', ...hello, tools: [{ type: 'function', function: { name: 'a b' } }] },
+      'tools[0].function.name',
+      /letters, digits/,
+    ],
+    [
+      'tool_choice without tools',
+      { model: 'mock-fast', ...hello, tool_choice: 'required' },
+      'tool_choice',
+      /needs tools/,
+    ],
+    [
+      'parallel_tool_calls without tools',
+      { model: 'mock-fast', ...hello, parallel_tool_calls: false },
+      'parallel_tool_calls',
+      /needs tools/,
+    ],
+    [
+      'a named tool_choice that is not in tools',
+      {
+        model: 'mock-fast',
+        ...hello,
+        tools: [{ type: 'function', function: { name: 'a' } }],
+        tool_choice: { type: 'function', function: { name: 'b' } },
+      },
+      'tool_choice.function.name',
+      /not in tools/,
+    ],
+    [
+      'a tool name used twice',
+      {
+        model: 'mock-fast',
+        ...hello,
+        tools: [
+          { type: 'function', function: { name: 'a' } },
+          { type: 'function', function: { name: 'a' } },
+        ],
+      },
+      'tools',
+      /used twice/,
+    ],
+    [
+      'an assistant message with neither content nor tool calls',
+      { model: 'mock-fast', messages: [{ role: 'assistant', content: null }] },
+      'messages[0].content',
+      /content or tool_calls/,
+    ],
+    [
+      'a tool message without tool_call_id',
+      { model: 'mock-fast', messages: [{ role: 'tool', content: 'x' }] },
+      'messages[0].tool_call_id',
+      /tool_call_id/,
+    ],
+    [
+      'an unknown response_format type',
+      { model: 'mock-fast', ...hello, response_format: { type: 'yaml' } },
+      'response_format.type',
+      /response_format/,
+    ],
+    [
+      'an image by plain http URL',
+      {
+        model: 'mock-fast',
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image_url', image_url: { url: 'http://x.test/a.png' } }],
+          },
+        ],
+      },
+      'messages[0].content[0].image_url.url',
+      /https: URL/,
+    ],
+    [
+      'a data: URL that is not a base64 image',
+      {
+        model: 'mock-fast',
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image_url', image_url: { url: 'data:text/html;base64,PGI+' } }],
+          },
+        ],
+      },
+      'messages[0].content[0].image_url.url',
+      /data:image/,
+    ],
+    [
+      'a data: image URL over the size cap',
+      {
+        model: 'mock-fast',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: { url: `data:image/png;base64,${'A'.repeat(512 * 1024)}` },
+              },
+            ],
+          },
+        ],
+      },
+      'messages[0].content[0].image_url.url',
+      /at most 524288 bytes/,
+    ],
+    [
+      'more images than the cap',
+      {
+        model: 'mock-fast',
+        messages: [
+          {
+            role: 'user',
+            content: Array.from({ length: 4 }, () => ({
+              type: 'image_url',
+              image_url: { url: 'https://example.com/a.png' },
+            })),
+          },
+        ],
+      },
+      'messages',
+      /at most 3 images/,
+    ],
+    [
+      'an image in a system message',
+      {
+        model: 'mock-fast',
+        messages: [
+          {
+            role: 'system',
+            content: [{ type: 'image_url', image_url: { url: 'https://example.com/a.png' } }],
+          },
+        ],
+      },
+      'messages[0].content',
+      /Invalid/,
+    ],
     [
       'stream_options without stream',
       { model: 'mock-fast', ...hello, stream_options: { include_usage: true } },

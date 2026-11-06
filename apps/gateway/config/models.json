@@ -47,12 +47,24 @@
     },
     "ollama-llama3.2": {
       "adapter": "ollama",
-      "model": "llama3.2:1b"
+      "model": "llama3.2:1b",
+      "capabilities": {
+        "tools": true,
+        "json_object": true,
+        "json_schema": true,
+        "vision": false
+      }
     },
     "groq-gpt-oss-20b": {
       "adapter": "openai-compatible",
       "provider": "groq",
       "model": "openai/gpt-oss-20b",
+      "capabilities": {
+        "tools": true,
+        "json_object": true,
+        "json_schema": true,
+        "vision": false
+      },
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY",
       "billing": "free_tier",
@@ -67,6 +79,12 @@
       "adapter": "openai-compatible",
       "provider": "groq",
       "model": "openai/gpt-oss-120b",
+      "capabilities": {
+        "tools": true,
+        "json_object": true,
+        "json_schema": true,
+        "vision": false
+      },
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY",
       "billing": "free_tier",
@@ -81,6 +99,12 @@
       "adapter": "openai-compatible",
       "provider": "groq",
       "model": "qwen/qwen3.8-27b",
+      "capabilities": {
+        "tools": true,
+        "json_object": true,
+        "json_schema": true,
+        "vision": true
+      },
       "baseUrl": "https://api.groq.com/openai/v1",
       "apiKeyEnv": "GROQ_API_KEY",
       "billing": "free_tier",
@@ -95,6 +119,12 @@
       "adapter": "openai-compatible",
       "provider": "gemini",
       "model": "gemini-3.5-flash-lite",
+      "capabilities": {
+        "tools": true,
+        "json_object": false,
+        "json_schema": true,
+        "vision": true
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
       "apiKeyEnv": "GEMINI_API_KEY",
       "billing": "free_tier"
@@ -103,6 +133,12 @@
       "adapter": "openai-compatible",
       "provider": "gemini",
       "model": "gemini-3.8-flash",
+      "capabilities": {
+        "tools": true,
+        "json_object": false,
+        "json_schema": true,
+        "vision": true
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
       "apiKeyEnv": "GEMINI_API_KEY",
       "billing": "free_tier"
@@ -111,6 +147,12 @@
       "adapter": "openai-compatible",
       "provider": "gemini",
       "model": "gemini-3.1-flash-lite",
+      "capabilities": {
+        "tools": true,
+        "json_object": false,
+        "json_schema": true,
+        "vision": true
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
       "apiKeyEnv": "GEMINI_API_KEY",
       "billing": "free_tier"
@@ -119,6 +161,12 @@
       "adapter": "openai-compatible",
       "provider": "mistral",
       "model": "mistral-small-2603",
+      "capabilities": {
+        "tools": true,
+        "json_object": true,
+        "json_schema": true,
+        "vision": false
+      },
       "baseUrl": "https://api.mistral.ai/v1",
       "apiKeyEnv": "MISTRAL_API_KEY",
       "billing": "free_tier"
@@ -127,6 +175,12 @@
       "adapter": "openai-compatible",
       "provider": "mistral",
       "model": "mistral-large-4",
+      "capabilities": {
+        "tools": true,
+        "json_object": true,
+        "json_schema": true,
+        "vision": false
+      },
       "baseUrl": "https://api.mistral.ai/v1",
       "apiKeyEnv": "MISTRAL_API_KEY",
       "billing": "free_tier"
@@ -144,6 +198,12 @@
       "adapter": "openai-compatible",
       "provider": "openrouter",
       "model": "google/gemma-4-31b-it:free",
+      "capabilities": {
+        "tools": true,
+        "json_object": true,
+        "json_schema": false,
+        "vision": true
+      },
       "baseUrl": "https://openrouter.ai/api/v1",
       "apiKeyEnv": "OPENROUTER_API_KEY",
       "billing": "free_tier",
