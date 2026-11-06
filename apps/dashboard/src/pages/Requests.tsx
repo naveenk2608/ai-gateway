@@ -87,6 +87,10 @@ function requestColumns(slowest: number, open: (id: string) => void, providerOf:
         return <ModelLabel name={c.getValue()} family={family} />;
       },
     }),
+    column.accessor('endpoint', {
+      header: 'Endpoint',
+      cell: (c) => <span className="mono">{c.getValue()}</span>,
+    }),
     column.accessor('deployment', {
       header: 'Deployment',
       cell: (c) => {
@@ -223,6 +227,7 @@ function RequestFacts({ detail, providerOf }: { detail: Detail; providerOf: Prov
           {detail.httpStatus} {detail.status}
         </span>
         {detail.errorCode && <span className="mono small">{detail.errorCode}</span>}
+        {detail.endpoint === 'embeddings' && <span className="badge">embeddings</span>}
         {detail.cacheHit && <span className="badge tone-accent">cache hit</span>}
       </div>
       <dl className="facts">

@@ -18,6 +18,7 @@ const deployment = (id: string, providerModel = id) =>
 function route(policy: RoutingPolicy, weights: Record<string, number>): Route {
   return {
     model: 'm',
+    type: 'chat',
     policy,
     targets: Object.entries(weights).map(([id, weight]) => ({
       deployment: deployment(id),
@@ -106,6 +107,7 @@ describe('planRoute', () => {
   it('tries last-resort targets after every other one, whatever the policy', () => {
     const lastResortRoute = (policy: RoutingPolicy): Route => ({
       model: 'm',
+      type: 'chat',
       policy,
       targets: [
         { deployment: deployment('fallback'), weight: 100, lastResort: true },
@@ -121,6 +123,7 @@ describe('planRoute', () => {
     }
     const alone: Route = {
       model: 'm',
+      type: 'chat',
       policy: 'lowest_latency',
       targets: [{ deployment: deployment('fallback'), weight: 1, lastResort: true }],
     };

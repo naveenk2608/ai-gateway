@@ -74,7 +74,7 @@ const internalError = new GatewayError('internal_error', 'Internal server error'
 });
 
 /** An abort signal that fires if the client disconnects before the response is complete. */
-function watchDisconnect(res: ServerResponse) {
+export function watchDisconnect(res: ServerResponse): { signal: AbortSignal; dispose: () => void } {
   const controller = new AbortController();
   const onClose = () => {
     if (!res.writableFinished) controller.abort(new ClientClosedError());
@@ -313,7 +313,7 @@ async function* sseBody(
   }
 }
 
-function upstreamFailure(err: unknown): unknown {
+export function upstreamFailure(err: unknown): unknown {
   return err instanceof ProviderError ? toGatewayError(err) : err;
 }
 
@@ -389,6 +389,13 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           httpStatus: 404,
           param: 'model',
         });
+      }
+      if (modelRoute.type !== 'chat') {
+        throw new GatewayError(
+          'model_endpoint_mismatch',
+          `The model \`${body.model}\` is an embeddings model: send it to /v1/embeddings.`,
+          { httpStatus: 400, param: 'model' },
+        );
       }
       // Only deployments that can serve tools, JSON output or images, as the request needs
       // (ADR 028); none left is a 400 before any provider call or budget reservation.

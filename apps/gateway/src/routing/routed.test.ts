@@ -56,6 +56,7 @@ function setup(
   const ids = Object.keys(outcomes);
   const route: Route = {
     model: 'm',
+    type: 'chat',
     policy,
     targets: ids.map((id) => ({ deployment: deployment(id), weight: 1, lastResort: false })),
   };

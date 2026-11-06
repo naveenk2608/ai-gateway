@@ -37,6 +37,8 @@ function setup(settings: Partial<MockSettings> = {}, timeouts = { timeoutMs: 1_0
     billing: 'paid',
     capabilities: { tools: true, json_object: true, json_schema: true, vision: true },
     dialect: dialectFor('mock', 'mock'),
+    type: 'chat',
+    embedding: null,
     quota: null,
     providerModel: 'mock',
     timeoutMs: timeouts.timeoutMs,
@@ -95,6 +97,7 @@ describe('runChat', () => {
       chatStream: () => ({
         [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => undefined) }),
       }),
+      embed: () => new Promise(() => undefined),
       probe: () => Promise.resolve(),
       close: () => Promise.resolve(),
     };
@@ -126,6 +129,7 @@ describe('runChat', () => {
       kind: 'mock',
       chat: () => Promise.reject(error),
       chatStream: () => ({ [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) }) }),
+      embed: () => new Promise(() => undefined),
       probe: () => Promise.resolve(),
       close: () => Promise.resolve(),
     };

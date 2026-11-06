@@ -6,6 +6,7 @@ import {
   type AdapterKind,
   type Billing,
   type Capabilities,
+  type DeploymentType,
   type DeploymentConfig,
   type HealthCheckKind,
   type ModelsConfig,
@@ -38,6 +39,10 @@ export interface Deployment {
   billing: Billing;
   /** What its model can do: tools, JSON output, image input (ADR 028). */
   capabilities: Capabilities;
+  /** `chat` or `embeddings` (ADR 029). */
+  type: DeploymentType;
+  /** Vector size, the sizes a client may ask for, and inputs per request; null for chat. */
+  embedding: EmbeddingSpec | null;
   /** What its provider's API takes of the gateway's fields (dialects.ts). */
   dialect: Dialect;
   /** Free-tier limits counted in Redis across instances (ADR 025); null without any. */
@@ -50,9 +55,17 @@ export interface Deployment {
   maxOutputTokens: number;
 }
 
+export interface EmbeddingSpec {
+  dimensions: number;
+  dimensionsRange: { min: number; max: number } | null;
+  maxInputs: number | null;
+}
+
 /** How a logical model is served: a policy over one or more available deployments. */
 export interface Route {
   model: string;
+  /** What its deployments serve; config validation keeps a route to one type. */
+  type: DeploymentType;
   policy: RoutingPolicy;
   targets: { deployment: Deployment; weight: number; lastResort: boolean }[];
 }
@@ -102,7 +115,13 @@ type Created = { provider: Provider; baseUrl: string | null } | { disabled: stri
 function createProvider(config: DeploymentConfig, deps: RegistryDeps): Created {
   switch (config.adapter) {
     case 'mock':
-      return { provider: new MockProvider(config.mock, deps.clock), baseUrl: null };
+      return {
+        provider: new MockProvider(
+          { ...config.mock, embeddingDimensions: config.embedding?.dimensions },
+          deps.clock,
+        ),
+        baseUrl: null,
+      };
     case 'ollama': {
       const baseUrl = config.baseUrl ?? deps.ollamaBaseUrl;
       return { provider: new OllamaProvider({ baseUrl, clock: deps.clock }), baseUrl };
@@ -155,6 +174,14 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
       billing: deployment.billing,
       capabilities: deployment.capabilities,
       dialect: dialectFor(deployment.adapter, deployment.provider),
+      type: deployment.type,
+      embedding: deployment.embedding
+        ? {
+            dimensions: deployment.embedding.dimensions,
+            dimensionsRange: deployment.embedding.dimensionsRange ?? null,
+            maxInputs: deployment.embedding.maxInputs ?? null,
+          }
+        : null,
       quota: deployment.quota ?? null,
       providerModel: deployment.model,
       timeoutMs: deployment.timeoutMs,
@@ -170,8 +197,14 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
       const deployment = deployments.get(t.deployment);
       return deployment ? [{ deployment, weight: t.weight, lastResort: t.lastResort }] : [];
     });
-    if (available.length > 0) models.set(name, { model: name, policy, targets: available });
-    else
+    if (available.length > 0) {
+      models.set(name, {
+        model: name,
+        type: available[0]!.deployment.type,
+        policy,
+        targets: available,
+      });
+    } else
       deps.logger.warn(
         { model: name, reason: 'none of its deployments is enabled' },
         'model unavailable',

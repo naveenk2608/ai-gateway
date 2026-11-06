@@ -41,6 +41,8 @@ export interface RequestSummary {
   errorCode: string | null;
   attemptCount: number;
   cacheHit: boolean;
+  /** The /v1 endpoint the request came to (M13). */
+  endpoint: 'chat' | 'embeddings';
   startedAt: string;
   latencyMs: number;
   totalTokens: number | null;

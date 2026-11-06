@@ -42,6 +42,8 @@ const MIGRATIONS = [
   '0007_billed-cost',
   '0008_budget-soft-threshold',
   '0009_reference-prices',
+  '0010_request-endpoint',
+  '0011_embedding-prices',
 ];
 
 /** A throwaway database, so migrations run from scratch. */
@@ -218,6 +220,11 @@ describe('M11 provider names and billed cost on existing data', () => {
         ids.attempt,
       ]);
       expect(attempt.rows).toEqual([{ provider: 'groq' }]);
+      // Migration 0010 (M13): a request stored before it is a chat request.
+      const record = await c.query('SELECT endpoint FROM request_records WHERE id = $1', [
+        ids.request,
+      ]);
+      expect(record.rows).toEqual([{ endpoint: 'chat' }]);
       for (const table of ['usage_rollups_minute', 'usage_rollups_hour', 'usage_rollups_day']) {
         const rollup = await c.query(
           `SELECT provider, cost_micro_usd, billed_cost_micro_usd, unpriced_requests FROM ${table}

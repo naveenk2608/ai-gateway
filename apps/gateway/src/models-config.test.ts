@@ -31,6 +31,7 @@ describe('models config', () => {
       model: 'mock',
       billing: 'paid',
       capabilities: { tools: true, json_object: true, json_schema: true, vision: true },
+      type: 'chat',
       timeoutMs: 60_000,
       streamIdleTimeoutMs: 30_000,
       maxOutputTokens: 4_096,
@@ -153,6 +154,98 @@ describe('models config', () => {
     );
     expect(problems.some((p) => p.includes('deployments.m.timeoutMs'))).toBe(true);
     expect(problems.some((p) => p.includes('colour'))).toBe(true);
+  });
+
+  describe('embeddings routes (ADR 029)', () => {
+    const gemini = (dimensions: number, model = 'gemini-embedding-001') => ({
+      adapter: 'openai-compatible',
+      provider: 'gemini',
+      type: 'embeddings',
+      model,
+      baseUrl: 'https://example.com/v1',
+      apiKeyEnv: 'GEMINI_API_KEY',
+      embedding: { dimensions },
+    });
+    const parse = (deployments: Record<string, unknown>, targets: string[]) =>
+      problemsOf(() =>
+        parseModelsConfig(
+          {
+            deployments,
+            models: { m: { targets: targets.map((deployment) => ({ deployment })) } },
+          },
+          'm.json',
+        ),
+      );
+
+    it('accepts fallback between deployments of one model with the same dimensions', () => {
+      const config = parseModelsConfig(
+        {
+          deployments: { a: gemini(3072), b: gemini(3072) },
+          models: { m: { targets: [{ deployment: 'a' }, { deployment: 'b' }] } },
+        },
+        'm.json',
+      );
+      expect(config.deployments.a).toMatchObject({
+        type: 'embeddings',
+        embedding: { dimensions: 3072 },
+      });
+    });
+
+    it('rejects an embeddings route that mixes models', () => {
+      expect(parse({ a: gemini(3072), b: gemini(3072, 'other-embed') }, ['a', 'b'])).toEqual([
+        'm.json: models.m: an embeddings model falls back only between deployments of one model: ' +
+          '"a" serves gemini-embedding-001, "b" serves other-embed',
+      ]);
+    });
+
+    it('rejects an embeddings route that mixes dimensions', () => {
+      expect(parse({ a: gemini(3072), b: gemini(768) }, ['a', 'b'])).toEqual([
+        'm.json: models.m: an embeddings model falls back only between deployments with the ' +
+          'same dimensions ("a", "b")',
+      ]);
+    });
+
+    it('rejects an embeddings route that falls back to the mock', () => {
+      const mock = { adapter: 'mock', type: 'embeddings', embedding: { dimensions: 3072 } };
+      expect(parse({ a: gemini(3072), mock }, ['a', 'mock'])).toEqual([
+        'm.json: models.m: an embeddings model never falls back to or from the mock ("a", "mock")',
+      ]);
+    });
+
+    it('rejects a chat route that lists an embeddings deployment, and the reverse', () => {
+      const chat = { adapter: 'mock' };
+      expect(parse({ chat, e: gemini(3072) }, ['chat', 'e'])).toEqual([
+        'm.json: models.m: a chat model cannot list the embeddings deployment "e"',
+      ]);
+      expect(parse({ chat, e: gemini(3072) }, ['e', 'chat'])).toEqual([
+        'm.json: models.m: an embeddings model cannot list the chat deployment "chat"',
+      ]);
+    });
+
+    it('needs dimensions for an embeddings deployment, and only there', () => {
+      const missing = { adapter: 'mock', type: 'embeddings' };
+      const stray = { adapter: 'mock', embedding: { dimensions: 8 } };
+      const outside = {
+        adapter: 'mock',
+        type: 'embeddings',
+        embedding: { dimensions: 8, dimensionsRange: { min: 16, max: 32 } },
+      };
+      expect(parse({ missing }, ['missing'])).toEqual([
+        'm.json: deployments.missing.embedding: an embeddings deployment needs embedding.dimensions',
+      ]);
+      expect(parse({ stray }, ['stray'])).toEqual([
+        'm.json: deployments.stray.embedding: embedding is only for "type": "embeddings"',
+      ]);
+      expect(parse({ outside }, ['outside'])).toEqual([
+        'm.json: deployments.outside.embedding: embedding.dimensionsRange must include embedding.dimensions',
+      ]);
+    });
+
+    it('refuses a chat health check on an embeddings deployment', () => {
+      expect(parse({ a: { ...gemini(3072), healthCheck: 'chat' } }, ['a'])).toEqual([
+        'm.json: deployments.a.healthCheck: an embeddings deployment cannot have a chat health check',
+      ]);
+    });
   });
 
   it('rejects deployment ids that are not simple names', () => {

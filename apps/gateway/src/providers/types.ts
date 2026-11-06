@@ -128,6 +128,25 @@ export type StreamEvent =
       rateLimit?: RateLimitHeaders | undefined;
     };
 
+/** An embeddings call (ADR 029): one vector per input, in order. */
+export interface EmbeddingRequest {
+  /** The provider's own model name (from the deployment). */
+  model: string;
+  input: string[];
+  /** Only when the client asked for a size the deployment allows. */
+  dimensions?: number | undefined;
+  user?: string | undefined;
+  traceparent?: string | undefined;
+}
+
+export interface EmbeddingResult {
+  /** One vector per input, in the order of the inputs. */
+  vectors: number[][];
+  /** Input tokens as the provider counted them (completion tokens are 0); null when not sent. */
+  usage: Usage | null;
+  rateLimit?: RateLimitHeaders | undefined;
+}
+
 export type ProviderKind = 'mock' | 'ollama' | 'openai-compatible';
 
 export interface Provider {
@@ -136,6 +155,8 @@ export interface Provider {
   chat(req: ChatRequest, signal: AbortSignal): Promise<ChatResult>;
   /** Yields stream events. Throws a ProviderError; stops promptly when `signal` aborts. */
   chatStream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamEvent>;
+  /** Embeds the inputs. Rejects with a ProviderError; honours `signal`. */
+  embed(req: EmbeddingRequest, signal: AbortSignal): Promise<EmbeddingResult>;
   /**
    * A cheap health check that runs no model, so it costs nothing on paid APIs (ADR 012). Resolves
    * when the upstream answers; rejects with a ProviderError.

@@ -96,6 +96,39 @@ const capabilityFlags = (byDefault: boolean) =>
  */
 const capabilities = capabilityFlags(false);
 
+/** What a deployment serves: chat completions, or embeddings (M13, ADR 029). */
+export const DEPLOYMENT_TYPES = ['chat', 'embeddings'] as const;
+export type DeploymentType = (typeof DEPLOYMENT_TYPES)[number];
+
+/** Inputs per embeddings request at most: OpenAI's documented limit for the format it copies. */
+export const MAX_EMBEDDING_INPUTS = 2_048;
+
+/**
+ * An embeddings deployment's vectors, from the provider's docs: their size when the client sets
+ * no `dimensions`, the sizes a client may ask for instead (none: `dimensions` gets a 400), and
+ * the inputs per request the provider takes, where it documents a limit.
+ */
+const embedding = z
+  .object({
+    dimensions: z.number().int().positive().max(65_536),
+    dimensionsRange: z
+      .object({
+        min: z.number().int().positive().max(65_536),
+        max: z.number().int().positive().max(65_536),
+      })
+      .strict()
+      .optional(),
+    maxInputs: z.number().int().positive().max(MAX_EMBEDDING_INPUTS).optional(),
+  })
+  .strict()
+  .optional();
+
+const kind = {
+  type: z.enum(DEPLOYMENT_TYPES).default('chat'),
+  /** Required for `type: "embeddings"`, refused otherwise. */
+  embedding,
+};
+
 const perWindow = z.number().int().positive().max(1_000_000_000).optional();
 
 /**
@@ -150,6 +183,7 @@ const mockDeployment = z
     mock: mockSettingsSchema.prefault({}),
     // The mock fakes every capability (tool calls, JSON), so tests can use any route shape.
     capabilities: capabilityFlags(true),
+    ...kind,
     billing,
     quota,
     ...attemptTimeouts,
@@ -169,6 +203,7 @@ const openAICompatibleDeployment = z
       .regex(/^[A-Z][A-Z0-9_]*$/, 'use an environment variable name, e.g. GROQ_API_KEY'),
     healthCheck,
     capabilities,
+    ...kind,
     billing,
     quota,
     ...attemptTimeouts,
@@ -184,6 +219,7 @@ const ollamaDeployment = z
     baseUrl: z.url({ protocol: /^https?$/ }).optional(),
     healthCheck,
     capabilities,
+    ...kind,
     billing,
     quota,
     ...attemptTimeouts,
@@ -248,7 +284,29 @@ export const modelsConfigSchema = z
   })
   .strict()
   .superRefine((config, ctx) => {
+    for (const [id, d] of Object.entries(config.deployments)) {
+      const issue = (message: string, field: string) =>
+        ctx.addIssue({ code: 'custom', path: ['deployments', id, field], message });
+      if (d.type === 'embeddings') {
+        if (!d.embedding) issue('an embeddings deployment needs embedding.dimensions', 'embedding');
+        const range = d.embedding?.dimensionsRange;
+        if (
+          range &&
+          !(range.min <= d.embedding!.dimensions && d.embedding!.dimensions <= range.max)
+        ) {
+          issue('embedding.dimensionsRange must include embedding.dimensions', 'embedding');
+        }
+        if (d.adapter !== 'mock' && d.healthCheck === 'chat') {
+          issue('an embeddings deployment cannot have a chat health check', 'healthCheck');
+        }
+      } else if (d.embedding) {
+        issue('embedding is only for "type": "embeddings"', 'embedding');
+      }
+    }
     for (const [name, m] of Object.entries(config.models)) {
+      embeddingRouteIssues(config.deployments, modelRoute(m)).forEach((message) =>
+        ctx.addIssue({ code: 'custom', path: ['models', name], message }),
+      );
       const seen = new Set<string>();
       modelRoute(m).targets.forEach((t, i) => {
         const path =
@@ -269,6 +327,58 @@ export const modelsConfigSchema = z
       });
     }
   });
+
+type DeploymentOutput = z.output<typeof deployment>;
+
+/**
+ * Why a model's targets cannot form one route (ADR 029): chat and embedding deployments never mix,
+ * and an embeddings model falls back only between deployments of the same model with the same
+ * vector size, never to the mock, since vectors from different models cannot share an index.
+ */
+function embeddingRouteIssues(
+  deployments: Record<string, DeploymentOutput>,
+  route: ModelRoute,
+): string[] {
+  const listed = route.targets.flatMap((t) => {
+    const d = deployments[t.deployment];
+    return d ? [[t.deployment, d] as const] : [];
+  });
+  const [first] = listed;
+  if (!first) return [];
+  const [firstId, head] = first;
+  const issues: string[] = [];
+  for (const [id, d] of listed.slice(1)) {
+    if (d.type !== head.type) {
+      issues.push(
+        head.type === 'chat'
+          ? `a chat model cannot list the embeddings deployment "${id}"`
+          : `an embeddings model cannot list the chat deployment "${id}"`,
+      );
+      continue;
+    }
+    if (head.type !== 'embeddings') continue;
+    if ((d.adapter === 'mock') !== (head.adapter === 'mock')) {
+      issues.push(
+        `an embeddings model never falls back to or from the mock ("${firstId}", "${id}")`,
+      );
+    } else if (d.model !== head.model) {
+      issues.push(
+        `an embeddings model falls back only between deployments of one model: "${firstId}" ` +
+          `serves ${head.model}, "${id}" serves ${d.model}`,
+      );
+    } else if (
+      d.embedding?.dimensions !== head.embedding?.dimensions ||
+      JSON.stringify(d.embedding?.dimensionsRange) !==
+        JSON.stringify(head.embedding?.dimensionsRange)
+    ) {
+      issues.push(
+        `an embeddings model falls back only between deployments with the same dimensions ` +
+          `("${firstId}", "${id}")`,
+      );
+    }
+  }
+  return issues;
+}
 
 export type ModelsConfig = z.output<typeof modelsConfigSchema>;
 export type ModelConfig = ModelsConfig['models'][string];

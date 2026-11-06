@@ -29,18 +29,20 @@ const KEYS = {
   ZAI_API_KEY: 'zai-test-placeholder',
 };
 
-/** The list prices migration 0006 inserts. */
-const MIGRATION_PRICES = [
-  ...readFileSync(
-    fileURLToPath(new URL('../../../db/migrations/0006_provider-prices.sql', import.meta.url)),
-    'utf8',
-  ).matchAll(/\(gen_random_uuid\(\), '([^']+)', '([^']+)', (\d+), (\d+), '([^']+)'\)/g),
-].map(([, provider, model, input, output]) => ({
-  provider: provider!,
-  model: model!,
-  input: Number(input),
-  output: Number(output),
-}));
+/** The list prices migrations 0006 (chat) and 0011 (embeddings, M13) insert. */
+const MIGRATION_PRICES = ['0006_provider-prices', '0011_embedding-prices']
+  .flatMap((name) => [
+    ...readFileSync(
+      fileURLToPath(new URL(`../../../db/migrations/${name}.sql`, import.meta.url)),
+      'utf8',
+    ).matchAll(/\(gen_random_uuid\(\), '([^']+)', '([^']+)', (\d+), (\d+), '([^']+)'\)/g),
+  ])
+  .map(([, provider, model, input, output]) => ({
+    provider: provider!,
+    model: model!,
+    input: Number(input),
+    output: Number(output),
+  }));
 
 /** The reference prices migration 0009 inserts: paid models no deployment may call. */
 const REFERENCE_PRICES = [
@@ -118,6 +120,8 @@ describe('the default models file', () => {
       'openrouter-gemma-4-31b-free': { requestsPerMinute: 20, requestsPerDay: 50 },
       // 10,000 free Neurons a day at 77,273 Neurons per million output tokens.
       'cloudflare-llama-4-scout': { requestsPerMinute: 300, tokensPerDay: 129_000 },
+      // Cloudflare's per-model limit for bge-large-en-v1.5 (text embeddings: 3,000 otherwise).
+      'cloudflare-bge-large-en-v1.5': { requestsPerMinute: 1_500 },
     });
   });
 
@@ -258,7 +262,9 @@ describe('the default models file', () => {
       const price = MIGRATION_PRICES.find((p) => p.provider === d.provider && p.model === d.model);
       expect(price, id).toBeDefined();
       expect(price!.input, id).toBeGreaterThan(0);
-      expect(price!.output, id).toBeGreaterThan(0);
+      // Embedding models are priced on input only (migration 0011).
+      if (d.type === 'embeddings') expect(price!.output, id).toBe(0);
+      else expect(price!.output, id).toBeGreaterThan(0);
     }
     // No price is keyed by an adapter kind any more.
     expect(MIGRATION_PRICES.filter((p) => p.provider === 'openai-compatible')).toEqual([]);
@@ -272,5 +278,31 @@ describe('the default models file', () => {
       );
       expect(serving, `${ref.provider} ${ref.model}`).toEqual([]);
     }
+  });
+
+  it('has embeddings models on Gemini, Mistral, Cloudflare, Ollama and the mock, one deployment each', () => {
+    const embeddings = Object.entries(config.models).flatMap(([name, m]) => {
+      const targets = modelRoute(m).targets.map((t) => config.deployments[t.deployment]!);
+      return targets.every((d) => d.type === 'embeddings') ? [[name, targets] as const] : [];
+    });
+    expect(
+      Object.fromEntries(embeddings.map(([name, t]) => [name, t.map((d) => d.model)])),
+    ).toEqual({
+      'mock-embed': ['mock-embed'],
+      'nomic-embed-text': ['nomic-embed-text'],
+      'gemini-embedding-001': ['gemini-embedding-001'],
+      'mistral-embed': ['mistral-embed'],
+      'bge-large-en-v1.5': ['@cf/baai/bge-large-en-v1.5'],
+    });
+    const sizes = Object.fromEntries(
+      embeddings.map(([name, t]) => [name, t[0]!.embedding?.dimensions]),
+    );
+    expect(sizes).toEqual({
+      'mock-embed': 256,
+      'nomic-embed-text': 768,
+      'gemini-embedding-001': 3_072,
+      'mistral-embed': 1_024,
+      'bge-large-en-v1.5': 1_024,
+    });
   });
 });

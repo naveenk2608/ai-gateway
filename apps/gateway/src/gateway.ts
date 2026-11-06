@@ -39,6 +39,7 @@ import { databasePriceLoader, PriceBook } from './limits/prices.js';
 import type { ModelsConfig } from './models-config.js';
 import { createRegistry, type ProviderRegistry } from './providers/registry.js';
 import { registerChatCompletions } from './proxy/chat-completions.js';
+import { registerEmbeddings } from './proxy/embeddings.js';
 import { registerModels } from './proxy/models.js';
 import { BreakerBoard } from './routing/breaker.js';
 import { HealthChecker, HealthReporter } from './routing/health.js';
@@ -301,6 +302,16 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
   });
   void app.register((instance, _opts, done) => {
     registerChatCompletions(instance, {
+      registry,
+      clock,
+      verifier,
+      events,
+      admission,
+      routing,
+      cache,
+      metrics,
+    });
+    registerEmbeddings(instance, {
       registry,
       clock,
       verifier,

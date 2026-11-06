@@ -17,6 +17,8 @@ import {
   messageText,
   type ChatMessage,
   type ChatRequest,
+  type EmbeddingRequest,
+  type EmbeddingResult,
   type ChatResult,
   type FinishReason,
   type Provider,
@@ -51,6 +53,12 @@ const chatPart = z.object({
 });
 
 const errorLine = z.object({ error: z.string() });
+
+// /api/embed (docs.ollama.com/api/embed): one vector per input, and the input tokens.
+const embedAnswer = z.object({
+  embeddings: z.array(z.array(z.number())).min(1),
+  prompt_eval_count: z.number().int().min(0).nullish(),
+});
 
 type ChatPart = z.output<typeof chatPart>;
 
@@ -137,6 +145,7 @@ function ollamaMessage(m: ChatMessage) {
 export class OllamaProvider implements Provider {
   readonly kind = 'ollama' as const;
   readonly #url: string;
+  readonly #embedUrl: string;
   readonly #tagsUrl: string;
   readonly #clock: Clock;
   readonly #maxResponseBytes: number;
@@ -145,6 +154,7 @@ export class OllamaProvider implements Provider {
   constructor(options: OllamaOptions) {
     const root = options.baseUrl.replace(/\/+$/, '');
     this.#url = `${root}/api/chat`;
+    this.#embedUrl = `${root}/api/embed`;
     this.#tagsUrl = `${root}/api/tags`;
     this.#clock = options.clock;
     this.#maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
@@ -197,6 +207,44 @@ export class OllamaProvider implements Provider {
       type: 'finish',
       finishReason: toFinishReason(final.done_reason, calls.count > 0),
       usage: toUsage(final),
+    };
+  }
+
+  async embed(req: EmbeddingRequest, signal: AbortSignal): Promise<EmbeddingResult> {
+    const response = await postJson(
+      this.#embedUrl,
+      { model: req.model, input: req.input, dimensions: req.dimensions },
+      {
+        agent: this.#agent,
+        headers: {
+          accept: 'application/json',
+          ...(req.traceparent ? { traceparent: req.traceparent } : {}),
+        },
+        signal,
+        clock: this.#clock,
+      },
+    );
+    let text: string;
+    try {
+      text = await readText(response.body, this.#maxResponseBytes);
+    } catch (err) {
+      throw networkError(err, signal);
+    }
+    const value = parseJson(text);
+    if (errorLine.safeParse(value).success) {
+      throw new ProviderError('server_error', 'Ollama reported an error');
+    }
+    const answer = embedAnswer.safeParse(value);
+    if (!answer.success) {
+      throw new ProviderError('invalid_response', 'Ollama embeddings have an unexpected shape', {
+        cause: answer.error,
+      });
+    }
+    const tokens = answer.data.prompt_eval_count;
+    return {
+      vectors: answer.data.embeddings,
+      usage:
+        tokens == null ? null : { promptTokens: tokens, completionTokens: 0, totalTokens: tokens },
     };
   }
 

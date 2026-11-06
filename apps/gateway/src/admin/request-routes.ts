@@ -37,6 +37,8 @@ const requestDetailSchema = z.object({
   ttftMs: z.number().nullable(),
   /** Answered from the response cache: no attempts, zero cost. */
   cacheHit: z.boolean(),
+  /** The /v1 endpoint: `chat` or `embeddings` (M13). */
+  endpoint: z.enum(['chat', 'embeddings']),
   /** Null for requests rejected before any provider call. */
   usage: z
     .object({
@@ -119,6 +121,7 @@ export function registerRequestRoutes(app: FastifyInstance, deps: AdminDeps): vo
         latencyMs: record.latency_ms,
         ttftMs: record.ttft_ms,
         cacheHit: record.cache_hit,
+        endpoint: record.endpoint,
         usage: usage
           ? {
               source: usage.usage_source,

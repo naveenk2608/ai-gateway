@@ -111,6 +111,8 @@ export async function ingestEvents(
         latency_ms: r.latencyMs,
         ttft_ms: r.ttftMs,
         cache_hit: event.cacheHit === true,
+        // Events from gateways before M13 have no endpoint: they were all chat requests.
+        endpoint: r.endpoint ?? 'chat',
       })),
     )
     .onConflict((oc) => oc.doNothing())

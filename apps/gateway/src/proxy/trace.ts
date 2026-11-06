@@ -19,6 +19,8 @@ export interface TraceStart {
   messages?: readonly ChatMessage[];
   /** The prompt-token estimate, when the caller made it (tools, images, embedding inputs). */
   estimatedPromptTokens?: number;
+  /** The /v1 endpoint: `chat` (default) or `embeddings`. */
+  endpoint?: 'chat' | 'embeddings';
   /** The request's span (ADR 017): attempts become its children, the event carries it. */
   traceContext?: TraceContext;
 }
@@ -42,6 +44,8 @@ export class RequestTrace {
   /** Estimated tokens of the completion text seen so far, summed per chunk. */
   #completionTokens = 0;
   #completionText = false;
+  /** No completion is expected (embeddings): missing usage is the prompt estimate alone. */
+  #promptOnly = false;
   #errorCode: string | null = null;
   #budget: UsageEvent['budget'];
   /** Answered from the response cache. */
@@ -92,6 +96,11 @@ export class RequestTrace {
     this.#usage = usage;
   }
 
+  /** The request answered without usage and produces no text (embeddings): use the estimate. */
+  estimatePromptOnly(): void {
+    this.#promptOnly = true;
+  }
+
   /** Records the budget reservation made at admission, for the worker's audit. */
   setBudget(budget: NonNullable<UsageEvent['budget']>): void {
     this.#budget = budget;
@@ -127,6 +136,7 @@ export class RequestTrace {
         apiKeyId: this.#start.apiKeyId,
         model: this.#start.model,
         deployment: this.#deployment,
+        endpoint: this.#start.endpoint ?? 'chat',
         stream: this.#start.stream,
         status,
         httpStatus,
@@ -171,7 +181,7 @@ export class RequestTrace {
         usageSource: 'reported',
       };
     }
-    if (this.#completionText) {
+    if (this.#completionText || this.#promptOnly) {
       const promptTokens = this.estimatedPromptTokens;
       const completionTokens = this.#completionTokens;
       return {

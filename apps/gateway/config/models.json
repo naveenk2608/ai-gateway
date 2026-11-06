@@ -233,6 +233,69 @@
       "apiKeyEnv": "ZAI_API_KEY",
       "billing": "free_tier",
       "healthCheck": "none"
+    },
+    "mock-embed": {
+      "adapter": "mock",
+      "type": "embeddings",
+      "model": "mock-embed",
+      "embedding": {
+        "dimensions": 256,
+        "dimensionsRange": {
+          "min": 1,
+          "max": 256
+        }
+      },
+      "mock": {
+        "latencyMs": 20
+      }
+    },
+    "ollama-nomic-embed-text": {
+      "adapter": "ollama",
+      "type": "embeddings",
+      "model": "nomic-embed-text",
+      "embedding": {
+        "dimensions": 768
+      }
+    },
+    "gemini-embedding-001": {
+      "adapter": "openai-compatible",
+      "provider": "gemini",
+      "type": "embeddings",
+      "model": "gemini-embedding-001",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "billing": "free_tier",
+      "embedding": {
+        "dimensions": 3072
+      }
+    },
+    "mistral-embed": {
+      "adapter": "openai-compatible",
+      "provider": "mistral",
+      "type": "embeddings",
+      "model": "mistral-embed",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "apiKeyEnv": "MISTRAL_API_KEY",
+      "billing": "free_tier",
+      "embedding": {
+        "dimensions": 1024
+      }
+    },
+    "cloudflare-bge-large-en-v1.5": {
+      "adapter": "openai-compatible",
+      "provider": "cloudflare",
+      "type": "embeddings",
+      "model": "@cf/baai/bge-large-en-v1.5",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+      "apiKeyEnv": "CLOUDFLARE_API_TOKEN",
+      "billing": "free_tier",
+      "healthCheck": "none",
+      "embedding": {
+        "dimensions": 1024
+      },
+      "quota": {
+        "requestsPerMinute": 1500
+      }
     }
   },
   "models": {
@@ -428,6 +491,21 @@
           "weight": 1
         }
       ]
+    },
+    "mock-embed": {
+      "deployment": "mock-embed"
+    },
+    "nomic-embed-text": {
+      "deployment": "ollama-nomic-embed-text"
+    },
+    "gemini-embedding-001": {
+      "deployment": "gemini-embedding-001"
+    },
+    "mistral-embed": {
+      "deployment": "mistral-embed"
+    },
+    "bge-large-en-v1.5": {
+      "deployment": "cloudflare-bge-large-en-v1.5"
     }
   }
 }

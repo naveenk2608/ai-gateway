@@ -100,6 +100,39 @@ const entrySchema = z.object({
     .nullable(),
 });
 
+/**
+ * The key of an embeddings answer (ADR 029): the project, the logical model, the inputs in
+ * order, the requested dimensions and the encoding. Embeddings of one input never vary, so there
+ * is no temperature to check.
+ */
+export function embeddingsCacheKey(
+  projectId: string,
+  model: string,
+  input: readonly string[],
+  dimensions: number | null,
+  encoding: 'float' | 'base64',
+): string {
+  const canonical = JSON.stringify(['emb-v1', projectId, model, input, dimensions, encoding]);
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+/** A cached embeddings answer: the data as sent to the client, and the provider's usage. */
+export interface CachedEmbeddings {
+  data: (number[] | string)[];
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null;
+}
+
+const embeddingsEntrySchema = z.object({
+  data: z.array(z.union([z.array(z.number()), z.string()])).min(1),
+  usage: z
+    .object({
+      promptTokens: z.number().int().min(0),
+      completionTokens: z.number().int().min(0),
+      totalTokens: z.number().int().min(0),
+    })
+    .nullable(),
+});
+
 export interface ResponseCacheOptions {
   redis: Redis;
   logger: Logger;
@@ -132,6 +165,34 @@ export class ResponseCache {
       this.#o.logger.warn({ err }, 'response cache read failed; treating as a miss');
       return null;
     }
+  }
+
+  async getEmbeddings(key: string): Promise<CachedEmbeddings | null> {
+    return this.#read(key, embeddingsEntrySchema);
+  }
+
+  /** Stores an embeddings answer; failures are logged and ignored. */
+  setEmbeddings(key: string, entry: CachedEmbeddings): void {
+    this.#write(key, JSON.stringify(entry));
+  }
+
+  async #read<T>(key: string, schema: z.ZodType<T>): Promise<T | null> {
+    try {
+      const raw = await this.#o.redis.get(this.#prefix + key);
+      if (raw === null) return null;
+      const parsed = schema.safeParse(JSON.parse(raw));
+      return parsed.success ? parsed.data : null;
+    } catch (err) {
+      this.#o.logger.warn({ err }, 'response cache read failed; treating as a miss');
+      return null;
+    }
+  }
+
+  #write(key: string, value: string): void {
+    if (Buffer.byteLength(value) > this.#o.maxEntryBytes) return;
+    this.#o.redis
+      .set(this.#prefix + key, value, 'EX', this.#o.ttlSeconds)
+      .catch((err: unknown) => this.#o.logger.warn({ err }, 'response cache write failed'));
   }
 
   /** Stores a completed response; failures are logged and ignored. */

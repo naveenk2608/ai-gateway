@@ -19,6 +19,8 @@ import type {
   ChatMessage,
   ChatRequest,
   ChatResult,
+  EmbeddingRequest,
+  EmbeddingResult,
   FinishReason,
   Provider,
   ResponseFormat,
@@ -90,6 +92,19 @@ const chunkSchema = z.object({
 });
 
 const streamErrorSchema = z.object({ error: z.unknown() });
+
+// OpenAI's embeddings answer: one vector per input, with its index.
+const embeddingsSchema = z.object({
+  data: z
+    .array(z.object({ index: z.number().int().min(0).nullish(), embedding: z.array(z.number()) }))
+    .min(1),
+  usage: z
+    .object({
+      prompt_tokens: z.number().int().min(0),
+      total_tokens: z.number().int().min(0).nullish(),
+    })
+    .nullish(),
+});
 
 function toUsage(usage: z.output<typeof wireUsage> | null | undefined): Usage | null {
   if (!usage) return null;
@@ -197,6 +212,7 @@ function validate<T>(schema: z.ZodType<T>, value: unknown): T {
 export class OpenAICompatibleProvider implements Provider {
   readonly kind = 'openai-compatible' as const;
   readonly #url: string;
+  readonly #embeddingsUrl: string;
   readonly #modelsUrl: string;
   readonly #apiKey: string;
   readonly #clock: Clock;
@@ -207,6 +223,7 @@ export class OpenAICompatibleProvider implements Provider {
   constructor(options: OpenAICompatibleOptions) {
     const root = options.baseUrl.replace(/\/+$/, '');
     this.#url = `${root}/chat/completions`;
+    this.#embeddingsUrl = `${root}/embeddings`;
     this.#modelsUrl = `${root}/models`;
     this.#apiKey = options.apiKey;
     this.#clock = options.clock;
@@ -287,6 +304,49 @@ export class OpenAICompatibleProvider implements Provider {
       type: 'finish',
       finishReason: toFinishReason(finishReason, calledTools),
       usage,
+      rateLimit: rateLimitHeaders(response.headers),
+    };
+  }
+
+  /** `POST /embeddings` in OpenAI's format, always asking for floats (the gateway encodes). */
+  async embed(req: EmbeddingRequest, signal: AbortSignal): Promise<EmbeddingResult> {
+    const body = {
+      model: req.model,
+      input: req.input,
+      encoding_format: 'float',
+      dimensions: req.dimensions,
+      user: req.user,
+    };
+    const response = await postJson(this.#embeddingsUrl, body, {
+      agent: this.#agent,
+      headers: {
+        authorization: `Bearer ${this.#apiKey}`,
+        accept: 'application/json',
+        ...(req.traceparent ? { traceparent: req.traceparent } : {}),
+      },
+      signal,
+      clock: this.#clock,
+    });
+    let text: string;
+    try {
+      text = await readText(response.body, this.#maxResponseBytes);
+    } catch (err) {
+      throw networkError(err, signal);
+    }
+    const answer = validate(embeddingsSchema, parseJson(text));
+    const data = answer.data.every((d) => typeof d.index === 'number')
+      ? [...answer.data].sort((a, b) => a.index! - b.index!)
+      : answer.data;
+    const usage = answer.usage;
+    return {
+      vectors: data.map((d) => d.embedding),
+      usage: usage
+        ? {
+            promptTokens: usage.prompt_tokens,
+            completionTokens: 0,
+            totalTokens: usage.total_tokens ?? usage.prompt_tokens,
+          }
+        : null,
       rateLimit: rateLimitHeaders(response.headers),
     };
   }

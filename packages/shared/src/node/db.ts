@@ -121,8 +121,12 @@ export interface RequestRecordsTable {
   latency_ms: number;
   ttft_ms: number | null;
   cache_hit: Generated<boolean>;
+  /** The /v1 endpoint the request came to (migration 0010); `chat` for every older row. */
+  endpoint: Generated<RequestEndpoint>;
   created_at: CreatedAt;
 }
+
+export type RequestEndpoint = 'chat' | 'embeddings';
 
 export interface ProviderAttemptsTable {
   id: string;

@@ -5,6 +5,8 @@ import type { Deployment } from '../providers/registry.js';
 import type {
   ChatRequest,
   ChatResult,
+  EmbeddingRequest,
+  EmbeddingResult,
   RateLimitHeaders,
   StreamEvent,
   Usage,
@@ -276,6 +278,48 @@ export async function runChat(ctx: AttemptContext, req: ChatRequest): Promise<Ch
       limit.ms,
       limit.phase,
     );
+    attempt.report(result.usage, result.rateLimit);
+    attempt.end();
+    return result;
+  } catch (err) {
+    attempt.end(err);
+    throw err;
+  }
+}
+
+/**
+ * Runs one embeddings attempt within the deployment's timeout and the request's deadline. An
+ * answer with the wrong number of vectors, or vectors of another size than the deployment's (or
+ * the requested) dimensions, is an invalid response: vectors of another size must never reach a
+ * client's index (ADR 029).
+ */
+export async function runEmbed(
+  ctx: AttemptContext,
+  req: EmbeddingRequest,
+): Promise<EmbeddingResult> {
+  const attempt = new Attempt(ctx, false);
+  try {
+    const limit = untilFirst(ctx, 'response');
+    const traced =
+      attempt.traceparent === undefined ? req : { ...req, traceparent: attempt.traceparent };
+    const result = await attempt.within(
+      ctx.deployment.provider.embed(traced, attempt.signal),
+      limit.ms,
+      limit.phase,
+    );
+    const size = req.dimensions ?? ctx.deployment.embedding?.dimensions;
+    if (result.vectors.length !== req.input.length) {
+      throw new ProviderError(
+        'invalid_response',
+        `upstream sent ${result.vectors.length} vectors for ${req.input.length} inputs`,
+      );
+    }
+    if (size !== undefined && result.vectors.some((v) => v.length !== size)) {
+      throw new ProviderError(
+        'invalid_response',
+        `upstream sent vectors that are not ${size} long`,
+      );
+    }
     attempt.report(result.usage, result.rateLimit);
     attempt.end();
     return result;

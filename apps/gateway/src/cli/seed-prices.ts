@@ -13,4 +13,12 @@ export const SEED_PRICES = [
     output_micro_usd_per_mtok: 2_000_000,
     effective_from: new Date(0),
   },
+  // The mock embeddings model: input only, as embedding prices are. Illustrative too.
+  {
+    provider: 'mock',
+    model: 'mock-embed',
+    input_micro_usd_per_mtok: 100_000,
+    output_micro_usd_per_mtok: 0,
+    effective_from: new Date(0),
+  },
 ];

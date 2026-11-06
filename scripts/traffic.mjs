@@ -27,13 +27,15 @@ const PROMPTS = [
 const REPEATED = 'Reply with the single word: pong.';
 
 /**
- * The requests one run sends: every chat route, streaming and not, with small output caps. The
- * prompts rotate with the hour, so runs differ while each stays repeatable.
+ * The requests one run sends: every chat route, streaming and not, with small output caps, and
+ * one small embeddings request (M13). The prompts rotate with the hour, so runs differ while each
+ * stays repeatable.
  */
 export function plan(now = new Date()) {
   const pick = (offset) => PROMPTS[(now.getUTCHours() + offset) % PROMPTS.length];
   const chat = (name, model, prompt, { stream = false, maxTokens = 48, cache = false } = {}) => ({
     name,
+    path: '/v1/chat/completions',
     stream,
     headers: cache ? { 'x-gateway-cache': 'on' } : {},
     body: {
@@ -51,6 +53,14 @@ export function plan(now = new Date()) {
     chat('variety, streamed', 'chat-variety', pick(3), { stream: true }),
     chat('repeated', 'chat-default', REPEATED, { maxTokens: 8, cache: true }),
     chat('repeated again', 'chat-default', REPEATED, { maxTokens: 8, cache: true }),
+    // Gemini's embeddings are free on its free tier; one short input a run.
+    {
+      name: 'embeddings',
+      path: '/v1/embeddings',
+      stream: false,
+      headers: {},
+      body: { model: 'gemini-embedding-001', input: pick(4) },
+    },
   ];
 }
 
@@ -109,7 +119,7 @@ async function readStream(res) {
 async function send(baseUrl, apiKey, request) {
   const started = performance.now();
   try {
-    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+    const res = await fetch(`${baseUrl}${request.path}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${apiKey}`,
@@ -159,7 +169,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     console.log(`dry run: ${requests.length} requests to ${baseUrl || '<DEMO_BASE_URL>'}`);
     for (const r of requests) {
       const extra = Object.keys(r.headers).length > 0 ? ` ${JSON.stringify(r.headers)}` : '';
-      console.log(`  POST /v1/chat/completions ${r.name}: ${JSON.stringify(r.body)}${extra}`);
+      console.log(`  POST ${r.path} ${r.name}: ${JSON.stringify(r.body)}${extra}`);
     }
     return 0;
   }

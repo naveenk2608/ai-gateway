@@ -5,6 +5,8 @@ import {
   messageText,
   type ChatRequest,
   type ChatResult,
+  type EmbeddingRequest,
+  type EmbeddingResult,
   type FinishReason,
   type Provider,
   type StreamEvent,
@@ -32,6 +34,8 @@ export interface MockSettings {
   retryAfterMs: number;
   /** Streaming: drop the connection after this many tokens. Non-streaming: fail mid-response. */
   dropAfterTokens?: number | undefined;
+  /** Embeddings: the vectors' size when the request sets none (the deployment's dimensions). */
+  embeddingDimensions?: number | undefined;
 }
 
 export interface MockStats {
@@ -133,6 +137,19 @@ function plannedJson(req: ChatRequest): string | undefined {
   if (format?.type === 'json_schema') return JSON.stringify(sampleFor(format.schema ?? {}));
   if (format?.type === 'json_object') return JSON.stringify({ response: WORDS.join(' ') });
   return undefined;
+}
+
+/**
+ * The mock's embedding of a text: the same text always gives the same vector of unit length,
+ * drawn from a PRNG seeded with a hash of the text.
+ */
+export function mockVector(text: string, size: number): number[] {
+  const random = seededRandom(createHash('sha256').update(text).digest().readUInt32BE(0));
+  const vector = Array.from({ length: size }, () => random() * 2 - 1);
+  let norm = 0;
+  for (const x of vector) norm += x * x;
+  norm = Math.sqrt(norm) || 1;
+  return vector.map((x) => x / norm);
 }
 
 /** Rough prompt size: about four characters per token. */
@@ -243,6 +260,31 @@ export class MockProvider implements Provider {
       }
       outcome = 'completed';
       yield { type: 'finish', finishReason: plan.finishReason, usage: plan.usage };
+    } catch (err) {
+      outcome = signal.aborted ? 'canceled' : 'failed';
+      throw err;
+    } finally {
+      this.#end(outcome);
+    }
+  }
+
+  /** Deterministic unit vectors (mockVector), after `latencyMs`, failing as configured. */
+  async embed(req: EmbeddingRequest, signal: AbortSignal): Promise<EmbeddingResult> {
+    this.#begin();
+    let outcome: Outcome = 'canceled';
+    try {
+      await this.#clock.sleep(this.#settings.latencyMs, signal);
+      this.#failIfConfigured();
+      const size = req.dimensions ?? this.#settings.embeddingDimensions ?? 8;
+      const promptTokens = req.input.reduce(
+        (n, text) => n + Math.max(1, estimateTextTokens(text)),
+        0,
+      );
+      outcome = 'completed';
+      return {
+        vectors: req.input.map((text) => mockVector(text, size)),
+        usage: { promptTokens, completionTokens: 0, totalTokens: promptTokens },
+      };
     } catch (err) {
       outcome = signal.aborted ? 'canceled' : 'failed';
       throw err;

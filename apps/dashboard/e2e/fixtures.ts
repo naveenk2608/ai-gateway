@@ -198,6 +198,7 @@ const requestRow = {
   errorCode: null,
   attemptCount: 3,
   cacheHit: false,
+  endpoint: 'chat' as const,
   startedAt: '2026-10-20T12:00:00.000Z',
   latencyMs: 812,
   ttftMs: 238,

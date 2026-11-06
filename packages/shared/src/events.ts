@@ -56,6 +56,8 @@ export const usageEventSchema = z.object({
     apiKeyId: z.uuid().nullable(),
     model: z.string().min(1).max(256),
     deployment: z.string().nullable(),
+    /** Which /v1 endpoint the request came to (M13); absent from older gateways, meaning chat. */
+    endpoint: z.enum(['chat', 'embeddings']).optional(),
     stream: z.boolean(),
     status: z.enum(['success', 'error', 'canceled', 'rejected']),
     httpStatus: z.number().int().min(100).max(599),
