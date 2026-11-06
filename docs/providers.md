@@ -47,6 +47,34 @@ a minute after the last, then 2, 4, 8 minutes and so on up to an hour while it k
 keeps the breaker open. Nemotron 3 Super was removed from the models file after M12, since NVIDIA
 answers it with "Not found for account"; its price rows stay in migration 0006 (ADR 016).
 
+## Embeddings deployments
+
+Added in M13 (ADR 029); every value was checked on 2026-11-06. Embedding models are priced on
+input only; the prices are in
+[db/migrations/0011_embedding-prices.sql](../db/migrations/0011_embedding-prices.sql).
+
+| Deployment | Provider | Model ID | Vector size | Input limit | List price per 1M input tokens | Free tier | Sources (checked 2026-11-06) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `gemini-embedding-001` | Gemini API | `gemini-embedding-001` (text only; `gemini-embedding-2` is multimodal) | 3,072 by default (128 to 3,072 on the native API; Google's OpenAI-compatibility page does not mention `dimensions`, so the gateway does not take it) | 2,048 tokens per input; no per-request input count published | $0.15 (paid tier) | "Free of charge" | Models and sizes: <https://aistudio.google.com/docs/embeddings>; endpoint `/v1beta/openai/embeddings` and model names: <https://aistudio.google.com/docs/openai>; price: <https://aistudio.google.com/docs/pricing> |
+| `mistral-embed` | Mistral | `mistral-embed` (model ID `mistral-embed-2312`) | 1,024 ("The mistral-embed model generates embedding vectors of dimension 1024") | 8k tokens; no per-request input count published | $0.1 | Free mode exists with limits shown only in the console (as for its chat models) | Model page: <https://docs.mistral.ai/models/mistral-embed-23-12>; size: <https://docs.mistral.ai/cookbooks/mistral-embeddings-embeddings>; endpoint: <https://docs.mistral.ai/api/endpoint/embeddings> |
+| `cloudflare-bge-large-en-v1.5` | Cloudflare Workers AI | `@cf/baai/bge-large-en-v1.5` | 1,024 | 512 tokens; batch size not published; 1,500 requests/min for this model (3,000 for other embedding models) | $0.204 (18,582 Neurons) | 10,000 Neurons a day, shared with the account's other models | Model: <https://developers.cloudflare.com/workers-ai/models/bge-large-en-v1.5/>; the OpenAI-compatible `/v1/embeddings` example uses this model: <https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/>; price: <https://developers.cloudflare.com/workers-ai/platform/pricing/>; limit: <https://developers.cloudflare.com/workers-ai/platform/limits/> |
+| `ollama-nomic-embed-text` | Ollama (local) | `nomic-embed-text` | 768 | 2K context in Ollama's listing | none (local) | runs locally | <https://ollama.com/library/nomic-embed-text>; size from the model's own card: <https://huggingface.co/nomic-ai/nomic-embed-text-v1.5>; `/api/embed`: <https://docs.ollama.com/api/embed> |
+| `mock-embed` | the mock | `mock-embed` | 256 (1 to 256 with `dimensions`) | the gateway's caps | demo price in `pnpm db:seed` ($0.10, illustrative) | — | ADR 029 |
+
+Gemini, Mistral and Cloudflare are `billing: free_tier`. Cloudflare's quota in the models file is
+its published 1,500 requests a minute for this model; no token quota is set, because the
+10,000 free Neurons a day are shared with `cloudflare-llama-4-scout`, whose token quota assumes
+it has them all (PLAN-NOTES, M13). No provider publishes a per-request input count, so the
+gateway's own caps apply: 2,048 inputs and 300,000 estimated tokens per request (OpenAI's documented
+limits for its embeddings API, the format the gateway copies: the API reference as mirrored in
+<https://docs.rs/async-openai/latest/src/async_openai/types/embeddings/embedding.rs.html> and
+<https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/embeddings>; platform.openai.com
+answered 403 to a direct fetch), and 393,216 numbers per answer.
+
+Groq has no embeddings endpoint (its API reference lists none, checked 2026-11-06); NVIDIA,
+OpenRouter and Z.AI were not used for embeddings, as the milestone asked only for Gemini, Mistral
+and Cloudflare.
+
 ## Tools, JSON output and images
 
 Each deployment's `capabilities` in the models file (ADR 028) come from the provider's docs for

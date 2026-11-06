@@ -230,7 +230,8 @@ for await (const chunk of stream) process.stdout.write(chunk.choices[0]?.delta.c
 | Endpoint | Meaning |
 | --- | --- |
 | `POST /v1/chat/completions` | OpenAI chat completions. `stream: true` returns SSE chunks ending with `data: [DONE]`; `stream_options.include_usage` adds a usage chunk. |
-| `GET /v1/models` | OpenAI model list: the models this key's project may use that have an enabled deployment. `created` is when the gateway loaded its models file. |
+| `POST /v1/embeddings` | OpenAI embeddings: one vector per input, as floats or base64. See [Embeddings](#embeddings). |
+| `GET /v1/models` | OpenAI model list: the chat and embeddings models this key's project may use that have an enabled deployment. `created` is when the gateway loaded its models file. |
 | `/admin/...` | Admin API used by the dashboard; see [Admin API](#admin-api). |
 | `GET /dashboard/` | The dashboard, when the gateway has a built one (`DASHBOARD_DIR`, set in the image); `GET /` redirects to it, or to `/docs` without one. |
 | `GET /docs` | Swagger UI; the OpenAPI 3.1 spec is at `/docs/json`. |
@@ -339,6 +340,56 @@ elsewhere). What is billed is still the usage the provider reports. The cache ke
 `tool_choice`, `parallel_tool_calls`, `response_format`, image parts, tool calls and tool results,
 and cached answers keep their tool calls.
 
+### Embeddings
+
+`POST /v1/embeddings` takes OpenAI's `model`, `input` (a string or an array of strings; token
+arrays get a 400), `encoding_format` (`float`, or `base64`: little-endian float32, which the OpenAI
+SDK asks for by default and decodes), `dimensions` and `user`
+([apps/gateway/test/embeddings.test.ts](apps/gateway/test/embeddings.test.ts)):
+
+```ts
+const { data } = await client.embeddings.create({
+  model: 'gemini-embedding-001',
+  input: ['first text', 'second text'],
+});
+console.log(data[0].embedding.length); // 3072
+```
+
+It goes through the same path as chat: the API key and its allow-list, request and token limits
+(the tokens are the estimated input; nothing is reserved for output), the budget at the model's
+input price, free-tier quotas and 429 cooldowns, breakers, retries, the request deadline, the
+cache, and one usage event that the worker stores as a request record with `endpoint:
+embeddings` (shown in the dashboard's request list). Embedding prices are input only (migration
+0011); free-tier deployments are billed nothing, as for chat.
+
+| Model | Served by | Vector size | `dimensions` | Needs |
+| --- | --- | --- | --- | --- |
+| `gemini-embedding-001` | Gemini API, free tier | 3,072 | not taken | `GEMINI_API_KEY` |
+| `mistral-embed` | Mistral | 1,024 | not taken | `MISTRAL_API_KEY` |
+| `bge-large-en-v1.5` | Cloudflare Workers AI, `@cf/baai/bge-large-en-v1.5` | 1,024 | not taken | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+| `nomic-embed-text` | Ollama | 768 | not taken | a running Ollama |
+| `mock-embed` | the mock: the same input always gives the same unit-length vector | 256 | 1 to 256 | nothing |
+
+A deployment is an embeddings deployment with `"type": "embeddings"` and `embedding: {
+dimensions, dimensionsRange?, maxInputs? }`, from the provider's docs: the vector size, the sizes a
+client may ask for (without a range, `dimensions` gets a 400), and the inputs per request where the
+provider documents a limit. Vectors from different models, or of different sizes, cannot share an
+index, so an embeddings model falls back only between deployments of the same model with the same
+dimensions, and never to the mock; the models file is refused at startup if a route mixes them, or
+mixes chat and embeddings deployments (ADR 029). Sending a chat model to `/v1/embeddings`, or an
+embeddings model to `/v1/chat/completions`, gets 400 `model_endpoint_mismatch`. An answer with
+vectors of another size than configured is treated as an invalid response from that deployment.
+
+Limits per request: at most 2,048 inputs and about 300,000 estimated input tokens (OpenAI's
+documented limits for this format; none of the providers above documents its own), and at most
+393,216 numbers in the answer (inputs times dimensions: 128 inputs at 3,072 dimensions), so a
+provider's answer stays within the 10 MiB the gateway reads. Each input's own length is left to
+the provider (Gemini takes 2,048 tokens, Mistral 8k, `bge-large-en-v1.5` 512).
+
+With `CACHE_ENABLED=true`, embeddings are cached by project, model, inputs, `dimensions` and
+`encoding_format`, without the temperature rule (an input always gives the same vector);
+`x-gateway-cache: off` skips the cache. Hits cost nothing and are recorded with `cacheHit: true`.
+
 ### Errors
 
 Errors use the OpenAI shape `{"error": {"message", "type", "param", "code"}}` and never include
@@ -348,8 +399,10 @@ can help.
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | The body failed validation. |
+| 400 | `model_endpoint_mismatch` | A chat model sent to `/v1/embeddings`, or an embeddings model to `/v1/chat/completions`. |
+| 400 | `unsupported_parameter` | `dimensions` on an embeddings model that does not take it, or outside its range. |
 | 400 | `model_capability_unsupported` | No deployment of the model supports what the request uses (tools, a `tool_choice`, a response format, images); `param` names the field. |
-| 400 | `request_exceeds_limit` | The request could never fit: more tokens than the TPM limit, or a worst-case cost above the project's per-request cap or whole budget. Lower `max_tokens`. |
+| 400 | `request_exceeds_limit` | The request could never fit: more tokens than the TPM limit, or a worst-case cost above the project's per-request cap or whole budget (lower `max_tokens`); or an embeddings request over its input caps. |
 | 401 | `invalid_api_key` | Missing, unknown, revoked or expired key. |
 | 429 | `too_many_invalid_api_keys` | The client IP sent too many key IDs that do not exist; refused before any key lookup, with `retry-after`. |
 | 403 | `model_not_allowed` | The model is outside the project's allow-list. |
@@ -466,6 +519,7 @@ deployment is disabled and the model answers 404):
 | `llama-4-scout` | Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` |
 | `glm-4.7-flash` | Z.AI | `ZAI_API_KEY` |
 | `llama3.2` | Ollama, `llama3.2:1b` | a running Ollama |
+| `gemini-embedding-001`, `mistral-embed`, `bge-large-en-v1.5`, `nomic-embed-text`, `mock-embed` | embeddings models, see [Embeddings](#embeddings) | as above |
 
 A deployment whose key variable is empty is disabled at startup (the log says which), and a
 model with no enabled deployment answers 404. `chat-default`, `chat-fast`, `chat-cheap` and
