@@ -1,0 +1,341 @@
+{
+  "runId": "2026-11-08T0818Z-d5b6ba1",
+  "generatedAt": "2026-11-08T08:18:30.985Z",
+  "git": {
+    "commit": "d5b6ba1f67ed9e8c810b5b291dce1fdfc9017359",
+    "dirty": false
+  },
+  "build": "docker compose build",
+  "host": {
+    "cpuModel": "AMD EPYC 7763 64-Core Processor",
+    "vcpus": 4,
+    "memoryBytes": 16760344576,
+    "arch": "x64",
+    "kernel": "Linux 7.0.0-1017-azure",
+    "os": "Ubuntu 24.04.5 LTS",
+    "virtualization": {
+      "hypervisorFlag": true,
+      "detected": "microsoft",
+      "vendor": "Microsoft Corporation",
+      "product": "Virtual Machine"
+    }
+  },
+  "docker": {
+    "server": "28.0.4",
+    "compose": "2.38.2"
+  },
+  "versions": {
+    "k6": "k6 v2.3.0 (commit/e088784614, go1.27.1, linux/amd64)",
+    "nodeInGatewayImage": "v22.23.3"
+  },
+  "images": [
+    {
+      "image": "postgres:16.15-alpine3.24",
+      "id": "sha256:4278d7b1e3deb3193ddc803158f6532963f059fc25a2eefaee4b5a9e71741873",
+      "repoDigests": [
+        "postgres@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
+      ]
+    },
+    {
+      "image": "redis:7.4.11-alpine3.21",
+      "id": "sha256:4df5c34dc41256fc4ed293482cb34281e17d133077e9aa3c6a87fda60a356c65",
+      "repoDigests": [
+        "redis@sha256:d9436322172a5b482c187bf1f363d3c4fea086fcca6b9c8a94de8f0f39ed3193"
+      ]
+    },
+    {
+      "image": "ai-gateway-bench/gateway:local",
+      "id": "sha256:62a1238ef4dfad878fff900d6687be6725751ea0f3f75fb7924c841be56af73a",
+      "repoDigests": []
+    },
+    {
+      "image": "ai-gateway-bench/worker:local",
+      "id": "sha256:8a48c1a653ed2e1647710d5b408e35cc57fe7ccf4e4616c5fffed54915aa61e8",
+      "repoDigests": []
+    },
+    {
+      "image": "grafana/k6:2.3.0",
+      "id": "sha256:fc863de07aa1dbdd9f797fd561ca8614777a1c8dde0b021d97dc863127b6203e",
+      "repoDigests": [
+        "grafana/k6@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8"
+      ]
+    }
+  ],
+  "config": {
+    "gateway": {
+      "API_KEY_PEPPER": "<redacted>",
+      "BOOTSTRAP_ADMIN_EMAIL": "bench@example.com",
+      "BOOTSTRAP_ADMIN_PASSWORD": "<redacted>",
+      "BOOTSTRAP_PROJECT_NAME": "Benchmarks",
+      "CACHE_ENABLED": "true",
+      "DATABASE_URL": "postgres://gateway@postgres:5432/gateway",
+      "LOG_LEVEL": "info",
+      "MOCK_API_KEY": "<redacted>",
+      "MODELS_CONFIG_PATH": "/bench/models.json",
+      "REDIS_URL": "redis://redis:6379",
+      "RUN_WORKER_IN_PROCESS": "false",
+      "SESSION_COOKIE_SECURE": "false"
+    },
+    "gatewayInstances": 2,
+    "worker": {
+      "DATABASE_URL": "postgres://gateway@postgres:5432/gateway",
+      "LOG_LEVEL": "info",
+      "METRICS_HOST": "0.0.0.0",
+      "REDIS_URL": "redis://redis:6379",
+      "WORKER_CLAIM_IDLE_MS": "5000"
+    },
+    "mock": {
+      "MOCK_HOST": "0.0.0.0",
+      "MOCK_PORT": "8090",
+      "MOCK_SETTINGS": "{\"latencyMs\":50,\"ttftMs\":50,\"tokensPerSecond\":400,\"completionTokens\":32}"
+    },
+    "models": {
+      "deployments": {
+        "bench-http-mock": {
+          "provider": "openai-compatible",
+          "model": "bench-mock",
+          "baseUrl": "http://mock:8090/v1",
+          "apiKeyEnv": "MOCK_API_KEY"
+        },
+        "bench-fast": {
+          "provider": "openai-compatible",
+          "model": "bench-mock",
+          "baseUrl": "http://mock-fast:8090/v1",
+          "apiKeyEnv": "MOCK_API_KEY"
+        },
+        "bench-slow": {
+          "provider": "openai-compatible",
+          "model": "bench-mock",
+          "baseUrl": "http://mock-slow:8090/v1",
+          "apiKeyEnv": "MOCK_API_KEY"
+        }
+      },
+      "models": {
+        "bench-1": {
+          "deployment": "bench-http-mock"
+        },
+        "bench-spread": {
+          "policy": "peak_ewma",
+          "targets": [
+            {
+              "deployment": "bench-fast"
+            },
+            {
+              "deployment": "bench-slow"
+            }
+          ]
+        },
+        "bench-coalesce": {
+          "deployment": "bench-slow"
+        }
+      }
+    }
+  },
+  "scenarios": [
+    {
+      "name": "overhead-direct-plain-10vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "false",
+        "VUS": "10",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:19:47.471Z",
+      "wallClockMs": 20426
+    },
+    {
+      "name": "overhead-gateway-plain-10vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "false",
+        "VUS": "10",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:20:07.897Z",
+      "wallClockMs": 20457
+    },
+    {
+      "name": "overhead-direct-stream-10vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "true",
+        "VUS": "10",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:20:28.354Z",
+      "wallClockMs": 20465
+    },
+    {
+      "name": "overhead-gateway-stream-10vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "true",
+        "VUS": "10",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:20:48.819Z",
+      "wallClockMs": 20400
+    },
+    {
+      "name": "overhead-direct-plain-50vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "false",
+        "VUS": "50",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:21:09.219Z",
+      "wallClockMs": 20440
+    },
+    {
+      "name": "overhead-gateway-plain-50vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "false",
+        "VUS": "50",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:21:29.659Z",
+      "wallClockMs": 20527
+    },
+    {
+      "name": "overhead-direct-stream-50vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "true",
+        "VUS": "50",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:21:50.186Z",
+      "wallClockMs": 20513
+    },
+    {
+      "name": "overhead-gateway-stream-50vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "true",
+        "VUS": "50",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:22:10.699Z",
+      "wallClockMs": 20615
+    },
+    {
+      "name": "overhead-direct-plain-100vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "false",
+        "VUS": "100",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:22:31.314Z",
+      "wallClockMs": 20447
+    },
+    {
+      "name": "overhead-gateway-plain-100vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "false",
+        "VUS": "100",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:22:51.761Z",
+      "wallClockMs": 20556
+    },
+    {
+      "name": "overhead-direct-stream-100vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "direct",
+        "STREAM": "true",
+        "VUS": "100",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:23:12.318Z",
+      "wallClockMs": 20563
+    },
+    {
+      "name": "overhead-gateway-stream-100vu",
+      "script": "overhead.js",
+      "env": {
+        "TARGET": "gateway",
+        "STREAM": "true",
+        "VUS": "100",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:23:32.881Z",
+      "wallClockMs": 20804
+    },
+    {
+      "name": "ratelimit",
+      "script": "ratelimit.js",
+      "env": {
+        "RPM": "60",
+        "RATE": "10",
+        "DURATION": "30s"
+      },
+      "startedAt": "2026-11-08T08:23:53.685Z",
+      "wallClockMs": 30414
+    },
+    {
+      "name": "accounting",
+      "script": "accounting.js",
+      "env": {
+        "RATE": "40",
+        "DURATION": "30s",
+        "FAULT_PAUSE_AT_S": "8",
+        "FAULT_KILL_AT_S": "11",
+        "FAULT_UNPAUSE_AT_S": "13",
+        "FAULT_START_AT_S": "14"
+      },
+      "startedAt": "2026-11-08T08:24:24.099Z",
+      "wallClockMs": 37652
+    },
+    {
+      "name": "cache",
+      "script": "cache.js",
+      "env": {
+        "PROMPTS": "20",
+        "RATE": "20",
+        "DURATION": "20s"
+      },
+      "startedAt": "2026-11-08T08:25:01.751Z",
+      "wallClockMs": 23419
+    },
+    {
+      "name": "spread",
+      "script": "spread.js",
+      "env": {
+        "RATE": "20",
+        "DURATION": "60s",
+        "FAST_MS": "100",
+        "SLOW_MS": "200",
+        "SLOWED_MS": "400"
+      },
+      "startedAt": "2026-11-08T08:25:25.170Z",
+      "wallClockMs": 60798
+    },
+    {
+      "name": "coalesce",
+      "script": "coalesce.js",
+      "env": {
+        "ROUNDS": "5",
+        "BATCH": "50",
+        "UPSTREAM_MS": "1000"
+      },
+      "startedAt": "2026-11-08T08:26:25.968Z",
+      "wallClockMs": 5568
+    }
+  ],
+  "totalWallClockMs": 481274
+}
