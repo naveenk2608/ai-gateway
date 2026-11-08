@@ -692,12 +692,124 @@ share one upstream call.
 - Power-of-two-choices with PeakEWMA for lowest-latency routing.
 - A retry budget per deployment.
 - Request coalescing for identical cacheable requests in flight.
+- Quota groups: free allowances shared by several deployments of one account.
 
 **Acceptance**
 
 - [ ] A benchmark shows traffic spread across deployments.
 - [ ] 50 identical concurrent requests make one upstream call.
 - [ ] Retries stop at the budget during a provider outage.
+- [ ] With `peak_ewma`, tests show traffic spread across deployments, weighted toward the faster
+      one, and moving off one that slows down.
+- [ ] In a burst of failures, retries on a deployment stay within its budget, and in quiet traffic
+      a single failure still retries.
+- [ ] 50 identical concurrent requests make one upstream call and 50 request records, 49 of them
+      marked coalesced.
+- [ ] Two deployments in one quota group stop together when the shared allowance runs out.
+- [ ] The bench workflow runs when started by hand and uploads its results.
+- [ ] CI is green, and the git log and git grep checks are clean.
+
+**PLAN-NOTES rows it closes**
+
+- 2026-11-03 M11 "Every routed try now makes one Redis round trip…" (its OpenRouter part: one
+  `:free` deployment because a shared quota could not be expressed).
+- 2026-11-06 M13 "Cloudflare's 10,000 free Neurons a day are per account…".
+
+### M14 plan (2026-11-08)
+
+Order A → G. Each part is pushed in small commits, CI is checked after each push, and a part whose
+CI stays red after three fixes is reverted and recorded. The local machine has little free memory,
+so formatting is checked per file, the typecheck per package and only the affected unit tests run
+locally; CI runs lint and every suite. Routing state (latency estimates, tries in flight, retry
+budgets, flights being coalesced) lives in each instance's memory; only quota groups are shared,
+through Redis, failing open like the quotas (ADR 025). Every new behaviour has a setting that
+switches it off. Defaults borrowed from an algorithm's source are cited with the URL and the date
+checked (2026-11-08):
+
+- Finagle, "Clients" guide (<https://twitter.github.io/finagle/guide/Clients.html>): Peak EWMA's
+  `decayTime` defaults to 10 seconds; the default retry budget allows about 20% of requests to be
+  retried on top of 10 retries per second.
+- tower, `load::peak_ewma` source (<https://docs.rs/tower/latest/src/tower/load/peak_ewma.rs.html>):
+  cost = estimate x (pending + 1); a sample above the estimate replaces it, a lower one moves it by
+  `1 - exp(-elapsed / decay)`; the estimate decays toward 0 while it is read without new samples;
+  "an arbitrary default RTT of 1 second" for an endpoint with no samples.
+- Envoy, `RetryBudget` (<https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/circuit_breaker.proto>):
+  `budget_percent` defaults to 20%, `min_retry_concurrency` to 3.
+- Linkerd, "Configuring Retries" (<https://linkerd.io/2.11/tasks/configuring-retries/>): retries
+  add at most 20% to the request load plus 10 retries per second; example `ttl: 10s`.
+
+**Part A — `peak_ewma`.** A new policy; `lowest_latency` is unchanged. A per-instance tracker keeps,
+per deployment, two peak-sensitive estimates (streamed: time to first token; non-streamed: the whole
+response), updated as tower does, and the tries in flight (from the start of a try until its
+response or stream ends, failed and cancelled tries included). Score = estimate x (in flight + 1),
+with the request's own mode's estimate, else the other mode's, else `PEAK_EWMA_DEFAULT_MS` (1,000,
+tower). Two different deployments are picked with the injected random; the lower score goes first,
+the rest follow lowest score first; last-resort targets stay last. Breakers, quotas, cooldowns,
+capability filters and the budget's cheapest-first rule apply as for every policy. Samples: a
+success records its latency (streams: time to first token), a try that ran its full `timeoutMs`
+records `timeoutMs`, other failures and deadline cuts record nothing. Settings: `PEAK_EWMA_ENABLED`
+(true; false orders `peak_ewma` routes as `lowest_latency`), `PEAK_EWMA_DECAY_MS` (10,000, Finagle),
+`PEAK_EWMA_DEFAULT_MS`. `chat-fast` switches to `peak_ewma`. Prometheus:
+`gateway_peak_ewma_estimate_seconds{deployment,mode}` and `gateway_upstream_in_flight{deployment}`.
+The attempt's reason names both picks and their scores. Unit tests with a manual clock and a seeded
+random: a deployment twice as slow gets some traffic but less; traffic leaves one that slows down
+within a few requests; concurrent requests spread by tries in flight; an unmeasured deployment is
+tried. ADR 030.
+
+**Part B — retry budget.** Per deployment and instance, retries within a sliding window may be at
+most a share of its first tries in that window, or a floor, whichever is larger (Envoy's
+`max(min_retry_concurrency, budget_percent x active)`, counted over Linkerd's `ttl` window instead
+of in-flight requests). Settings: `RETRY_BUDGET_ENABLED` (true), `RETRY_BUDGET_RATIO` (0.2: Envoy,
+Finagle and Linkerd agree), `RETRY_BUDGET_MIN_RETRIES` (3 per window: Envoy's floor; Finagle's and
+Linkerd's 10 a second would allow 100 retries in a window, far more than a free tier takes) and
+`RETRY_BUDGET_WINDOW_MS` (10,000: Linkerd's `ttl`). A fallback is the next deployment's first try,
+so it is never limited by the budget; breakers and `RETRY_MAX_ATTEMPTS` still are. A skipped retry
+moves on to the next deployment, whose reason says `retry budget used up`;
+`gateway_retry_budget_skips_total{deployment}` counts them. Unit tests: a burst of failures keeps
+retries within the budget; a single failure in quiet traffic still retries. A dated note in ADR 011.
+
+**Part C — coalescing.** Requests the cache would take (chat: `cacheable()`; embeddings: not
+`x-gateway-cache: off`) are coalesced on this instance by their cache key (which holds the
+project), whether `CACHE_ENABLED` is on or not; `COALESCE_ENABLED` (true) switches it off. After
+admission and a cache miss, the first request with a key leads and runs as usual; requests with the
+same key that arrive while it runs follow and wait for its answer, each within its own
+`REQUEST_DEADLINE_MS` and until its own client leaves. The upstream call follows a signal that
+aborts only when nobody waits (the leader's client and every follower gone); a streamed leader whose
+client leaves while followers wait is read to its end in the background, so its record still holds
+the attempt and the cost. Followers are recorded like cache hits (their own record, no attempts, no
+quota, zero cost) plus `request_records.coalesced` (migration 0012), answered with
+`x-gateway-cache: coalesced`, and a streamed follower gets the whole answer replayed as a stream.
+A leader's failure is every follower's error. `gateway_coalesced_requests_total{endpoint}`.
+Integration tests with the in-process mock: 50 identical concurrent requests (some streamed) make
+one upstream call and 50 records, 49 coalesced; the leader fails; the leader's client leaves while
+followers wait; a follower leaves early; two projects do not share a call. ADR 031. Coalescing
+across instances is a PLAN-NOTES follow-up.
+
+**Part D — quota groups.** The models file gets `quotaGroups` (a limit per minute and/or per day in
+a named unit) and deployments a `quotaGroup` (the group, plus units per request and/or per million
+input and output tokens). The quota script counts the group with the deployment's own quota in one
+step (reserve before a try, correct to reported usage after, fail open). A deployment whose group is
+used up is skipped with a reason naming the group. Cloudflare's two deployments share one group for
+the free daily Neurons, with the rates from Cloudflare's pricing page (rechecked, with the date);
+the Llama deployment's derived token quota is replaced by the group. OpenRouter stays as it is, with
+a note in its row. Tests: two deployments stop together; reservations are corrected; Redis down
+fails open. A dated note in ADR 025.
+
+**Part E — benchmarks.** k6 scenarios `spread` (two HTTP mocks, one slower, the faster slowed
+part-way through by a settings call on the bench mock) and `coalesce` (50 identical concurrent
+requests checked against the mock's counter), in `pnpm bench` and the generated report. A
+`workflow_dispatch`-only workflow runs `pnpm bench` on a hosted runner and uploads `bench/results`,
+with actions pinned by SHA and read-only permissions (ADR 027). If Docker can run here, the new
+scenarios run and their results and the regenerated report are committed; otherwise the resume note
+says so.
+
+**Part F — live checks**, only with `DEMO_BASE_URL` and `DEMO_API_KEY`: once the demo runs the new
+code, 20 sequential `chat-fast` requests (the deployment of each), and 10 identical temperature-0
+requests at once (one upstream, the rest coalesced or cache hits), each retried up to 3 times a
+minute apart, into a PLAN-NOTES table "M14 real-provider checks". Without them, the commands.
+
+**Part G — wrap-up.** README (the policy, the retry budget, coalescing, quota groups and their
+settings), ADRs 030 and 031, PLAN-NOTES rows, ticked checks, and the "M14 run" row.
 
 ## M15 — Control and safety
 
