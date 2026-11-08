@@ -8,7 +8,7 @@
  *   pnpm bench:report --check       fail if docs/benchmarks.md differs from what the run generates
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Run directories are named `<UTC date>T<hhmm>Z-<commit>`, so names sort by time. */
@@ -556,6 +556,9 @@ export function renderReport(run: Run, resultsPath: string): string {
   ].join('\n')}\n`;
 }
 
+/** A relative path with forward slashes, as markdown links and messages use them. */
+const posix = (path: string) => path.split(sep).join('/');
+
 /** CLI entry: returns the exit code. */
 export function main(argv: string[], root: string, out: (line: string) => void): number {
   const runIndex = argv.indexOf('--run');
@@ -574,8 +577,9 @@ export function main(argv: string[], root: string, out: (line: string) => void):
   const docsPath = join(root, 'docs', 'benchmarks.md');
   let report: string;
   try {
-    const label = relative(root, runDir);
-    report = renderReport(loadRun(runDir, label), relative(dirname(docsPath), runDir));
+    // Forward slashes on every OS: the report's links are the same on Windows as in CI.
+    const label = posix(relative(root, runDir));
+    report = renderReport(loadRun(runDir, label), posix(relative(dirname(docsPath), runDir)));
   } catch (err) {
     if (err instanceof ReportError) {
       out(err.message);
