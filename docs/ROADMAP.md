@@ -696,18 +696,32 @@ share one upstream call.
 
 **Acceptance**
 
-- [ ] A benchmark shows traffic spread across deployments.
-- [ ] 50 identical concurrent requests make one upstream call.
-- [ ] Retries stop at the budget during a provider outage.
-- [ ] With `peak_ewma`, tests show traffic spread across deployments, weighted toward the faster
-      one, and moving off one that slows down.
-- [ ] In a burst of failures, retries on a deployment stay within its budget, and in quiet traffic
-      a single failure still retries.
-- [ ] 50 identical concurrent requests make one upstream call and 50 request records, 49 of them
-      marked coalesced.
-- [ ] Two deployments in one quota group stop together when the shared allowance runs out.
-- [ ] The bench workflow runs when started by hand and uploads its results.
-- [ ] CI is green, and the git log and git grep checks are clean.
+- [x] A benchmark shows traffic spread across deployments (`docs/benchmarks.md`, run
+      `2026-11-08T0818Z-d5b6ba1` from the bench workflow: under `peak_ewma`, `bench-fast` served
+      71.0% of requests while it was twice as fast, 20.8% once it was slowed to twice as slow; live,
+      20 sequential `chat-fast` requests went to four deployments, PLAN-NOTES "M14 real-provider
+      checks").
+- [x] 50 identical concurrent requests make one upstream call (the same run: 5 rounds of 50, 5 calls
+      that reached the mock, 245 coalesced; `test/coalescing.test.ts`; live, 1 call and 9
+      coalesced for 10 requests whose arrivals overlapped).
+- [x] Retries stop at the budget during a provider outage (`routing/retry-budget.test.ts`).
+- [x] With `peak_ewma`, tests show traffic spread across deployments, weighted toward the faster
+      one, and moving off one that slows down (`routing/peak-ewma.test.ts`: a deployment twice as
+      slow gets some requests but less than a tenth of the faster one's; traffic leaves one that
+      slows down within two requests; concurrent requests spread by tries in flight; an
+      unmeasured deployment is tried).
+- [x] In a burst of failures, retries on a deployment stay within its budget, and in quiet traffic
+      a single failure still retries (`routing/retry-budget.test.ts`: 10 retries for 50 failing
+      requests in one window, against 50 without the budget).
+- [x] 50 identical concurrent requests make one upstream call and 50 request records, 49 of them
+      marked coalesced (`test/coalescing.test.ts` against Postgres and Redis through the worker,
+      some streamed; `proxy/coalesce.test.ts` for the events).
+- [x] Two deployments in one quota group stop together when the shared allowance runs out
+      (`test/quota-groups.test.ts` against Redis).
+- [x] The bench workflow runs when started by hand and uploads its results (run 42462355941,
+      `workflow_dispatch` on `d5b6ba1`, artifact `bench-results`; its run is committed).
+- [x] CI is green, and the git log and git grep checks are clean (checked before every push; CI
+      results in PLAN-NOTES, "M14 run").
 
 **PLAN-NOTES rows it closes**
 

@@ -10,12 +10,15 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: milestones M0-M12 are built.** The MVP (M0-M5), the analytics API (M6), the full
+**Status: milestones M0-M14 are built.** The MVP (M0-M5), the analytics API (M6), the full
 dashboard (M7), observability (M8), benchmarks (M9), the AWS deployment code (M10: Terraform
 tested with a mocked provider, [never applied](docs/aws-deployment.md)), real free providers with
 honest costs (M11, see [docs/providers.md](docs/providers.md)), and fixes and supply-chain safety
 (M12: per-IP limits on unknown API keys, rate-limit headers, chat health checks, and a scanned,
-signed image on GHCR). What comes next is in [docs/ROADMAP.md](docs/ROADMAP.md).
+signed image on GHCR), tools, JSON output and embeddings (M13), and smarter routing (M14: power of
+two choices over peak EWMA latency, a retry budget per deployment, coalescing of identical requests
+in flight, and quota groups for free allowances shared by several deployments). What comes next is
+in [docs/ROADMAP.md](docs/ROADMAP.md).
 Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trade-offs in
 [docs/trade-offs.md](docs/trade-offs.md).
 
@@ -23,9 +26,11 @@ Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trad
   SDKs work unchanged.
 - Limits per key and per project (requests/min, tokens/min, concurrent requests) and monthly
   budgets per project, enforced across any number of gateway instances with Redis Lua scripts.
-- Routing per model: priority with fallback, weighted, lowest latency or lowest cost; bounded
-  retries with jittered backoff (never after the first streamed byte); circuit breakers with
-  health checks. Each attempt is stored with the reason it was made.
+- Routing per model: priority with fallback, weighted, lowest latency, peak EWMA with power of
+  two choices (spreads load toward faster deployments) or lowest cost; bounded retries with
+  jittered backoff (never after the first streamed byte) and a retry budget per deployment;
+  circuit breakers with health checks. Each attempt is stored with the reason it was made.
+- Identical cacheable requests in flight share one upstream call (coalescing), cache on or off.
 - Usage accounting through a Redis Stream (or SQS on AWS) into Postgres, exactly once in effect,
   with a dead-letter path; costs from versioned prices.
 - Real free-tier providers, each enabled by its key: Groq, Gemini, Mistral, NVIDIA NIM,
@@ -448,7 +453,8 @@ per deployment:
 - `capabilities`: what the model can do (`tools`, `json_object`, `json_schema`, `vision`), false
   unless set, see [Tools, JSON output and images](#tools-json-output-and-images).
 - `billing`: `free_tier` or `paid` (default), see [Costs](#costs-list-price-and-what-was-billed).
-- `quota`: the provider's published free limits, see
+- `quota`: the provider's published free limits, and `quotaGroup`: its share of an allowance
+  that belongs to the account (the file's `quotaGroups`), see
   [Free-tier quotas and cooldowns](#free-tier-quotas-and-cooldowns).
 
 A model names one deployment, or several with a policy:
@@ -465,17 +471,36 @@ A model names one deployment, or several with a policy:
 | `priority` | the first target | the others in order |
 | `weighted` | random, in proportion to `weight` | the rest by weight |
 | `lowest_latency` | lowest moving average of time to first byte; unmeasured ones first | slower ones |
+| `peak_ewma` | of two picked at random, the lower peak EWMA latency x (tries in flight + 1) | the rest by that score |
 | `cost_aware` | lowest worst-case cost at current prices (unpriced counts as free) | costlier ones |
 
 A target marked `"lastResort": true` is tried only after every other target, in the order listed,
 under any policy: the mock in `chat-fast`, `chat-cheap` and `chat-variety` never wins on latency,
 price or weight, but answers when no provider key is set.
 
+- **Peak EWMA** (ADR 030): `peak_ewma` keeps, per deployment and instance, a latency estimate
+  that jumps to a slower sample at once and drifts down toward faster ones over
+  `PEAK_EWMA_DECAY_MS` (10 s, Finagle's default), separately for streams (time to first token) and
+  plain calls, and counts the tries in flight. Each request picks two deployments at random and
+  tries the one with the lower estimate x (in flight + 1) first; one that slows down loses traffic
+  at its next answer, and a slower one still gets an occasional request, so its estimate stays
+  current. A deployment with no answer yet starts at `PEAK_EWMA_DEFAULT_MS` (1 s, tower's
+  default). A try that times out records its timeout; other failures record nothing.
+  `PEAK_EWMA_ENABLED=false` orders `peak_ewma` routes as `lowest_latency`. The attempt's reason
+  names both picks and their scores, e.g.
+  `peak EWMA: picked a 120 (120 ms x 0 in flight + 1) over b 400 (200 ms x 1 in flight + 1)`.
 - **Retries** (ADR 011): a timeout, rate limit, 5xx or dropped connection is retried on the same
   deployment (`RETRY_PER_DEPLOYMENT`, 2 tries) after a random backoff below
   `RETRY_BASE_DELAY_MS x 2^n` (capped at `RETRY_MAX_DELAY_MS`), then the next target is tried.
   `RETRY_MAX_ATTEMPTS` (3) caps attempts per request. A 400 is never retried, and nothing is
   retried once a stream has sent its first byte.
+- **Retry budget** (ADR 011, note of 2026-11-08): across requests, retries on one deployment may be
+  at most `RETRY_BUDGET_RATIO` (0.2) of its first tries within `RETRY_BUDGET_WINDOW_MS` (10 s), or
+  `RETRY_BUDGET_MIN_RETRIES` (3), whichever is more (Envoy's defaults, over a window like
+  Linkerd's). Past it, a failing request moves on to the next deployment instead of retrying, and
+  its reason says `retry budget used up`; a fallback is never limited by it. So during an outage
+  retries add at most a fifth to a provider's load, while a single failure in quiet traffic still
+  retries. Per instance; `RETRY_BUDGET_ENABLED=false` switches it off.
 - **Deadline**: a request whose response has not started (for a stream, its first event) within
   `REQUEST_DEADLINE_MS` (50 s) of arriving gets 504 `upstream_timeout`. No try, retry or fallback
   starts after it, and a try still running is cut at it, so a slow provider can no longer keep a
@@ -497,6 +522,14 @@ price or weight, but answers when no provider key is set.
   or sent with `x-gateway-cache: on`, are answered from an exact-match cache keyed by project,
   model and request. Projects never share entries. Hits count toward request limits but cost
   nothing, and are recorded with `cacheHit: true`. `x-gateway-cache: off` skips the cache.
+- **Coalescing** (ADR 031, on by default): requests the cache would take (as above; embeddings
+  unless `off`) that arrive while an identical one, from the same project, is upstream on the same
+  instance wait for its answer instead of calling the provider again, whether the cache is on or
+  not. Each still passes its own key check and limits, and keeps its own `REQUEST_DEADLINE_MS`; it
+  is answered with `x-gateway-cache: coalesced` (a stream is replayed once the whole answer is
+  there) and recorded like a cache hit, at zero cost, with `coalesced: true`. If the first request
+  fails, the others get the same error; the call is cancelled only when nobody waits for it any
+  more. `COALESCE_ENABLED=false` switches it off. Coalescing does not span instances.
 
 The default file has these models (each hosted one needs its provider's key; without it the
 deployment is disabled and the model answers 404):
@@ -508,7 +541,7 @@ deployment is disabled and the model answers 404):
 | `mock-failover` | `priority`: `mock-error`, then `mock` | nothing |
 | `mock-balanced` | `weighted`: `mock` ×3, `mock-flaky` ×1 | nothing |
 | `chat-default` | `priority`: Groq `openai/gpt-oss-20b`, Gemini `gemini-3.5-flash-lite`, Mistral Small 4, Cloudflare Llama 4 Scout, NVIDIA DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, OpenRouter Gemma 4 31B, then `mock` | nothing; each provider joins once its key is set |
-| `chat-fast` | `lowest_latency`: Groq gpt-oss-120b and gpt-oss-20b, Gemini 3.1 Flash-Lite, Mistral Small 4, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
+| `chat-fast` | `peak_ewma`: Groq gpt-oss-120b and gpt-oss-20b, Gemini 3.1 Flash-Lite, Mistral Small 4, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
 | `chat-cheap` | `cost_aware`: Gemini 3.1 Flash-Lite, Groq gpt-oss-20b, Mistral Small 4, NVIDIA DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
 | `chat-variety` | `weighted`: Groq gpt-oss-120b ×2, Gemini 3.8 Flash ×2, Mistral Large 4, NVIDIA DeepSeek V4.1 Flash, Z.AI GLM-4.7-Flash, OpenRouter Gemma 4 31B, Cloudflare Llama 4 Scout; `mock` as last resort | nothing |
 | `gpt-oss-20b`, `gpt-oss-120b`, `qwen3` | Groq (`qwen/qwen3.8-27b` is a preview model there) | `GROQ_API_KEY` |
@@ -528,7 +561,8 @@ model with no enabled deployment answers 404. `chat-default`, `chat-fast`, `chat
 
 The mock also runs as a standalone HTTP server speaking the OpenAI wire format
 (`POST /v1/chat/completions` with or without streaming, `GET /v1/models`, `GET /stats` for its
-counters), so a gateway reaches it through an `openai-compatible` deployment and a client can
+counters, and `POST /settings` to change `latencyMs`, `ttftMs` or `tokensPerSecond` while it runs;
+it has no authentication, so expose it to nothing else), so a gateway reaches it through an `openai-compatible` deployment and a client can
 call it directly; the benchmarks use it as their upstream. `pnpm mock:serve` starts it on
 `MOCK_HOST:MOCK_PORT` (`127.0.0.1:8090`); `MOCK_SETTINGS` is a JSON object with the same fields
 as a deployment's `mock` block, e.g. `MOCK_SETTINGS='{"latencyMs":50,"completionTokens":32}'`.
@@ -711,6 +745,32 @@ Redis keys, in fixed UTC minutes and days, with one Lua script per try (ADR 025)
   `PROVIDER_COOLDOWN_MS`, 30 s), and every instance skips it until then.
 - If Redis is down, quota checks fail open: the provider's own 429 still protects the quota, and a
   free tier cannot overspend money.
+
+Some free allowances belong to the account, not to one model: Cloudflare's 10,000 free Neurons a
+day are spent by every Workers AI model. Such an allowance is a **quota group** (ADR 025, note of
+2026-11-08): the file's top-level `quotaGroups` names it with a `unit` and a limit `perMinute`
+and/or `perDay`, and each deployment that shares it says how its use converts to that unit:
+
+```json
+"quotaGroups": { "cloudflare-free-neurons": { "unit": "neurons", "perDay": 10000 } },
+"deployments": {
+  "cloudflare-llama-4-scout": {
+    "quotaGroup": {
+      "group": "cloudflare-free-neurons",
+      "perMillionInputTokens": 24545,
+      "perMillionOutputTokens": 77273
+    }
+  }
+}
+```
+
+(`perRequest` counts units per request instead.) The same script counts the group with the
+deployment's own quota: the units of the prompt estimate and output cap are reserved before a try
+and corrected to the reported tokens after it. When the group is used up, every deployment in it
+is skipped, with a reason that names the group:
+`skipped cloudflare-llama-4-scout (quota group cloudflare-free-neurons, 9,990 of 10,000 neurons today)`.
+The default file puts both Cloudflare deployments in that group, with Cloudflare's published rates
+([docs/providers.md](docs/providers.md)).
 
 The Models page shows each deployment's use today against its quota, as a meter, and any running
 cooldown (`GET /admin/models/quotas`). Prometheus has `gateway_provider_skips_total`,
@@ -948,6 +1008,10 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:8080/metrics
 | `gateway_retries_total` / `gateway_fallbacks_total` | deployment / model | Retries on the same deployment; moves to another deployment |
 | `gateway_circuit_breaker_state` / `_transitions_total` | deployment, state / to | 1 for each breaker's current state on this instance; state changes |
 | `gateway_cache_lookups_total` | result | Response-cache hits and misses |
+| `gateway_coalesced_requests_total` | endpoint | Requests answered by an identical request's upstream call on this instance |
+| `gateway_peak_ewma_estimate_seconds` | deployment, mode | Each deployment's peak EWMA latency estimate on this instance (`stream`: time to first token, `plain`: whole response) |
+| `gateway_upstream_in_flight` | deployment | Provider tries in flight on this instance |
+| `gateway_retry_budget_skips_total` | deployment | Retries not made because the deployment's retry budget was used up |
 | `gateway_admission_rejections_total` | reason | `rpm`, `tpm`, `concurrency`, `budget`, `request_too_large`, `limits_unavailable` |
 | `gateway_ttft_seconds` | deployment | Streams: arrival to first token sent |
 | `gateway_output_tokens_per_second` | deployment, stream | Reported completion tokens per second of generation |
@@ -978,9 +1042,10 @@ answering gateway instance's own measurements, from the admin API. History is in
 ## Benchmarks
 
 [docs/benchmarks.md](docs/benchmarks.md) has the gateway's added latency, time to first token and
-throughput, and three correctness checks under load: rate limits across two instances, usage
-accounting through a worker crash (each request stored once), and the cache hit ratio for a
-repeated temperature-0 workload. Every number in it is generated from k6 output committed in
+throughput, three correctness checks under load (rate limits across two instances, usage
+accounting through a worker crash with each request stored once, and the cache hit ratio for a
+repeated temperature-0 workload), and, since M14, how `peak_ewma` spreads traffic between two
+deployments and how many upstream calls identical requests in flight make. Every number in it is generated from k6 output committed in
 [bench/results/](bench/results/), with the machine, configuration, durations and limitations of
 that run (ADR 019). They are cloud VM numbers for that setup, not measurements of the Render demo,
 which is never load-tested.
@@ -993,7 +1058,14 @@ pnpm bench:report   # regenerate docs/benchmarks.md from the newest run in bench
 Only Docker is needed: k6 runs from the pinned `grafana/k6` image on the bench stack's network
 (Postgres, Redis, the HTTP mock provider, two gateway instances, one worker; no published ports).
 `pnpm bench` takes several minutes and removes the stack and its volumes when it ends; commit the
-new `bench/results/<run>/` together with the regenerated report.
+new `bench/results/<run>/` together with the regenerated report. `BENCH_ONLY=spread,coalesce`
+runs only some scenarios, for a trial (the report needs a run with all of them).
+
+Without Docker at hand, the **Bench** workflow (`.github/workflows/bench.yml`) runs `pnpm bench` on
+a GitHub-hosted runner, free for a public repository, only when started by hand (Actions > Bench >
+Run workflow, or `gh workflow run bench.yml`), and uploads `bench/results/` as the `bench-results`
+artifact; copy its new run directory into `bench/results/` and run `pnpm bench:report`. The current
+report comes from such a run.
 
 | Scenario (`bench/k6/`) | What it measures |
 | --- | --- |
@@ -1001,6 +1073,8 @@ new `bench/results/<run>/` together with the regenerated report.
 | `ratelimit.js` | One key with an RPM limit, traffic alternating between both instances: admitted requests against the token bucket's ceiling |
 | `accounting.js` | Load across both instances while Postgres is paused and the worker is killed and restarted: requests sent against rows stored, distinct request IDs and rollup counts |
 | `cache.js` | A fixed set of temperature-0 prompts repeated across both instances: hit ratio against the best possible, and calls that reached the mock |
+| `spread.js` | `peak_ewma` between two mocks, one twice as slow, with the faster one slowed down half way (through the mock's `POST /settings`): which deployment served each request, before and after |
+| `coalesce.js` | Rounds of 50 identical temperature-0 requests sent at once to one instance: calls that reached the mock (its own counter) against requests answered `coalesced` |
 
 ## Container image
 
@@ -1079,8 +1153,8 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Secrets and first run | `API_KEY_PEPPER` (required), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_API_KEY` |
 | Event bus | `EVENT_BUS` (`redis` or `sqs`), `SQS_QUEUE_URL`, `SQS_DLQ_URL`, `AWS_REGION`, `SQS_ENDPOINT` (LocalStack only), `EVENTS_*`, `WORKER_*` |
 | Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*`, `UNKNOWN_KEYS_PER_MINUTE_PER_IP`, `UNKNOWN_KEY_CACHE_MS` |
-| Routing | `RETRY_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
-| Cache | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES` |
+| Routing | `RETRY_*` (with `RETRY_BUDGET_*`), `PEAK_EWMA_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
+| Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `COALESCE_ENABLED` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
 | Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |
 | Retention and shutdown | `ROLLUP_RETENTION_*`, `SHUTDOWN_TIMEOUT_MS`, `MIGRATE_ON_START` |
@@ -1117,6 +1191,9 @@ docs/providers.md        every provider's model IDs, prices and free limits, wit
   `open` fail mode they are not enforced while Redis is down.
 - Circuit breakers are per instance, so instances can briefly disagree about a deployment.
 - The cache is exact-match only and off by default; sampled requests are cached only on request.
+- Latency estimates, tries in flight, retry budgets and coalescing are per instance: N instances
+  keep N budgets, and identical requests landing on different instances each make a call. A
+  streamed request that is coalesced gets no token until the whole answer is ready.
 - No response-quality evaluation: routing weighs latency, cost and failures only.
 - Model capabilities (tools, JSON output, images) are set only where a provider's docs state
   them, so some deployments that could serve a request are skipped; an embeddings model never
