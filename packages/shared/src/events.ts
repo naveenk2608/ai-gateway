@@ -81,6 +81,11 @@ export const usageEventSchema = z.object({
   /** Answered from the response cache (ADR 013): no attempts, and the usage costs nothing. */
   cacheHit: z.boolean().optional(),
   /**
+   * Answered with the answer of an identical request in flight on the same instance (ADR 031):
+   * no attempts, and the usage costs nothing, like a cache hit. Older events have none.
+   */
+  coalesced: z.boolean().optional(),
+  /**
    * The gateway request's W3C trace and span IDs (ADR 017), so the worker's log line for this
    * event joins the same trace. Older events have none.
    */

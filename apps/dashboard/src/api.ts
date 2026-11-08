@@ -41,6 +41,8 @@ export interface RequestSummary {
   errorCode: string | null;
   attemptCount: number;
   cacheHit: boolean;
+  /** Answered by an identical request's upstream call on the same instance (M14). */
+  coalesced?: boolean;
   /** The /v1 endpoint the request came to (M13). */
   endpoint: 'chat' | 'embeddings';
   startedAt: string;

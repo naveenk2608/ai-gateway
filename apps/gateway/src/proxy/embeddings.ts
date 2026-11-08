@@ -20,6 +20,7 @@ import type { Usage } from '../providers/types.js';
 import { runRouted, type RoutingDeps } from '../routing/routed.js';
 import { runEmbed, type AttemptContext } from './attempt.js';
 import { upstreamFailure, watchDisconnect } from './chat-completions.js';
+import { follow, type Coalescer } from './coalesce.js';
 import { setRateLimitHeaders } from './rate-limit-headers.js';
 import { routingHeaders } from './routing-headers.js';
 import { errorBodySchema } from './schema.js';
@@ -74,6 +75,8 @@ export interface EmbeddingsRouteOptions {
   admission: AdmissionControl;
   routing: RoutingDeps;
   cache?: ResponseCache | null;
+  /** Identical requests in flight share one upstream call (ADR 031). */
+  coalescer?: Coalescer | null;
   metrics?: GatewayMetrics;
 }
 
@@ -93,7 +96,25 @@ const badRequest = (code: string, message: string, param: string) =>
  * retries and the request deadline, the cache, and one usage event with `endpoint: embeddings`.
  */
 export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRouteOptions): void {
-  const { registry, clock, verifier, events, admission, routing, cache = null, metrics } = options;
+  const {
+    registry,
+    clock,
+    verifier,
+    events,
+    admission,
+    routing,
+    cache = null,
+    coalescer = null,
+    metrics,
+  } = options;
+  /** Hands the finished trace to the event bus, once (a second call does nothing). */
+  const emit = (trace: RequestTrace | null, httpStatus: number) => {
+    const event = trace?.finish(httpStatus);
+    if (event) {
+      events.publish(event);
+      metrics?.requestFinished(event);
+    }
+  };
   if (!app.hasRequestDecorator('apiKey')) app.decorateRequest('apiKey', null);
   if (!app.hasRequestDecorator('trace')) app.decorateRequest('trace', null);
 
@@ -106,11 +127,7 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
         done();
       },
       onResponse: (request, reply, done) => {
-        const event = request.trace?.finish(reply.statusCode);
-        if (event) {
-          events.publish(event);
-          metrics?.requestFinished(event);
-        }
+        emit(request.trace, reply.statusCode);
         done();
       },
       schema: {
@@ -244,8 +261,9 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
         };
 
         const header = request.headers[CACHE_HEADER];
+        // The cache key also coalesces identical requests in flight (ADR 031), cache on or not.
         const key =
-          cache && header !== 'off'
+          (cache || coalescer?.enabled) && header !== 'off'
             ? embeddingsCacheKey(apiKey.projectId, body.model, input, requested ?? null, encoding)
             : null;
         if (cache && key) {
@@ -260,6 +278,38 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
           }
         }
 
+        // Identical requests in flight share one upstream call (ADR 031): a follower waits for
+        // the leader's vectors (or error) within its own deadline, and costs nothing.
+        const joined =
+          coalescer?.enabled && key ? coalescer.join<CachedEmbeddings>(`emb:${key}`) : null;
+        if (joined && !joined.leader) {
+          trace.coalesced = true;
+          metrics?.coalesced('embeddings');
+          void reply.header(CACHE_HEADER, 'coalesced');
+          let shared: CachedEmbeddings;
+          try {
+            shared = await follow(joined.flight, {
+              clock,
+              clientSignal: disconnect.signal,
+              deadlineAt:
+                routing.deadlineMs === undefined ? undefined : trace.startedAt + routing.deadlineMs,
+            });
+          } catch (err) {
+            throw upstreamFailure(err);
+          }
+          trace.setUsage(shared.usage);
+          if (!shared.usage) trace.estimatePromptOnly();
+          return answer(shared.data, shared.usage);
+        }
+        const flight = joined?.flight;
+        // The leader takes part until its client leaves or it ends; the call stops only when
+        // nobody waits for it.
+        const leaveFlight = flight?.enter('leader');
+        if (leaveFlight) {
+          if (disconnect.signal.aborted) leaveFlight();
+          else disconnect.signal.addEventListener('abort', leaveFlight, { once: true });
+        }
+
         let served: AttemptContext | undefined;
         try {
           const result = await runRouted(
@@ -268,7 +318,7 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
               route,
               trace,
               clock,
-              clientSignal: disconnect.signal,
+              clientSignal: flight ? flight.signal : disconnect.signal,
               log: request.log,
               maxTokens: 0,
               budget: settlement.budget,
@@ -287,13 +337,21 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
           trace.setUsage(result.usage);
           if (!result.usage) trace.estimatePromptOnly();
           const data = result.vectors.map((v) => (encoding === 'base64' ? base64Vector(v) : v));
-          if (cache && key) {
-            const entry: CachedEmbeddings = { data, usage: result.usage };
-            cache.setEmbeddings(key, entry);
+          const entry: CachedEmbeddings = { data, usage: result.usage };
+          flight?.resolve(entry);
+          if (cache && key) cache.setEmbeddings(key, entry);
+          if (flight && disconnect.signal.aborted) {
+            // Its client left while followers kept the call going: recorded as cancelled, with
+            // the call's attempt, usage and cost (ADR 031).
+            trace.setError('client_closed_request');
+            emit(trace, 499);
           }
           return answer(data, result.usage);
         } catch (err) {
+          flight?.reject(err);
           throw upstreamFailure(err);
+        } finally {
+          leaveFlight?.();
         }
       } finally {
         disconnect.dispose();

@@ -101,6 +101,7 @@ export class GatewayMetrics {
   readonly #providerSkips: Counter<'deployment' | 'reason'>;
   readonly #cooldowns: Counter<'deployment'>;
   readonly #retryBudgetSkips: Counter<'deployment'>;
+  readonly #coalesced: Counter<'endpoint'>;
   readonly #unknownKeys: Counter<'result'>;
 
   constructor(registry: Registry, labels: MetricLabels) {
@@ -181,6 +182,12 @@ export class GatewayMetrics {
       labelNames: ['deployment', 'reason'],
       registers,
     });
+    this.#coalesced = new Counter({
+      name: 'gateway_coalesced_requests_total',
+      help: 'Requests answered with the upstream call of an identical request in flight on this instance (ADR 031), by endpoint (chat or embeddings); they made no provider call of their own.',
+      labelNames: ['endpoint'],
+      registers,
+    });
     this.#retryBudgetSkips = new Counter({
       name: 'gateway_retry_budget_skips_total',
       help: "Retries not made because the deployment's retry budget on this instance was used up (ADR 011); the request moved on to the next deployment instead.",
@@ -208,6 +215,10 @@ export class GatewayMetrics {
 
   providerSkipped(deployment: string, reason: 'quota' | 'cooldown'): void {
     this.#providerSkips.inc({ deployment: bounded(deployment, this.#deployments), reason });
+  }
+
+  coalesced(endpoint: 'chat' | 'embeddings'): void {
+    this.#coalesced.inc({ endpoint });
   }
 
   retryBudgetSkipped(deployment: string): void {

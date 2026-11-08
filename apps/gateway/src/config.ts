@@ -155,6 +155,13 @@ export const gatewayConfigSchema = z
       .max(30 * 24 * 3600)
       .default(3_600),
     CACHE_MAX_ENTRY_BYTES: z.coerce.number().int().min(1_024).max(10_000_000).default(262_144),
+    /**
+     * Request coalescing (ADR 031): identical requests the cache would take (chat at temperature
+     * 0 or with `x-gateway-cache: on`; embeddings unless `off`) that arrive while one of them is
+     * upstream wait for its answer instead of calling the provider again, on this instance. On by
+     * default: it keeps nothing beyond the requests themselves, whether CACHE_ENABLED is on or not.
+     */
+    COALESCE_ENABLED: flag.default(true),
 
     /** Apply pending migrations at startup, under an advisory lock (safe with several instances). */
     MIGRATE_ON_START: flag.default(true),

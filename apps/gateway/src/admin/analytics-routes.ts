@@ -52,6 +52,8 @@ const requestSummarySchema = z.object({
   errorCode: z.string().nullable(),
   attemptCount: z.number(),
   cacheHit: z.boolean(),
+  /** Answered by an identical request's upstream call on the same instance (M14, ADR 031). */
+  coalesced: z.boolean(),
   /** The /v1 endpoint: `chat` or `embeddings` (M13). */
   endpoint: z.enum(['chat', 'embeddings']),
   startedAt: z.string(),
@@ -359,6 +361,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
           'r.error_code',
           'r.attempt_count',
           'r.cache_hit',
+          'r.coalesced',
           'r.endpoint',
           'r.started_at',
           'r.latency_ms',
@@ -400,6 +403,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
           errorCode: r.error_code,
           attemptCount: r.attempt_count,
           cacheHit: r.cache_hit,
+          coalesced: r.coalesced,
           endpoint: r.endpoint,
           startedAt: iso(r.started_at),
           latencyMs: r.latency_ms,

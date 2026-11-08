@@ -20,6 +20,7 @@ import { redisInfraProbe } from './admin/infra.js';
 import { processInstanceProbe } from './admin/instance.js';
 import { modelCatalog } from './admin/model-routes.js';
 import { ResponseCache } from './cache/response-cache.js';
+import { Coalescer } from './proxy/coalesce.js';
 import { buildApp, type App } from './app.js';
 import { bootstrap } from './auth/bootstrap.js';
 import { AuthInvalidation } from './auth/invalidation.js';
@@ -283,6 +284,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         maxEntryBytes: config.CACHE_MAX_ENTRY_BYTES,
       })
     : null;
+  const coalescer = new Coalescer(config.COALESCE_ENABLED);
 
   metrics.watch({
     breakers,
@@ -331,6 +333,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       admission,
       routing,
       cache,
+      coalescer,
       metrics,
     });
     registerEmbeddings(instance, {
@@ -341,6 +344,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       admission,
       routing,
       cache,
+      coalescer,
       metrics,
     });
     registerModels(instance, { registry, verifier, clock });

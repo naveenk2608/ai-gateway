@@ -96,6 +96,9 @@ function requestColumns(slowest: number, open: (id: string) => void, providerOf:
       cell: (c) => {
         const deployment = c.getValue();
         if (c.row.original.cacheHit) return <span className="badge tone-accent">cache</span>;
+        if (c.row.original.coalesced) {
+          return <span className="badge tone-accent">coalesced</span>;
+        }
         if (!deployment) return '—';
         return (
           <div className="deployment-cell">
@@ -181,6 +184,11 @@ function RoutingHistory({ detail, providerOf }: { detail: Detail; providerOf: Pr
       <h3>Routing history</h3>
       {detail.cacheHit ? (
         <Empty>Answered from the response cache: no provider was called.</Empty>
+      ) : detail.coalesced && detail.attempts.length === 0 ? (
+        <Empty>
+          Answered with the call of an identical request in flight: no provider was called for this
+          one.
+        </Empty>
       ) : detail.attempts.length === 0 ? (
         <Empty>Rejected before any provider was called ({detail.errorCode}).</Empty>
       ) : (
@@ -229,6 +237,7 @@ function RequestFacts({ detail, providerOf }: { detail: Detail; providerOf: Prov
         {detail.errorCode && <span className="mono small">{detail.errorCode}</span>}
         {detail.endpoint === 'embeddings' && <span className="badge">embeddings</span>}
         {detail.cacheHit && <span className="badge tone-accent">cache hit</span>}
+        {detail.coalesced && <span className="badge tone-accent">coalesced</span>}
       </div>
       <dl className="facts">
         <dt>Model</dt>

@@ -29,6 +29,7 @@ import {
   type AttemptContext,
   type OpenStream,
 } from './attempt.js';
+import { follow, shareStream, type Coalescer } from './coalesce.js';
 import { estimateChatPromptTokens } from './estimate.js';
 import {
   chatCompletionRequestSchema,
@@ -59,6 +60,8 @@ export interface ChatRouteOptions {
   routing: RoutingDeps;
   /** The exact-match response cache (ADR 013); absent when CACHE_ENABLED is off. */
   cache?: ResponseCache | null;
+  /** Identical cacheable requests in flight share one upstream call (ADR 031). */
+  coalescer?: Coalescer | null;
   /** Records each finished request (attempts, routing, latency, tokens). */
   metrics?: GatewayMetrics;
 }
@@ -318,7 +321,17 @@ export function upstreamFailure(err: unknown): unknown {
 }
 
 export function registerChatCompletions(app: FastifyInstance, options: ChatRouteOptions): void {
-  const { registry, clock, verifier, events, admission, routing, cache = null, metrics } = options;
+  const {
+    registry,
+    clock,
+    verifier,
+    events,
+    admission,
+    routing,
+    cache = null,
+    coalescer = null,
+    metrics,
+  } = options;
   app.decorateRequest('apiKey', null);
   app.decorateRequest('trace', null);
 
@@ -454,46 +467,83 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           model: body.model,
         };
 
-        // Exact-match cache (ADR 013), after admission so hits still count toward RPM.
+        // Exact-match cache (ADR 013), after admission so hits still count toward RPM. The same
+        // key coalesces identical requests in flight (ADR 031), whether the cache is on or not.
         const header = request.headers[CACHE_HEADER];
+        const reusable = cacheable(body, typeof header === 'string' ? header : undefined);
         const key =
-          cache && cacheable(body, typeof header === 'string' ? header : undefined)
-            ? cacheKey(apiKey.projectId, body)
-            : null;
+          reusable && (cache || coalescer?.enabled) ? cacheKey(apiKey.projectId, body) : null;
+        /** Answers with a complete answer the request did not call for: a hit or a flight's. */
+        const replay = (answer: ChatResult) => {
+          trace.markFirstToken();
+          trace.setUsage(answer.usage);
+          trace.addCompletionText(answer.content);
+          limitHeaders();
+          if (body.stream !== true) return toChatCompletion(meta, answer);
+          const write = chunkWriter(meta, body.stream_options?.include_usage === true);
+          const chunks = [
+            write.role(),
+            ...(answer.content !== '' || !answer.toolCalls?.length
+              ? [write.content(answer.content)]
+              : []),
+            ...(answer.toolCalls ?? []).flatMap((call, index) => [
+              write.toolCall(index, call.id, call.name),
+              write.toolArguments(index, call.arguments),
+            ]),
+            write.finish(answer.finishReason),
+            ...(write.includeUsage && answer.usage ? [write.usage(answer.usage)] : []),
+            SSE_DONE,
+          ];
+          void reply
+            .header('content-type', 'text/event-stream; charset=utf-8')
+            .header('cache-control', 'no-cache');
+          return reply.send(Readable.from(chunks, { objectMode: false }) as never);
+        };
         if (cache && key) {
           const hit = await cache.get(key);
           metrics?.cacheLookup(hit !== null);
           void reply.header(CACHE_HEADER, hit ? 'hit' : 'miss');
           if (hit) {
             trace.cacheHit = true;
-            trace.markFirstToken();
-            trace.setUsage(hit.usage);
-            trace.addCompletionText(hit.content);
-            limitHeaders();
-            if (body.stream !== true) return toChatCompletion(meta, hit);
-            const write = chunkWriter(meta, body.stream_options?.include_usage === true);
-            const chunks = [
-              write.role(),
-              ...(hit.content !== '' || !hit.toolCalls?.length ? [write.content(hit.content)] : []),
-              ...(hit.toolCalls ?? []).flatMap((call, index) => [
-                write.toolCall(index, call.id, call.name),
-                write.toolArguments(index, call.arguments),
-              ]),
-              write.finish(hit.finishReason),
-              ...(write.includeUsage && hit.usage ? [write.usage(hit.usage)] : []),
-              SSE_DONE,
-            ];
-            void reply
-              .header('content-type', 'text/event-stream; charset=utf-8')
-              .header('cache-control', 'no-cache');
-            return reply.send(Readable.from(chunks, { objectMode: false }) as never);
+            return replay(hit);
           }
         }
         const store = cache && key ? (result: ChatResult) => cache.set(key, result) : undefined;
 
+        // Identical requests in flight share one upstream call (ADR 031): a follower waits for
+        // the leader's answer (or error) within its own deadline, and is replayed it like a hit.
+        const joined = coalescer?.enabled && key ? coalescer.join<ChatResult>(`chat:${key}`) : null;
+        if (joined && !joined.leader) {
+          trace.coalesced = true;
+          metrics?.coalesced('chat');
+          void reply.header(CACHE_HEADER, 'coalesced');
+          let answer: ChatResult;
+          try {
+            answer = await follow(joined.flight, {
+              clock,
+              clientSignal: disconnect.signal,
+              deadlineAt:
+                routing.deadlineMs === undefined ? undefined : trace.startedAt + routing.deadlineMs,
+            });
+          } catch (err) {
+            throw upstreamFailure(err);
+          }
+          return replay(answer);
+        }
+        const flight = joined?.flight;
+        // The leader takes part in its flight until its client leaves or its request ends; the
+        // upstream call follows the flight's signal, which aborts only when nobody waits.
+        const leaveFlight = flight?.enter('leader');
+        if (leaveFlight) {
+          if (disconnect.signal.aborted) leaveFlight();
+          else disconnect.signal.addEventListener('abort', leaveFlight, { once: true });
+        }
+        const lead = flight ? { ...routed, clientSignal: flight.signal } : routed;
+
         if (body.stream !== true) {
           try {
-            const result = await runRouted(routing, routed, (ctx) => runChat(ctx, requestFor(ctx)));
+            const result = await runRouted(routing, lead, (ctx) => runChat(ctx, requestFor(ctx)));
+            flight?.resolve(result);
             routingHeaders(reply, served);
             limitHeaders();
             trace.setUsage(result.usage);
@@ -502,18 +552,33 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
               trace.addCompletionText(`${call.name} ${call.arguments}`);
             }
             store?.(result);
+            if (flight && disconnect.signal.aborted) {
+              // Its client left while followers kept the call going: recorded as cancelled, with
+              // the call's attempt, usage and cost, since nothing else carries them (ADR 031).
+              trace.setError('client_closed_request');
+              emit(trace, 499);
+            }
             return toChatCompletion(meta, result);
           } catch (err) {
+            flight?.reject(err);
             throw upstreamFailure(err);
+          } finally {
+            leaveFlight?.();
           }
         }
 
         let stream: OpenStream;
         try {
-          stream = await runRouted(routing, routed, (ctx) => openStream(ctx, requestFor(ctx)));
+          stream = await runRouted(routing, lead, (ctx) => openStream(ctx, requestFor(ctx)));
         } catch (err) {
+          flight?.reject(err);
+          leaveFlight?.();
           throw upstreamFailure(err);
         }
+        // Followers get the whole answer; a leader whose client leaves is read to the end for
+        // them, and its record waits for that (ADR 031).
+        const shared = flight ? shareStream(stream, flight, trace, store) : undefined;
+        if (shared) stream = shared;
         trace.markFirstToken();
         routingHeaders(reply, served);
         limitHeaders();
@@ -527,13 +592,19 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         const onEnd = () => {
           if (ended) return;
           ended = true;
-          disconnect.dispose();
-          settlement.release();
-          emit(trace, 200);
+          const done = () => {
+            leaveFlight?.();
+            disconnect.dispose();
+            settlement.release();
+            emit(trace, 200);
+          };
+          if (shared) shared.whenClosed(done);
+          else done();
         };
-        const sse = Readable.from(sseBody(stream, write, request.log, trace, onEnd, store), {
-          objectMode: false,
-        });
+        const sse = Readable.from(
+          sseBody(stream, write, request.log, trace, onEnd, shared ? undefined : store),
+          { objectMode: false },
+        );
         streamOwnsSettlement = true;
         reply.raw.once('close', () => {
           // A body generator that never started never runs its cleanup (a client that left

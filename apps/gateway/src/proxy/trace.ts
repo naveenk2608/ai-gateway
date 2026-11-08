@@ -50,6 +50,11 @@ export class RequestTrace {
   #budget: UsageEvent['budget'];
   /** Answered from the response cache. */
   cacheHit = false;
+  /**
+   * Answered with the upstream answer of an identical request in flight on this instance
+   * (ADR 031): no attempts of its own, and no cost, like a cache hit.
+   */
+  coalesced = false;
   #finished = false;
   /** Set once the SSE body owns the response; the stream then finishes the trace itself. */
   streaming = false;
@@ -121,7 +126,7 @@ export class RequestTrace {
         ? 'canceled'
         : errorCode === null
           ? 'success'
-          : this.attempts.length === 0
+          : this.attempts.length === 0 && !this.coalesced
             ? 'rejected'
             : 'error';
     const { usage, usageSource } = this.usage();
@@ -155,6 +160,7 @@ export class RequestTrace {
       estimatedPromptTokens: this.estimatedPromptTokens,
       ...(this.#budget ? { budget: this.#budget } : {}),
       ...(this.cacheHit ? { cacheHit: true } : {}),
+      ...(this.coalesced ? { coalesced: true } : {}),
       ...(this.#start.traceContext
         ? {
             trace: {

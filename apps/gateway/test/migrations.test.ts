@@ -44,6 +44,7 @@ const MIGRATIONS = [
   '0009_reference-prices',
   '0010_request-endpoint',
   '0011_embedding-prices',
+  '0012_request-coalesced',
 ];
 
 /** A throwaway database, so migrations run from scratch. */
