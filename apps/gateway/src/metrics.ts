@@ -100,6 +100,7 @@ export class GatewayMetrics {
   readonly #estimateError: Histogram<'deployment'>;
   readonly #providerSkips: Counter<'deployment' | 'reason'>;
   readonly #cooldowns: Counter<'deployment'>;
+  readonly #retryBudgetSkips: Counter<'deployment'>;
   readonly #unknownKeys: Counter<'result'>;
 
   constructor(registry: Registry, labels: MetricLabels) {
@@ -180,6 +181,12 @@ export class GatewayMetrics {
       labelNames: ['deployment', 'reason'],
       registers,
     });
+    this.#retryBudgetSkips = new Counter({
+      name: 'gateway_retry_budget_skips_total',
+      help: "Retries not made because the deployment's retry budget on this instance was used up (ADR 011); the request moved on to the next deployment instead.",
+      labelNames: ['deployment'],
+      registers,
+    });
     this.#cooldowns = new Counter({
       name: 'gateway_provider_cooldowns_total',
       help: 'Cooldowns started on this instance after an upstream 429; every instance skips the deployment until it ends.',
@@ -201,6 +208,10 @@ export class GatewayMetrics {
 
   providerSkipped(deployment: string, reason: 'quota' | 'cooldown'): void {
     this.#providerSkips.inc({ deployment: bounded(deployment, this.#deployments), reason });
+  }
+
+  retryBudgetSkipped(deployment: string): void {
+    this.#retryBudgetSkips.inc({ deployment: bounded(deployment, this.#deployments) });
   }
 
   cooldownStarted(deployment: string): void {

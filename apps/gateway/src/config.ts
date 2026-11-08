@@ -99,6 +99,16 @@ export const gatewayConfigSchema = z
     RETRY_BASE_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(100),
     RETRY_MAX_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(2_000),
     /**
+     * A retry budget per deployment (ADR 011, note of 2026-11-08): within RETRY_BUDGET_WINDOW_MS,
+     * retries on a deployment may be at most RETRY_BUDGET_RATIO of its first tries, or
+     * RETRY_BUDGET_MIN_RETRIES, whichever is more. Ratio and floor are Envoy's defaults (20%, 3);
+     * the window is Linkerd's 10 s. Off, only RETRY_MAX_ATTEMPTS and RETRY_PER_DEPLOYMENT apply.
+     */
+    RETRY_BUDGET_ENABLED: flag.default(true),
+    RETRY_BUDGET_RATIO: z.coerce.number().min(0).max(10).default(0.2),
+    RETRY_BUDGET_MIN_RETRIES: z.coerce.number().int().min(0).max(10_000).default(3),
+    RETRY_BUDGET_WINDOW_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(10_000),
+    /**
      * The most a request may take until its response starts (a stream's first event): no try,
      * retry or fallback starts after it, a running try is cut at it, and the client gets 504
      * `upstream_timeout`. Below a deployment's own `timeoutMs`, it also cuts a single try.

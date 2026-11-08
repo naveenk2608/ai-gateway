@@ -46,6 +46,7 @@ import { HealthChecker, HealthReporter } from './routing/health.js';
 import type { RoutingDeps } from './routing/routed.js';
 import { PeakEwma } from './routing/peak-ewma.js';
 import { QuotaBoard, quotaUsedShare } from './routing/quota.js';
+import { RetryBudget } from './routing/retry-budget.js';
 import { LatencyTracker } from './routing/router.js';
 import { drainAndClose, type DrainOutcome } from './shutdown.js';
 import {
@@ -261,6 +262,16 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       baseDelayMs: config.RETRY_BASE_DELAY_MS,
       maxDelayMs: config.RETRY_MAX_DELAY_MS,
     },
+    retryBudget: new RetryBudget(
+      {
+        enabled: config.RETRY_BUDGET_ENABLED,
+        ratio: config.RETRY_BUDGET_RATIO,
+        minRetries: config.RETRY_BUDGET_MIN_RETRIES,
+        windowMs: config.RETRY_BUDGET_WINDOW_MS,
+      },
+      clock,
+      (deployment) => metrics.retryBudgetSkipped(deployment),
+    ),
     deadlineMs: config.REQUEST_DEADLINE_MS,
   };
 

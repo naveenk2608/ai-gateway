@@ -8,6 +8,7 @@ import type { AttemptContext, AttemptOutcome } from '../proxy/attempt.js';
 import type { RequestTrace } from '../proxy/trace.js';
 import { countsAsFailure, type BreakerBoard } from './breaker.js';
 import type { QuotaBoard, QuotaTicket } from './quota.js';
+import type { RetryBudget } from './retry-budget.js';
 import type { PeakEwma } from './peak-ewma.js';
 import { planRoute, type LatencyTracker } from './router.js';
 
@@ -31,6 +32,11 @@ export interface RoutingDeps {
   peakEwma?: PeakEwma | undefined;
   prices: PriceBook;
   retry: RetrySettings;
+  /**
+   * Retries per deployment across requests, as a share of its first tries in a sliding window
+   * (ADR 011). Without it (unit tests), only the per-request limits apply.
+   */
+  retryBudget?: RetryBudget | undefined;
   /** A number in [0, 1), for weighted picks and backoff jitter. */
   random: () => number;
   /**
@@ -111,7 +117,7 @@ export async function runRouted<T>(
   let attempts = 0;
   let lastError: ProviderError | undefined;
   /** The previous failure, named in the next deployment's reason. */
-  let failed: { id: string; kind: ProviderErrorKind } | undefined;
+  let failed: { id: string; kind: ProviderErrorKind; budgetUsedUp?: boolean } | undefined;
   const skipped: string[] = [...(req.unfit ?? [])];
   /** Deployments left behind so far, for the answering attempt's `passedOver`. */
   const passedOver: string[] = [];
@@ -156,11 +162,18 @@ export async function runRouted<T>(
         retryNote ??
         [
           candidate.reason,
-          ...(failed ? [`fallback after ${failed.id} failed (${failed.kind})`] : []),
+          ...(failed
+            ? [
+                `fallback after ${failed.id} failed (${failed.kind})` +
+                  (failed.budgetUsedUp ? ', retry budget used up' : ''),
+              ]
+            : []),
           ...(skipped.length > 0 ? [`skipped ${skipped.join(', ')}`] : []),
         ].join('; ');
       skipped.length = 0;
       attempts++;
+      // A fallback is the next deployment's first try: the retry budget never limits it.
+      if (tryNumber === 1) deps.retryBudget?.firstTry(id);
       // In flight from here until the try's response or stream ends, however it ends (ADR 030).
       deps.peakEwma?.begin(id);
       let inFlight = true;
@@ -199,6 +212,12 @@ export async function runRouted<T>(
           attempts < maxAttempts &&
           (retryAfter === undefined || retryAfter <= maxDelayMs);
         if (!canRetryHere) break;
+        // Retries on this deployment across requests are bounded too; past its budget the request
+        // moves on to the next deployment instead.
+        if (deps.retryBudget && !deps.retryBudget.tryRetry(id)) {
+          failed.budgetUsedUp = true;
+          break;
+        }
         const ceiling = Math.min(maxDelayMs, baseDelayMs * 2 ** (tryNumber - 1));
         const delay = Math.max(Math.floor(deps.random() * ceiling), retryAfter ?? 0);
         // No time left for the wait and a try after it.
