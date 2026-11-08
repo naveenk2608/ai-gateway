@@ -142,6 +142,47 @@ describe('models config', () => {
     expect(problems).toEqual(['m.json: models.gpt-x.deployment: unknown deployment "nope"']);
   });
 
+  it('reads quota groups and rejects a share of an unknown group or with no rate', () => {
+    const config = parseModelsConfig(
+      {
+        quotaGroups: { shared: { unit: 'neurons', perDay: 10_000 } },
+        deployments: {
+          a: {
+            provider: 'mock',
+            quotaGroup: { group: 'shared', perMillionInputTokens: 10, perMillionOutputTokens: 20 },
+          },
+        },
+        models: { m: { deployment: 'a' } },
+      },
+      'm.json',
+    );
+    expect(config.quotaGroups.shared).toEqual({ unit: 'neurons', perDay: 10_000 });
+    expect(config.deployments.a?.quotaGroup).toMatchObject({ group: 'shared' });
+    // A file without groups reads as having none.
+    expect(parseModelsConfig({ deployments: {}, models: {} }, 'm.json').quotaGroups).toEqual({});
+
+    const problems = problemsOf(() =>
+      parseModelsConfig(
+        {
+          quotaGroups: { empty: { unit: 'neurons' } },
+          deployments: {
+            a: { provider: 'mock', quotaGroup: { group: 'nope', perRequest: 1 } },
+            b: { provider: 'mock', quotaGroup: { group: 'empty' } },
+          },
+          models: {},
+        },
+        'm.json',
+      ),
+    );
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/quotaGroups\.empty.*perMinute or perDay/),
+        expect.stringMatching(/deployments\.a\.quotaGroup.*unknown quota group "nope"/),
+        expect.stringMatching(/deployments\.b\.quotaGroup.*perRequest, perMillionInputTokens/),
+      ]),
+    );
+  });
+
   it('rejects unknown fields and invalid values, naming each', () => {
     const problems = problemsOf(() =>
       parseModelsConfig(

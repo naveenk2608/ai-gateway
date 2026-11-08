@@ -11,6 +11,37 @@ export interface QuotaLimits {
   tokensPerDay?: number | undefined;
 }
 
+/**
+ * A free allowance shared by several deployments of one account (ADR 025, note of 2026-11-08),
+ * and how one deployment's use converts to its unit: per request, and per million input and
+ * output tokens (e.g. Cloudflare's Neurons per million tokens of that model).
+ */
+export interface QuotaGroupShare {
+  /** The group's name in the models file. */
+  id: string;
+  /** What the allowance counts, e.g. `neurons`: named in skip reasons. */
+  unit: string;
+  perMinute?: number | undefined;
+  perDay?: number | undefined;
+  perRequest: number;
+  perMillionInputTokens: number;
+  perMillionOutputTokens: number;
+}
+
+/** Units of its group a try uses, rounded up so the shared allowance is never under-counted. */
+export function groupUnits(
+  share: QuotaGroupShare,
+  inputTokens: number,
+  outputTokens: number,
+): number {
+  const units =
+    share.perRequest +
+    (share.perMillionInputTokens * Math.max(0, inputTokens)) / 1_000_000 +
+    (share.perMillionOutputTokens * Math.max(0, outputTokens)) / 1_000_000;
+  // Float noise (e.g. 2.0000000001) must not add a unit.
+  return Math.max(0, Math.ceil(units - 1e-9));
+}
+
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 /** Counters outlive their window by this much, so late corrections still find them. */
@@ -31,6 +62,20 @@ export function untilWindowEnd(start: number, length: number, now: number): numb
 export type QuotaWindow = 'minute' | 'day';
 export type QuotaUnit = 'requests' | 'tokens';
 
+/** Why a deployment was skipped for its group, e.g. `quota group cf, 9,990 of 10,000 neurons today`. */
+export function describeGroupSkip(
+  share: QuotaGroupShare,
+  window: QuotaWindow,
+  used: number,
+  limit: number,
+): string {
+  const when = window === 'day' ? 'today' : 'this minute';
+  return (
+    `quota group ${share.id}, ${used.toLocaleString('en-US')} of ` +
+    `${limit.toLocaleString('en-US')} ${share.unit} ${when}`
+  );
+}
+
 /** Why a deployment was skipped, in the words stored on the next attempt's routing reason. */
 export function describeSkip(
   unit: QuotaUnit,
@@ -42,12 +87,23 @@ export function describeSkip(
   return `quota, ${used.toLocaleString('en-US')} of ${limit.toLocaleString('en-US')} ${unit} ${when}`;
 }
 
-/** Counts held for one try, corrected to the tokens used when it ends. */
+/** Counts held for one try, corrected to what it used when it ends. */
 export interface QuotaTicket {
-  minuteKey: string;
-  dayKey: string;
-  /** Tokens counted up front: the prompt estimate plus the output cap. */
-  tokens: number;
+  /** The deployment's own windows, when it has a quota. */
+  own: {
+    minuteKey: string;
+    dayKey: string;
+    /** Tokens counted up front: the prompt estimate plus the output cap. */
+    tokens: number;
+  } | null;
+  /** Its group's windows and the units counted up front, when it shares an allowance. */
+  group: { minuteKey: string; dayKey: string; units: number; share: QuotaGroupShare } | null;
+}
+
+/** Tokens a try counts: the prompt estimate and the output cap, apart for quota groups. */
+export interface QuotaTokens {
+  input: number;
+  output: number;
 }
 
 export type QuotaCheck =
@@ -55,44 +111,65 @@ export type QuotaCheck =
   | { ok: false; kind: 'quota' | 'cooldown'; reason: string; retryAfterMs: number };
 
 /**
- * Checks a deployment's cooldown and quota in one step and, if it may be tried, counts one request
- * and the tokens it may use. Fixed UTC windows: KEYS minute and day hashes (fields req, tok) and
- * the cooldown key. ARGV: limits per minute and day for requests and tokens (0 = none), whether to
- * count at all, the tokens, each window's expiry (ms since the epoch), whether to ignore the
- * cooldown. Replies {1} when admitted, {0, 'cooldown', ms} or {0, unit, window, used, limit}.
+ * Checks a deployment's cooldown, its quota and its group's shared allowance in one step and, if
+ * it may be tried, counts one request and the tokens it may use, and the group units. Fixed UTC
+ * windows: KEYS minute and day hashes (fields req, tok), the cooldown key, and the group's minute
+ * and day hashes (field u). ARGV: limits per minute and day for requests and tokens (0 = none),
+ * whether to count the deployment's own quota, the tokens, each window's expiry (ms since the
+ * epoch), whether to ignore the cooldown, the group's limits per minute and day (0 = none), its
+ * units (0 = no group) and its windows' expiry. Replies {1} when admitted, {0, 'cooldown', ms},
+ * {0, unit, window, used, limit}, or {0, 'group', window, used, limit}.
  */
 const ACQUIRE = new LuaScript(`
 if ARGV[9] ~= '1' then
   local cooldown = redis.call('PTTL', KEYS[3])
   if cooldown > 0 then return {0, 'cooldown', cooldown} end
 end
-if ARGV[5] ~= '1' then return {1} end
+local counted = ARGV[5] == '1'
+local units = tonumber(ARGV[12])
 local tokens = tonumber(ARGV[6])
-local mreq = tonumber(redis.call('HGET', KEYS[1], 'req') or '0')
-local mtok = tonumber(redis.call('HGET', KEYS[1], 'tok') or '0')
-local dreq = tonumber(redis.call('HGET', KEYS[2], 'req') or '0')
-local dtok = tonumber(redis.call('HGET', KEYS[2], 'tok') or '0')
-local rpm, rpd, tpm, tpd = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[4])
-if rpd > 0 and dreq + 1 > rpd then return {0, 'requests', 'day', dreq, rpd} end
-if rpm > 0 and mreq + 1 > rpm then return {0, 'requests', 'minute', mreq, rpm} end
-if tpd > 0 and dtok + tokens > tpd then return {0, 'tokens', 'day', dtok, tpd} end
-if tpm > 0 and mtok + tokens > tpm then return {0, 'tokens', 'minute', mtok, tpm} end
-redis.call('HINCRBY', KEYS[1], 'req', 1)
-redis.call('HINCRBY', KEYS[1], 'tok', tokens)
-redis.call('PEXPIREAT', KEYS[1], ARGV[7])
-redis.call('HINCRBY', KEYS[2], 'req', 1)
-redis.call('HINCRBY', KEYS[2], 'tok', tokens)
-redis.call('PEXPIREAT', KEYS[2], ARGV[8])
+if counted then
+  local mreq = tonumber(redis.call('HGET', KEYS[1], 'req') or '0')
+  local mtok = tonumber(redis.call('HGET', KEYS[1], 'tok') or '0')
+  local dreq = tonumber(redis.call('HGET', KEYS[2], 'req') or '0')
+  local dtok = tonumber(redis.call('HGET', KEYS[2], 'tok') or '0')
+  local rpm, rpd, tpm, tpd = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[4])
+  if rpd > 0 and dreq + 1 > rpd then return {0, 'requests', 'day', dreq, rpd} end
+  if rpm > 0 and mreq + 1 > rpm then return {0, 'requests', 'minute', mreq, rpm} end
+  if tpd > 0 and dtok + tokens > tpd then return {0, 'tokens', 'day', dtok, tpd} end
+  if tpm > 0 and mtok + tokens > tpm then return {0, 'tokens', 'minute', mtok, tpm} end
+end
+if units > 0 then
+  local gm = tonumber(redis.call('HGET', KEYS[4], 'u') or '0')
+  local gd = tonumber(redis.call('HGET', KEYS[5], 'u') or '0')
+  local gpm, gpd = tonumber(ARGV[10]), tonumber(ARGV[11])
+  if gpd > 0 and gd + units > gpd then return {0, 'group', 'day', gd, gpd} end
+  if gpm > 0 and gm + units > gpm then return {0, 'group', 'minute', gm, gpm} end
+end
+if counted then
+  redis.call('HINCRBY', KEYS[1], 'req', 1)
+  redis.call('HINCRBY', KEYS[1], 'tok', tokens)
+  redis.call('PEXPIREAT', KEYS[1], ARGV[7])
+  redis.call('HINCRBY', KEYS[2], 'req', 1)
+  redis.call('HINCRBY', KEYS[2], 'tok', tokens)
+  redis.call('PEXPIREAT', KEYS[2], ARGV[8])
+end
+if units > 0 then
+  redis.call('HINCRBY', KEYS[4], 'u', units)
+  redis.call('PEXPIREAT', KEYS[4], ARGV[13])
+  redis.call('HINCRBY', KEYS[5], 'u', units)
+  redis.call('PEXPIREAT', KEYS[5], ARGV[14])
+end
 return {1}
 `);
 
-/** Adds a (possibly negative) token correction to both windows, never below zero. */
+/** Adds a (possibly negative) correction to a field of both windows, never below zero. */
 const CORRECT = new LuaScript(`
 for i = 1, 2 do
   if redis.call('EXISTS', KEYS[i]) == 1 then
-    local tok = tonumber(redis.call('HGET', KEYS[i], 'tok') or '0') + tonumber(ARGV[1])
-    if tok < 0 then tok = 0 end
-    redis.call('HSET', KEYS[i], 'tok', tok)
+    local value = tonumber(redis.call('HGET', KEYS[i], ARGV[2]) or '0') + tonumber(ARGV[1])
+    if value < 0 then value = 0 end
+    redis.call('HSET', KEYS[i], ARGV[2], value)
   end
 end
 return 1
@@ -135,6 +212,8 @@ export interface QuotaBoardOptions {
 export interface QuotaTarget {
   id: string;
   quota: QuotaLimits | null;
+  /** The allowance it shares with other deployments of its account, if any. */
+  quotaGroup?: QuotaGroupShare | null | undefined;
 }
 
 const hasLimit = (q: QuotaLimits | null): q is QuotaLimits =>
@@ -165,26 +244,45 @@ export class QuotaBoard {
     };
   }
 
+  #groupKeys(group: string, now: number) {
+    const w = quotaWindows(now);
+    return {
+      minute: `${this.#prefix}quota-group:${group}:m:${w.minute}`,
+      day: `${this.#prefix}quota-group:${group}:d:${w.day}`,
+    };
+  }
+
   /**
-   * May `target` be tried now? If so, counts one request and `tokens` against its quota (when it
-   * has one). `ignoreCooldown` is for a retry on the same deployment after its own 429: the retry
+   * May `target` be tried now? If so, counts one request and its tokens (prompt estimate plus
+   * output cap) against its quota, and the units they convert to against its group's shared
+   * allowance. `ignoreCooldown` is for a retry on the same deployment after its own 429: the retry
    * already waited the provider's Retry-After (ADR 011).
    */
   async acquire(
     target: QuotaTarget,
-    tokens: number,
+    use: QuotaTokens,
     { ignoreCooldown = false }: { ignoreCooldown?: boolean } = {},
   ): Promise<QuotaCheck> {
     const now = this.#o.clock.now();
     const keys = this.#keys(target.id, now);
     const q = target.quota;
     const counted = hasLimit(q);
+    const tokens = use.input + use.output;
+    const share = target.quotaGroup ?? null;
+    const units = share ? groupUnits(share, use.input, use.output) : 0;
+    const groupKeys = share ? this.#groupKeys(share.id, now) : null;
     let reply: unknown[];
     try {
       reply = (await this.#withTimeout(
         ACQUIRE.run(
           this.#o.redis,
-          [keys.minute, keys.day, keys.cooldown],
+          [
+            keys.minute,
+            keys.day,
+            keys.cooldown,
+            groupKeys?.minute ?? keys.minute,
+            groupKeys?.day ?? keys.day,
+          ],
           [
             q?.requestsPerMinute ?? 0,
             q?.requestsPerDay ?? 0,
@@ -195,6 +293,11 @@ export class QuotaBoard {
             keys.windows.minute + MINUTE_MS + GRACE_MS,
             keys.windows.day + DAY_MS + GRACE_MS,
             ignoreCooldown ? 1 : 0,
+            share?.perMinute ?? 0,
+            share?.perDay ?? 0,
+            units,
+            keys.windows.minute + MINUTE_MS + GRACE_MS,
+            keys.windows.day + DAY_MS + GRACE_MS,
           ],
         ),
       )) as unknown[];
@@ -203,12 +306,14 @@ export class QuotaBoard {
       return { ok: true, ticket: null };
     }
     if (reply[0] === 1) {
-      return {
-        ok: true,
-        ticket: counted
-          ? { minuteKey: keys.minute, dayKey: keys.day, tokens: Math.round(tokens) }
-          : null,
-      };
+      const own = counted
+        ? { minuteKey: keys.minute, dayKey: keys.day, tokens: Math.round(tokens) }
+        : null;
+      const group =
+        share && groupKeys && units > 0
+          ? { minuteKey: groupKeys.minute, dayKey: groupKeys.day, units, share }
+          : null;
+      return { ok: true, ticket: own || group ? { own, group } : null };
     }
     if (reply[1] === 'cooldown') {
       const ms = Number(reply[2]);
@@ -220,32 +325,56 @@ export class QuotaBoard {
         retryAfterMs: ms,
       };
     }
-    const unit = reply[1] as QuotaUnit;
     const window = reply[2] as QuotaWindow;
     this.#o.onSkip?.(target.id, 'quota');
     const retryAfterMs =
       window === 'day'
         ? untilWindowEnd(keys.windows.day, DAY_MS, now)
         : untilWindowEnd(keys.windows.minute, MINUTE_MS, now);
+    const used = Number(reply[3]);
+    const limit = Number(reply[4]);
     return {
       ok: false,
       kind: 'quota',
-      reason: describeSkip(unit, window, Number(reply[3]), Number(reply[4])),
+      reason:
+        reply[1] === 'group' && share
+          ? describeGroupSkip(share, window, used, limit)
+          : describeSkip(reply[1] as QuotaUnit, window, used, limit),
       retryAfterMs,
     };
   }
 
   /**
-   * Corrects the tokens counted for a try to what it used: the reported total, or the prompt
-   * estimate when the provider reported nothing (the prompt was sent either way).
+   * Corrects what was counted for a try to what it used: the reported tokens, or the prompt
+   * estimate when the provider reported nothing (the prompt was sent either way). The group's
+   * units are recounted from the reported input and output tokens the same way.
    */
-  settle(ticket: QuotaTicket | null, usedTokens: number | null, promptEstimate: number): void {
+  settle(
+    ticket: QuotaTicket | null,
+    used: { promptTokens: number; completionTokens: number; totalTokens: number } | null,
+    promptEstimate: number,
+  ): void {
     if (!ticket) return;
-    const delta = Math.round((usedTokens ?? promptEstimate) - ticket.tokens);
-    if (delta === 0) return;
-    void this.#quietly('quota correction failed', () =>
-      CORRECT.run(this.#o.redis, [ticket.minuteKey, ticket.dayKey], [delta]),
-    );
+    const { own, group } = ticket;
+    if (own) {
+      const delta = Math.round((used?.totalTokens ?? promptEstimate) - own.tokens);
+      if (delta !== 0) {
+        void this.#quietly('quota correction failed', () =>
+          CORRECT.run(this.#o.redis, [own.minuteKey, own.dayKey], [delta, 'tok']),
+        );
+      }
+    }
+    if (group) {
+      const actual = used
+        ? groupUnits(group.share, used.promptTokens, used.completionTokens)
+        : groupUnits(group.share, promptEstimate, 0);
+      const delta = actual - group.units;
+      if (delta !== 0) {
+        void this.#quietly('quota group correction failed', () =>
+          CORRECT.run(this.#o.redis, [group.minuteKey, group.dayKey], [delta, 'u']),
+        );
+      }
+    }
   }
 
   /**

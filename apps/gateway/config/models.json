@@ -1,4 +1,10 @@
 {
+  "quotaGroups": {
+    "cloudflare-free-neurons": {
+      "unit": "neurons",
+      "perDay": 10000
+    }
+  },
   "deployments": {
     "mock": {
       "adapter": "mock",
@@ -221,8 +227,12 @@
       "billing": "free_tier",
       "healthCheck": "none",
       "quota": {
-        "requestsPerMinute": 300,
-        "tokensPerDay": 129000
+        "requestsPerMinute": 300
+      },
+      "quotaGroup": {
+        "group": "cloudflare-free-neurons",
+        "perMillionInputTokens": 24545,
+        "perMillionOutputTokens": 77273
       }
     },
     "zai-glm-4.7-flash": {
@@ -295,6 +305,10 @@
       },
       "quota": {
         "requestsPerMinute": 1500
+      },
+      "quotaGroup": {
+        "group": "cloudflare-free-neurons",
+        "perMillionInputTokens": 18582
       }
     }
   },

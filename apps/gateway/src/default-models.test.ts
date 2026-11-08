@@ -118,10 +118,33 @@ describe('the default models file', () => {
       'groq-qwen3.8-27b': groq,
       // Per account, not per model: OpenRouter has one :free deployment here.
       'openrouter-gemma-4-31b-free': { requestsPerMinute: 20, requestsPerDay: 50 },
-      // 10,000 free Neurons a day at 77,273 Neurons per million output tokens.
-      'cloudflare-llama-4-scout': { requestsPerMinute: 300, tokensPerDay: 129_000 },
+      // Cloudflare's text-generation limit; its free Neurons are the group below.
+      'cloudflare-llama-4-scout': { requestsPerMinute: 300 },
       // Cloudflare's per-model limit for bge-large-en-v1.5 (text embeddings: 3,000 otherwise).
       'cloudflare-bge-large-en-v1.5': { requestsPerMinute: 1_500 },
+    });
+  });
+
+  it("shares Cloudflare's 10,000 free Neurons a day between its two deployments", () => {
+    expect(config.quotaGroups).toEqual({
+      'cloudflare-free-neurons': { unit: 'neurons', perDay: 10_000 },
+    });
+    const shares = Object.fromEntries(
+      Object.entries(config.deployments).flatMap(([id, d]) =>
+        d.quotaGroup ? [[id, d.quotaGroup] as const] : [],
+      ),
+    );
+    // Neurons per million tokens, from Cloudflare's pricing page (docs/providers.md).
+    expect(shares).toEqual({
+      'cloudflare-llama-4-scout': {
+        group: 'cloudflare-free-neurons',
+        perMillionInputTokens: 24_545,
+        perMillionOutputTokens: 77_273,
+      },
+      'cloudflare-bge-large-en-v1.5': {
+        group: 'cloudflare-free-neurons',
+        perMillionInputTokens: 18_582,
+      },
     });
   });
 

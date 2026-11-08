@@ -12,7 +12,7 @@ import {
   type ModelsConfig,
   type RoutingPolicy,
 } from '../models-config.js';
-import type { QuotaLimits } from '../routing/quota.js';
+import type { QuotaGroupShare, QuotaLimits } from '../routing/quota.js';
 import { dialectFor, type Dialect } from './dialects.js';
 import { MockProvider } from './mock.js';
 import { OllamaProvider } from './ollama.js';
@@ -47,6 +47,8 @@ export interface Deployment {
   dialect: Dialect;
   /** Free-tier limits counted in Redis across instances (ADR 025); null without any. */
   quota: QuotaLimits | null;
+  /** The free allowance it shares with other deployments of its account (ADR 025); null if none. */
+  quotaGroup: QuotaGroupShare | null;
   /** The provider's model name, sent upstream. */
   providerModel: string;
   timeoutMs: number;
@@ -155,6 +157,25 @@ export function urlHost(url: string | null): string | null {
 }
 
 /** Builds providers for every deployment and maps each logical model to its deployment. */
+/** A deployment's share of a quota group, resolved from the models file's `quotaGroups`. */
+function groupShare(
+  config: ModelsConfig,
+  share: ModelsConfig['deployments'][string]['quotaGroup'],
+): QuotaGroupShare | null {
+  if (!share) return null;
+  const group = config.quotaGroups[share.group];
+  if (!group) return null;
+  return {
+    id: share.group,
+    unit: group.unit,
+    perMinute: group.perMinute,
+    perDay: group.perDay,
+    perRequest: share.perRequest ?? 0,
+    perMillionInputTokens: share.perMillionInputTokens ?? 0,
+    perMillionOutputTokens: share.perMillionOutputTokens ?? 0,
+  };
+}
+
 export function createRegistry(config: ModelsConfig, deps: RegistryDeps): ProviderRegistry {
   const deployments = new Map<string, Deployment>();
   for (const [id, deployment] of Object.entries(config.deployments)) {
@@ -183,6 +204,7 @@ export function createRegistry(config: ModelsConfig, deps: RegistryDeps): Provid
           }
         : null,
       quota: deployment.quota ?? null,
+      quotaGroup: groupShare(config, deployment.quotaGroup),
       providerModel: deployment.model,
       timeoutMs: deployment.timeoutMs,
       streamIdleTimeoutMs: deployment.streamIdleTimeoutMs,

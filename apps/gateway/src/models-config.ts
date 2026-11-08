@@ -147,6 +147,48 @@ const quota = z
   .refine((q) => Object.values(q).some((v) => v !== undefined), 'set at least one limit')
   .optional();
 
+/** A quota group's name in the models file. */
+const groupId = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,63}$/, 'use lowercase letters, digits, ".", "_" or "-"');
+
+/**
+ * A free allowance that belongs to a provider account rather than to one model (ADR 025, note of
+ * 2026-11-08): a limit per minute and/or per day in a named unit, counted in Redis for every
+ * deployment that shares it. Only values from the provider's own docs belong here.
+ */
+const quotaGroup = z
+  .object({
+    /** What the allowance counts, e.g. `neurons` or `requests`: shown in skip reasons. */
+    unit: z.string().regex(/^[a-z][a-z0-9 _-]{0,31}$/, 'use lowercase letters, e.g. "neurons"'),
+    perMinute: perWindow,
+    perDay: perWindow,
+  })
+  .strict()
+  .refine((g) => g.perMinute !== undefined || g.perDay !== undefined, 'set perMinute or perDay');
+
+const perRate = z.number().min(0).max(1_000_000_000).optional();
+
+/**
+ * A deployment's share of a quota group: the group, and how its use converts to the group's
+ * unit, per request and per million input and output tokens (e.g. Cloudflare's Neurons per
+ * million tokens of that model, from its pricing page).
+ */
+const quotaGroupShare = z
+  .object({
+    group: groupId,
+    perRequest: perRate,
+    perMillionInputTokens: perRate,
+    perMillionOutputTokens: perRate,
+  })
+  .strict()
+  .refine(
+    (s) =>
+      [s.perRequest, s.perMillionInputTokens, s.perMillionOutputTokens].some((v) => (v ?? 0) > 0),
+    'set perRequest, perMillionInputTokens or perMillionOutputTokens',
+  )
+  .optional();
+
 const attemptTimeouts = {
   /** Non-streaming: the whole attempt. Streaming: until the first event. */
   timeoutMs: z.number().int().positive().max(600_000).default(60_000),
@@ -186,6 +228,7 @@ const mockDeployment = z
     ...kind,
     billing,
     quota,
+    quotaGroup: quotaGroupShare,
     ...attemptTimeouts,
   })
   .strict();
@@ -206,6 +249,7 @@ const openAICompatibleDeployment = z
     ...kind,
     billing,
     quota,
+    quotaGroup: quotaGroupShare,
     ...attemptTimeouts,
   })
   .strict();
@@ -222,6 +266,7 @@ const ollamaDeployment = z
     ...kind,
     billing,
     quota,
+    quotaGroup: quotaGroupShare,
     ...attemptTimeouts,
   })
   .strict();
@@ -284,6 +329,8 @@ const model = z.union([
 
 export const modelsConfigSchema = z
   .object({
+    /** Free allowances shared by several deployments of one account (ADR 025). */
+    quotaGroups: z.record(groupId, quotaGroup).default({}),
     deployments: z.record(deploymentId, deployment),
     /** Logical model names that clients send, each routed to one or more deployments. */
     models: z.record(z.string().min(1).max(256), model),
@@ -307,6 +354,9 @@ export const modelsConfigSchema = z
         }
       } else if (d.embedding) {
         issue('embedding is only for "type": "embeddings"', 'embedding');
+      }
+      if (d.quotaGroup && !Object.hasOwn(config.quotaGroups, d.quotaGroup.group)) {
+        issue(`unknown quota group "${d.quotaGroup.group}"`, 'quotaGroup');
       }
     }
     for (const [name, m] of Object.entries(config.models)) {

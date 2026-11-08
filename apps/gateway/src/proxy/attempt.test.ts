@@ -40,6 +40,7 @@ function setup(settings: Partial<MockSettings> = {}, timeouts = { timeoutMs: 1_0
     type: 'chat',
     embedding: null,
     quota: null,
+    quotaGroup: null,
     providerModel: 'mock',
     timeoutMs: timeouts.timeoutMs,
     streamIdleTimeoutMs: timeouts.idle,

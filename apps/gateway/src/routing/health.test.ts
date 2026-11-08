@@ -66,8 +66,16 @@ describe('HealthChecker with chat checks (ADR 026)', () => {
     expect(t.probe).not.toHaveBeenCalled();
     expect(t.chat).toHaveBeenCalledOnce();
     expect(t.chat.mock.calls[0]![0]).toMatchObject({ model: 'listed-model', maxTokens: 1 });
-    expect(t.quotas.acquire).toHaveBeenCalledWith(expect.objectContaining({ id: 'listed' }), 9);
-    expect(t.quotas.settle).toHaveBeenCalledWith(null, 7, 8);
+    // The 8-token probe prompt and its 1-token output cap; corrected to the reported usage.
+    expect(t.quotas.acquire).toHaveBeenCalledWith(expect.objectContaining({ id: 'listed' }), {
+      input: 8,
+      output: 1,
+    });
+    expect(t.quotas.settle).toHaveBeenCalledWith(
+      null,
+      { promptTokens: 6, completionTokens: 1, totalTokens: 7 },
+      8,
+    );
     expect(t.breaker.state).toBe('half_open');
   });
 

@@ -147,7 +147,7 @@ export async function runRouted<T>(
         // so only the quota applies to it, not the cooldown its 429 may have started.
         const check = await deps.quotas.acquire(
           candidate.deployment,
-          promptTokens + req.maxTokens,
+          { input: promptTokens, output: req.maxTokens },
           { ignoreCooldown: tryNumber > 1 },
         );
         if (!check.ok) {
@@ -277,7 +277,7 @@ function settleQuota(
 ): void {
   const quotas = deps.quotas;
   if (!quotas) return;
-  quotas.settle(ticket, outcome.usage?.totalTokens ?? null, promptTokens);
+  quotas.settle(ticket, outcome.usage, promptTokens);
   quotas.observe(deployment, outcome.rateLimit);
   if (outcome.error instanceof ProviderError && outcome.error.kind === 'rate_limited') {
     quotas.cooldown(deployment.id, outcome.error.retryAfterMs);

@@ -2,6 +2,7 @@ import { uuidv7, type Clock } from '@ai-gateway/shared';
 import type { Db, Logger, Redis } from '@ai-gateway/shared/node';
 import { ProviderError } from '../providers/errors.js';
 import type { Deployment } from '../providers/registry.js';
+import type { Usage } from '../providers/types.js';
 import type { BreakerBoard, Transition } from './breaker.js';
 import type { QuotaBoard, QuotaTicket } from './quota.js';
 
@@ -206,17 +207,20 @@ export class HealthChecker {
     const quotas = this.#o.quotas;
     let ticket: QuotaTicket | null = null;
     if (quotas) {
-      const check = await quotas.acquire(deployment, CHAT_PROBE_PROMPT_TOKENS + 1);
+      const check = await quotas.acquire(deployment, {
+        input: CHAT_PROBE_PROMPT_TOKENS,
+        output: 1,
+      });
       if (!check.ok) throw new ProbeSkipped(check.reason);
       ticket = check.ticket;
     }
-    let usedTokens: number | null = null;
+    let used: Usage | null = null;
     try {
       const result = await deployment.provider.chat(
         { ...CHAT_PROBE, model: deployment.providerModel },
         signal,
       );
-      usedTokens = result.usage?.totalTokens ?? null;
+      used = result.usage;
       quotas?.observe(deployment, result.rateLimit);
     } catch (err) {
       if (err instanceof ProviderError && err.kind === 'rate_limited') {
@@ -224,7 +228,7 @@ export class HealthChecker {
       }
       if (!(err instanceof ProviderError && err.kind === 'bad_request')) throw err;
     } finally {
-      quotas?.settle(ticket, usedTokens, CHAT_PROBE_PROMPT_TOKENS);
+      quotas?.settle(ticket, used, CHAT_PROBE_PROMPT_TOKENS);
     }
   }
 

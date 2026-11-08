@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { describeSkip, quotaUsedShare, quotaWindows, untilWindowEnd } from './quota.js';
+import {
+  describeGroupSkip,
+  describeSkip,
+  groupUnits,
+  quotaUsedShare,
+  quotaWindows,
+  untilWindowEnd,
+  type QuotaGroupShare,
+} from './quota.js';
 
 const at = (iso: string) => Date.parse(iso);
 
@@ -62,5 +70,37 @@ describe('quotaUsedShare', () => {
 
   it('is null without a quota', () => {
     expect(quotaUsedShare(usage(null))).toBeNull();
+  });
+});
+
+describe('quota groups', () => {
+  const share: QuotaGroupShare = {
+    id: 'cloudflare-free-neurons',
+    unit: 'neurons',
+    perDay: 10_000,
+    perRequest: 0,
+    perMillionInputTokens: 24_545,
+    perMillionOutputTokens: 77_273,
+  };
+
+  it('converts input and output tokens to units at their rates, rounded up', () => {
+    // 1,000 x 24,545 / 1M + 200 x 77,273 / 1M = 24.545 + 15.4546 = 39.9996.
+    expect(groupUnits(share, 1_000, 200)).toBe(40);
+    expect(groupUnits(share, 0, 0)).toBe(0);
+    expect(groupUnits({ ...share, perRequest: 1 }, 0, 0)).toBe(1);
+    // 2 exactly, despite float noise.
+    expect(
+      groupUnits(
+        { ...share, perMillionInputTokens: 0.2, perMillionOutputTokens: 0 },
+        10_000_000,
+        0,
+      ),
+    ).toBe(2);
+  });
+
+  it('names the group in the skip reason', () => {
+    expect(describeGroupSkip(share, 'day', 9_990, 10_000)).toBe(
+      'quota group cloudflare-free-neurons, 9,990 of 10,000 neurons today',
+    );
   });
 });
