@@ -4,6 +4,8 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
+| 2026-11-08 | M14 | Live check (table "M14 real-provider checks"): on the demo, ten identical requests sent at once reached the gateway over 8.7 s, one after another, so coalescing shared calls only among the ones that overlapped (5, then 2, then 1 upstream call in three tries). The spread happens in front of the gateway (Render's proxy and the 0.1-CPU free instance), not in it. With the cache off on Render, requests that arrive after a call has ended each make their own; `CACHE_ENABLED=true` on Render (the owner's setting) would answer them from the cache. | open |
+| 2026-11-08 | M14 | Decision to review: under `peak_ewma`, a deployment whose every try fails (Mistral Small answers this account 429) records no sample (failures record nothing, ADR 030), so its default estimate decays toward zero and it wins the random pick whenever it is drawn; its cooldown then skips it and the request goes to the best of the rest, or, when the cooldown has ended, it is tried, fails and falls back (the live check shows both). This is what the breaker and the cooldown are for, and it matches `lowest_latency`, which tries unmeasured deployments first. Recording `timeoutMs` (or a penalty) for rate-limited tries would keep it out of the picks; not done, since the roadmap says other failures record nothing. | by design |
 | 2026-11-08 | M14 | Quota groups are counted and enforced, but `GET /admin/models/quotas` and the `gateway_provider_quota_used_ratio` gauge still read each deployment's own counts only, so a group's use (e.g. Cloudflare's Neurons today) is visible only in Redis (`gw:quota-group:<group>:d:<day>`, field `u`) and in skip reasons. Adding the groups to that endpoint and gauge is a small follow-up. | open |
 | 2026-11-08 | M14 | Decision to review: a quota group's units are rounded up per try (a 100-token embeddings call counts 2 Neurons, not 1.86), so the group is never under-counted; with many tiny calls this over-counts by less than one unit each. A try that reported no usage is corrected to the units of its prompt estimate alone, as for token quotas. | by design |
 | 2026-11-08 | M14 | Coalescing (ADR 031) works within one instance. With several instances behind a load balancer, identical requests that land on different instances each lead their own flight, so N instances can make up to N upstream calls for one burst. Coalescing across instances would need a lock per key in Redis and the answer passed through it (pub/sub or a short-lived key), at one round trip per cacheable request; Render runs one instance, so it was left out. | open |
@@ -235,3 +237,20 @@ were not checked here (the admin API needs a dashboard login).
 | Extra: `json_schema`, `gpt-oss-20b` (Groq), streamed | ok, first try (1.1 s) | `groq-gpt-oss-20b` | `{"city":"Tokyo","country":"Japan"}`, sent to Groq as one plain call and replayed as a stream (Groq does not stream structured output). |
 | Extra: a tool result with an OpenAI-style ID (`call_` + 24 characters), `mistral-small` | 429 `upstream_rate_limited` on all 4 tries | (none) | Mistral Small answered 429 again, as in every M11 run. |
 | Extra: the same, `mistral-large` | ok, first try (2.6 s) | `mistral-large-4` | Mistral accepted the call and its result with the ID the gateway mapped to nine characters, and answered in text (`finish_reason: stop`). Whether Mistral needs the mapping is still not shown. |
+
+## M14 real-provider checks
+
+Run on 2026-11-08 (08:20:55 to 08:24:20 UTC) against the live demo (`ai-gateway-8var.onrender.com`)
+with the demo API key, once Render had deployed `d5b6ba1` (all of M14's code; its deploy list showed
+that commit `live` at 08:19:18). Requests used `max_tokens` 16 and plain `fetch` from one client.
+Each failed check was to be retried up to 3 times, a minute apart. Arrival times come from the
+gateway's own `incoming request` log lines on Render.
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| 20 `chat-fast` requests one at a time (temperature 0.7) | ok, first try: all 200 | Served by `groq-gpt-oss-120b` 8, `groq-gpt-oss-20b` 8, `gemini-3.1-flash-lite` 2, `cloudflare-llama-4-scout` 2, in the order cf, 120b, 120b, 20b, 20b, 20b, 120b, 20b, gem, 120b, cf, 120b, 20b, 20b, 20b, 120b, gem, 20b, 120b, 120b. Under `lowest_latency` one deployment took every request once measured; here no single one did. Four requests name `mistral-small-2603` in `x-gateway-fallback-from`: Mistral answered 429 or was on its cooldown when picked (see below). Client-side latency 0.5 to 10.7 s (median about 2.2 s). |
+| 10 identical temperature-0 `chat-fast` requests at once, a new prompt each try | try 1: 5 upstream calls, 5 coalesced; try 2: 2 calls, 8 coalesced; **try 3: 1 call, 9 coalesced** (all 200) | The demo's cache is off (no `x-gateway-cache: miss` on the calls), so only coalescing could answer. In try 1 the ten requests reached the gateway over 8.7 s (08:21:54.04, 57.19, 58.13, then 08:22:01.90 to 02.72), apparently queued one by one in front of the instance (the first four came over one client connection, port 50596); each Groq or Gemini call took 0.4 to 0.8 s, so a request that arrived after the previous call had ended led a call of its own, as designed. Where arrivals overlapped they coalesced: four requests followed the call that started at 08:22:02.51 and one followed the one at 08:22:01.90. Try 3's requests overlapped: one call (`groq-gpt-oss-20b`), nine answered `coalesced`. |
+
+What the checks did not show: the records' `coalesced` column and costs (the admin API needs a
+dashboard login; tested in CI by `test/coalescing.test.ts`), and retry-budget skips (no provider
+failed often enough).
