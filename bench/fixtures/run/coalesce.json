@@ -1,0 +1,73 @@
+{
+  "bench": {
+    "scenario": "coalesce",
+    "model": "bench-coalesce",
+    "rounds": 5,
+    "batch": 50,
+    "upstreamMs": 1000,
+    "instance": "http://gateway-a:8080",
+    "streamedShare": 0.2,
+    "temperature": 0
+  },
+  "state": {
+    "testRunDurationMs": 5480.2
+  },
+  "metrics": {
+    "co_sent": {
+      "type": "counter",
+      "values": {
+        "count": 250,
+        "rate": 45.62043795620438
+      }
+    },
+    "co_coalesced": {
+      "type": "counter",
+      "values": {
+        "count": 245,
+        "rate": 44.708029197080286
+      }
+    },
+    "co_hits": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0.0
+      }
+    },
+    "co_misses": {
+      "type": "counter",
+      "values": {
+        "count": 5,
+        "rate": 0.9124087591240875
+      }
+    },
+    "co_failed": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0.0
+      }
+    },
+    "co_upstream_requests": {
+      "type": "counter",
+      "values": {
+        "count": 5,
+        "rate": 0.9124087591240875
+      }
+    },
+    "co_rounds_one_call": {
+      "type": "counter",
+      "values": {
+        "count": 5,
+        "rate": 0.9124087591240875
+      }
+    },
+    "co_rounds": {
+      "type": "counter",
+      "values": {
+        "count": 5,
+        "rate": 0.9124087591240875
+      }
+    }
+  }
+}

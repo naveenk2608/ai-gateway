@@ -70,6 +70,27 @@ One key limited to 60 requests per minute, 10 requests per second for 30s, alter
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 401 | 381 | 20 | 0 | 95.0% | 95.0% | 20 | mock calls = misses | [cache.json](fixtures/run/cache.json) |
 
+## Routing and coalescing
+
+### Traffic spread with peak_ewma
+
+`bench-spread` routes with `peak_ewma` (ADR 030) between two HTTP mocks, `bench-fast` and `bench-slow`, at 20 requests per second for 60s, alternating between 2 gateway instances (each keeps its own estimates). Half way through, the fast mock was slowed down from 100.0 ms to 400.0 ms (2.0 times the other's 200.0 ms). Each request is counted by the `x-gateway-deployment` that served it, in the phase in which it was sent.
+
+| Phase | `bench-fast` latency | `bench-slow` latency | Served by `bench-fast` | Served by `bench-slow` | Share on `bench-fast` | Source |
+| --- | --- | --- | --- | --- | --- | --- |
+| Before (0 to 30 s) | 100.0 ms | 200.0 ms | 531 | 69 | 88.5% | [spread.json](fixtures/run/spread.json) |
+| After (from 30 s) | 400.0 ms | 200.0 ms | 41 | 559 | 6.8% | [spread.json](fixtures/run/spread.json) |
+
+Failed or unattributed requests: 0.
+
+### Identical requests in flight
+
+5 rounds of 50 identical temperature-0 requests sent at once to one gateway instance (coalescing is per instance, ADR 031), every fifth one streamed, each round with a prompt of its own, to a mock that answers after 1000.0 ms. Calls that reached the mock come from its own counter, read before and after each round; how each request was answered comes from `x-gateway-cache` (`miss`: it made the call).
+
+| Rounds | Sent | Made the call | Coalesced | Cache hits | Failed | Calls that reached the mock | Rounds with one call | Result | Source |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 5 | 250 | 5 | 245 | 0 | 0 | 5 | 5 | one call per round | [coalesce.json](fixtures/run/coalesce.json) |
+
 ## Limitations
 
 - Everything shared one machine of 4 vCPU: k6 itself, both gateway instances, the worker, the mock, Redis and Postgres compete for CPU, and nothing is pinned. Added latency is therefore the gateway's cost on this machine at that load, including contention, not an isolated per-request cost.

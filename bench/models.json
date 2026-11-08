@@ -5,11 +5,37 @@
       "model": "bench-mock",
       "baseUrl": "http://mock:8090/v1",
       "apiKeyEnv": "MOCK_API_KEY"
+    },
+    "bench-fast": {
+      "provider": "openai-compatible",
+      "model": "bench-mock",
+      "baseUrl": "http://mock-fast:8090/v1",
+      "apiKeyEnv": "MOCK_API_KEY"
+    },
+    "bench-slow": {
+      "provider": "openai-compatible",
+      "model": "bench-mock",
+      "baseUrl": "http://mock-slow:8090/v1",
+      "apiKeyEnv": "MOCK_API_KEY"
     }
   },
   "models": {
     "bench-1": {
       "deployment": "bench-http-mock"
+    },
+    "bench-spread": {
+      "policy": "peak_ewma",
+      "targets": [
+        {
+          "deployment": "bench-fast"
+        },
+        {
+          "deployment": "bench-slow"
+        }
+      ]
+    },
+    "bench-coalesce": {
+      "deployment": "bench-slow"
     }
   }
 }

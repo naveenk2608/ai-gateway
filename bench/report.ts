@@ -113,6 +113,12 @@ function stat(run: Run, scenario: string, metric: string, key: string): number {
 
 const count = (run: Run, scenario: string, metric: string) => stat(run, scenario, metric, 'count');
 
+/** A counter added in a later milestone: null in runs made before it existed, never zero. */
+function laterCount(run: Run, scenario: string, metric: string): number | null {
+  const value = run.summaries.get(scenario)?.metrics[metric]?.values.count;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function setting(run: Run, scenario: string, key: string): unknown {
   const value = run.summaries.get(scenario)?.bench[key];
   if (value === undefined) throw new ReportError(`${scenario}.json has no bench.${key}`);
@@ -360,36 +366,134 @@ function cacheSection(run: Run, link: Link): string {
   const misses = count(run, s, 'cache_misses');
   const prompts = Number(setting(run, s, 'prompts'));
   const upstream = count(run, s, 'cache_upstream_requests');
+  // Runs since M14 count requests answered by an identical request in flight (ADR 031).
+  const coalesced = laterCount(run, s, 'cache_coalesced');
+  const withCoalesced = <T>(cells: T[], cell: T) =>
+    coalesced === null ? cells : [...cells.slice(0, 3), cell, ...cells.slice(3)];
   return [
     `${prompts} distinct prompts at temperature ${String(setting(run, s, 'temperature'))}, repeated at ${String(setting(run, s, 'rate'))} requests per second for ${String(setting(run, s, 'duration'))} across ${String(setting(run, s, 'instances'))} gateway instances sharing one cache. The best possible ratio misses each prompt once: (${sent} − ${prompts}) / ${sent}.`,
     '',
     table(
-      [
-        'Sent',
-        'Hits',
-        'Misses',
-        'Failed',
+      withCoalesced(['Sent', 'Hits', 'Misses', 'Failed'], 'Coalesced').concat([
         'Hit ratio',
         'Best possible',
         'Calls that reached the mock',
         'Result',
         'Source',
-      ],
+      ]),
       [
-        [
-          String(sent),
-          String(hits),
-          String(misses),
-          String(count(run, s, 'cache_failed')),
+        withCoalesced(
+          [String(sent), String(hits), String(misses), String(count(run, s, 'cache_failed'))],
+          String(coalesced),
+        ).concat([
           percent(hits / sent),
           percent(1 - prompts / sent),
           String(upstream),
           upstream === misses ? 'mock calls = misses' : '**mock calls ≠ misses**',
           link(`${s}.json`),
+        ]),
+      ],
+    ),
+  ].join('\n');
+}
+
+function spreadSection(run: Run, link: Link): string {
+  const s = 'spread';
+  const phases = [
+    {
+      name: `Before (0 to ${String(setting(run, s, 'slowAtS'))} s)`,
+      fastMs: Number(setting(run, s, 'fastMs')),
+      fast: count(run, s, 'spread_before_fast'),
+      slow: count(run, s, 'spread_before_slow'),
+    },
+    {
+      name: `After (from ${String(setting(run, s, 'slowAtS'))} s)`,
+      fastMs: Number(setting(run, s, 'slowedMs')),
+      fast: count(run, s, 'spread_after_fast'),
+      slow: count(run, s, 'spread_after_slow'),
+    },
+  ];
+  const slowMs = Number(setting(run, s, 'slowMs'));
+  return [
+    `\`${String(setting(run, s, 'model'))}\` routes with \`${String(setting(run, s, 'policy'))}\` (ADR 030) between two HTTP mocks, \`bench-fast\` and \`bench-slow\`, at ${String(setting(run, s, 'rate'))} requests per second for ${String(setting(run, s, 'duration'))}, alternating between ${String(setting(run, s, 'instances'))} gateway instances (each keeps its own estimates). Half way through, the fast mock was slowed down from ${ms(phases[0]!.fastMs)} to ${ms(phases[1]!.fastMs)} (${fixed(phases[1]!.fastMs / slowMs)} times the other's ${ms(slowMs)}). Each request is counted by the \`x-gateway-deployment\` that served it, in the phase in which it was sent.`,
+    '',
+    table(
+      [
+        'Phase',
+        '`bench-fast` latency',
+        '`bench-slow` latency',
+        'Served by `bench-fast`',
+        'Served by `bench-slow`',
+        'Share on `bench-fast`',
+        'Source',
+      ],
+      phases.map((p) => [
+        p.name,
+        ms(p.fastMs),
+        ms(slowMs),
+        String(p.fast),
+        String(p.slow),
+        percent(p.fast / (p.fast + p.slow)),
+        link(`${s}.json`),
+      ]),
+    ),
+    '',
+    `Failed or unattributed requests: ${count(run, s, 'spread_failed')}.`,
+  ].join('\n');
+}
+
+function coalesceSection(run: Run, link: Link): string {
+  const s = 'coalesce';
+  const rounds = Number(setting(run, s, 'rounds'));
+  const upstream = count(run, s, 'co_upstream_requests');
+  const single = count(run, s, 'co_rounds_one_call');
+  return [
+    `${rounds} rounds of ${String(setting(run, s, 'batch'))} identical temperature-${String(setting(run, s, 'temperature'))} requests sent at once to one gateway instance (coalescing is per instance, ADR 031), every fifth one streamed, each round with a prompt of its own, to a mock that answers after ${ms(Number(setting(run, s, 'upstreamMs')))}. Calls that reached the mock come from its own counter, read before and after each round; how each request was answered comes from \`x-gateway-cache\` (\`miss\`: it made the call).`,
+    '',
+    table(
+      [
+        'Rounds',
+        'Sent',
+        'Made the call',
+        'Coalesced',
+        'Cache hits',
+        'Failed',
+        'Calls that reached the mock',
+        'Rounds with one call',
+        'Result',
+        'Source',
+      ],
+      [
+        [
+          String(rounds),
+          String(count(run, s, 'co_sent')),
+          String(count(run, s, 'co_misses')),
+          String(count(run, s, 'co_coalesced')),
+          String(count(run, s, 'co_hits')),
+          String(count(run, s, 'co_failed')),
+          String(upstream),
+          String(single),
+          upstream === rounds && single === rounds
+            ? 'one call per round'
+            : '**more than one call in a round**',
+          link(`${s}.json`),
         ],
       ],
     ),
   ].join('\n');
+}
+
+/** The M14 sections, for runs that have their scenarios. */
+function routingSections(run: Run, link: Link): string[] {
+  const spread = run.summaries.has('spread');
+  const coalesce = run.summaries.has('coalesce');
+  if (!spread && !coalesce) return [];
+  return [
+    '',
+    '## Routing and coalescing',
+    ...(spread ? ['', '### Traffic spread with peak_ewma', '', spreadSection(run, link)] : []),
+    ...(coalesce ? ['', '### Identical requests in flight', '', coalesceSection(run, link)] : []),
+  ];
 }
 
 /** The report for a run. `resultsPath` is the run directory relative to docs/. */
@@ -436,6 +540,7 @@ export function renderReport(run: Run, resultsPath: string): string {
     `### Cache hit ratio for a repeated temperature-${String(setting(run, 'cache', 'temperature'))} workload`,
     '',
     cacheSection(run, link),
+    ...routingSections(run, link),
     '',
     '## Limitations',
     '',

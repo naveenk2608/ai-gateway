@@ -8,6 +8,19 @@ import type { ChatRequest, FinishReason, Usage } from '../providers/types.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/**
+ * The timing a benchmark may change while the server runs (`POST /settings`, M14): e.g. slowing
+ * one of two upstreams part-way through a run to show routing move off it.
+ */
+const settingsUpdateSchema = z
+  .object({
+    latencyMs: z.number().int().min(0).max(600_000),
+    ttftMs: z.number().int().min(0).max(600_000),
+    tokensPerSecond: z.number().positive().max(100_000),
+  })
+  .partial()
+  .strict();
+
 // Only the fields the mock reads; the rest of an OpenAI request is accepted and ignored.
 const requestSchema = z.object({
   model: z.string().min(1),
@@ -48,7 +61,9 @@ export interface MockServer {
  * seeded errors and drops come from the same MockProvider the gateway runs in-process.
  *
  * Routes: `POST /v1/chat/completions`, `GET /v1/models` (the adapter's health check),
- * `GET /health` and `GET /stats` (the provider's counters).
+ * `GET /health`, `GET /stats` (the provider's counters) and `POST /settings` (change its timing:
+ * `latencyMs`, `ttftMs`, `tokensPerSecond`). It is a test tool with no authentication: run it only
+ * where nothing else can reach it (the bench stack publishes no port).
  */
 export async function startMockServer(options: MockServerOptions): Promise<MockServer> {
   const provider = new MockProvider(options.settings, options.clock);
@@ -60,6 +75,22 @@ export async function startMockServer(options: MockServerOptions): Promise<MockS
       if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
       const id = `chatcmpl-mock-${++nextId}`;
       void completions(req, res, provider, options.clock, id).catch(() => res.destroy());
+      return;
+    }
+    if (path === '/settings') {
+      if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
+      void readBody(req)
+        .then((raw) => {
+          let update: z.output<typeof settingsUpdateSchema>;
+          try {
+            update = settingsUpdateSchema.parse(JSON.parse(raw ?? ''));
+          } catch {
+            return sendError(res, 400, null, 'invalid_request_error', 'invalid settings');
+          }
+          provider.update(update);
+          sendJson(res, 200, { updated: Object.keys(update) });
+        })
+        .catch(() => res.destroy());
       return;
     }
     const read: Record<string, () => unknown> = {

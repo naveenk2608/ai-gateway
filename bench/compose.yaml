@@ -4,6 +4,8 @@
 # Two gateway instances share Redis and Postgres (rate limits, cache and accounting are checked
 # across both); one worker stores usage events. The HTTP mock provider is the only upstream, for
 # the gateway (through an openai-compatible deployment in bench/models.json) and for k6 directly.
+# Two more mocks (M14) are the two deployments of the `peak_ewma` spread scenario; k6 sets their
+# timing through each mock's POST /settings, and the coalescing scenario uses the slower one.
 # Secrets are generated per run by `pnpm bench` and passed only through the environment.
 
 name: ai-gateway-bench
@@ -48,6 +50,10 @@ x-gateway: &gateway
       condition: service_healthy
     mock:
       condition: service_healthy
+    mock-fast:
+      condition: service_healthy
+    mock-slow:
+      condition: service_healthy
   healthcheck:
     test: [CMD, wget, -qO-, http://127.0.0.1:8080/ready]
     interval: 2s
@@ -89,6 +95,23 @@ services:
       timeout: 3s
       retries: 30
     logging: *logging
+
+  mock-fast: &extra-mock
+    <<: *gateway-image
+    command: [node, dist/mock-server/main.js]
+    environment:
+      MOCK_HOST: 0.0.0.0
+      MOCK_PORT: 8090
+      # k6 sets the timing it measures with (POST /settings) before each scenario.
+      MOCK_SETTINGS: '{"latencyMs":100,"ttftMs":100,"tokensPerSecond":400,"completionTokens":32}'
+    healthcheck:
+      test: [CMD, wget, -qO-, http://127.0.0.1:8090/health]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    logging: *logging
+
+  mock-slow: *extra-mock
 
   gateway-a: *gateway
 

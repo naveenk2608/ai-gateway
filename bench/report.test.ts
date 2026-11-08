@@ -48,6 +48,28 @@ describe('renderReport', () => {
     expect(report).toContain('**limit exceeded**');
   });
 
+  it('leaves out the routing sections for a run made before M14', () => {
+    const { runDir } = tempRoot();
+    const machinePath = join(runDir, 'machine.json');
+    const machine = JSON.parse(readFileSync(machinePath, 'utf8')) as {
+      scenarios: { name: string }[];
+    };
+    machine.scenarios = machine.scenarios.filter((s) => !['spread', 'coalesce'].includes(s.name));
+    writeFileSync(machinePath, JSON.stringify(machine));
+    rmSync(join(runDir, 'spread.json'));
+    rmSync(join(runDir, 'coalesce.json'));
+    const report = renderReport(loadRun(runDir), 'x');
+    expect(report).not.toContain('## Routing and coalescing');
+    expect(report).toContain('### Cache hit ratio');
+  });
+
+  it('shows the spread and the calls per round from the files', () => {
+    const report = renderReport(loadRun(fixtureRun), 'x');
+    expect(report).toContain('| Before (0 to 30 s) | 100.0 ms | 200.0 ms | 531 | 69 | 88.5% |');
+    expect(report).toContain('| After (from 30 s) | 400.0 ms | 200.0 ms | 41 | 559 | 6.8% |');
+    expect(report).toContain('| 5 | 250 | 5 | 245 | 0 | 0 | 5 | 5 | one call per round |');
+  });
+
   it('computes the added latency and the ceilings from the runs', () => {
     const report = renderReport(loadRun(fixtureRun), 'x');
     // Gateway p50 58.0 ms against direct 51.1 ms in the fixture.

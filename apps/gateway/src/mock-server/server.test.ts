@@ -60,6 +60,27 @@ async function collect(stream: AsyncIterable<StreamEvent>): Promise<StreamEvent[
 }
 
 describe('mock provider over HTTP', () => {
+  it('changes its timing on POST /settings and refuses anything else', async () => {
+    const { url } = await start({ latencyMs: 0 });
+    const update = (body: string) =>
+      fetch(`${url}/settings`, {
+        method: 'POST',
+        body,
+        headers: { 'content-type': 'application/json' },
+      });
+    const ok = await update(JSON.stringify({ latencyMs: 150, ttftMs: 150 }));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ updated: ['latencyMs', 'ttftMs'] });
+    const started = Date.now();
+    expect(
+      (await post(url, { model: 'm', messages: [{ role: 'user', content: 'hi' }] })).status,
+    ).toBe(200);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(140);
+    expect((await update(JSON.stringify({ failWith: 500 }))).status).toBe(400);
+    expect((await update('not json')).status).toBe(400);
+    expect((await fetch(`${url}/settings`)).status).toBe(405);
+  });
+
   it('answers a non-streaming request in the OpenAI format with usage', async () => {
     const { url } = await start();
     const res = await post(url, body);

@@ -56,6 +56,8 @@ export const options = {
 const sent = new Counter('cache_sent');
 const hits = new Counter('cache_hits');
 const misses = new Counter('cache_misses');
+/** Answered with an identical request's call in flight on the same instance (M14, ADR 031). */
+const coalesced = new Counter('cache_coalesced');
 const failed = new Counter('cache_failed');
 const upstream = new Counter('cache_upstream_requests');
 const verified = new Counter('cache_verified');
@@ -67,7 +69,7 @@ function mockRequests() {
 }
 
 export function setup() {
-  for (const counter of [sent, hits, misses, failed, upstream]) counter.add(0);
+  for (const counter of [sent, hits, misses, coalesced, failed, upstream]) counter.add(0);
   const admin = login();
   const key = createKey(admin, 'bench-cache', {
     requestsPerMinute: null,
@@ -94,8 +96,9 @@ export function load(data) {
     },
   );
   const cache = res.headers['X-Gateway-Cache'];
-  if (!completed(res, false) || (cache !== 'hit' && cache !== 'miss')) failed.add(1);
+  if (!completed(res, false) || !['hit', 'miss', 'coalesced'].includes(cache)) failed.add(1);
   else if (cache === 'hit') hits.add(1);
+  else if (cache === 'coalesced') coalesced.add(1);
   else misses.add(1);
 }
 

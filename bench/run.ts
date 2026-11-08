@@ -8,6 +8,8 @@
  *   pnpm bench --out <dir>   write somewhere else (e.g. a trial run that is not committed)
  *
  * BENCH_VUS (10,50,100) and BENCH_OVERHEAD_DURATION (20s) change the overhead matrix;
+ * BENCH_ONLY (e.g. `spread,coalesce`) runs only the scenarios whose names start with one of its
+ * entries, for a trial run that is not committed: the report needs every scenario;
  * BENCH_BUILD_NOTE says how prebuilt images were made (recorded with --no-build). k6 runs
  * from its pinned image; nothing is installed locally. The stack is removed with its volumes at
  * the end, also when a scenario fails; after an interrupted run, remove it with
@@ -80,6 +82,16 @@ function scenarios(vusList: number[], overheadDuration: string): Scenario[] {
       faults,
     },
     { name: 'cache', script: 'cache.js', env: { PROMPTS: '20', RATE: '20', DURATION: '20s' } },
+    {
+      name: 'spread',
+      script: 'spread.js',
+      env: { RATE: '20', DURATION: '60s', FAST_MS: '100', SLOW_MS: '200', SLOWED_MS: '400' },
+    },
+    {
+      name: 'coalesce',
+      script: 'coalesce.js',
+      env: { ROUNDS: '5', BATCH: '50', UPSTREAM_MS: '1000' },
+    },
   );
   return list;
 }
@@ -177,7 +189,14 @@ async function main() {
   if (vusList.some((v) => !Number.isInteger(v) || v < 1))
     throw new Error('BENCH_VUS: e.g. 10,50,100');
   const overheadDuration = process.env.BENCH_OVERHEAD_DURATION ?? '20s';
-  const list = scenarios(vusList, overheadDuration);
+  const only = (process.env.BENCH_ONLY ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const list = scenarios(vusList, overheadDuration).filter(
+    (s) => only.length === 0 || only.some((prefix) => s.name.startsWith(prefix)),
+  );
+  if (list.length === 0) throw new Error(`BENCH_ONLY=${only.join(',')} matches no scenario`);
 
   const commit = await run('git', ['rev-parse', 'HEAD']);
   const dirty = (await run('git', ['status', '--porcelain', '--', '.', ':!bench/results'])) !== '';

@@ -195,6 +195,30 @@
       },
       "startedAt": "2026-10-21T00:16:00.124Z",
       "wallClockMs": 23540
+    },
+    {
+      "name": "spread",
+      "script": "spread.js",
+      "env": {
+        "RATE": "20",
+        "DURATION": "60s",
+        "FAST_MS": "100",
+        "SLOW_MS": "200",
+        "SLOWED_MS": "400"
+      },
+      "startedAt": "2026-10-21T00:16:30.000Z",
+      "wallClockMs": 63000
+    },
+    {
+      "name": "coalesce",
+      "script": "coalesce.js",
+      "env": {
+        "ROUNDS": "5",
+        "BATCH": "50",
+        "UPSTREAM_MS": "1000"
+      },
+      "startedAt": "2026-10-21T00:17:40.000Z",
+      "wallClockMs": 8000
     }
   ],
   "totalWallClockMs": 135098

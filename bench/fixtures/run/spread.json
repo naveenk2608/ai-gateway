@@ -1,0 +1,62 @@
+{
+  "bench": {
+    "scenario": "spread",
+    "model": "bench-spread",
+    "policy": "peak_ewma",
+    "rate": 20,
+    "duration": "60s",
+    "instances": 2,
+    "fastMs": 100,
+    "slowMs": 200,
+    "slowedMs": 400,
+    "slowAtS": 30,
+    "temperature": 0.7
+  },
+  "state": {
+    "testRunDurationMs": 60512.5
+  },
+  "metrics": {
+    "spread_before_fast": {
+      "type": "counter",
+      "values": {
+        "count": 531,
+        "rate": 8.776859504132231
+      }
+    },
+    "spread_before_slow": {
+      "type": "counter",
+      "values": {
+        "count": 69,
+        "rate": 1.140495867768595
+      }
+    },
+    "spread_after_fast": {
+      "type": "counter",
+      "values": {
+        "count": 41,
+        "rate": 0.6776859504132231
+      }
+    },
+    "spread_after_slow": {
+      "type": "counter",
+      "values": {
+        "count": 559,
+        "rate": 9.239669421487603
+      }
+    },
+    "spread_failed": {
+      "type": "counter",
+      "values": {
+        "count": 0,
+        "rate": 0.0
+      }
+    },
+    "spread_slowed": {
+      "type": "counter",
+      "values": {
+        "count": 1,
+        "rate": 0.01652892561983471
+      }
+    }
+  }
+}
