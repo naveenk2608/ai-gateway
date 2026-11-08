@@ -62,9 +62,10 @@ input only; the prices are in
 | `mock-embed` | the mock | `mock-embed` | 256 (1 to 256 with `dimensions`) | the gateway's caps | demo price in `pnpm db:seed` ($0.10, illustrative) | — | ADR 029 |
 
 Gemini, Mistral and Cloudflare are `billing: free_tier`. Cloudflare's quota in the models file is
-its published 1,500 requests a minute for this model; no token quota is set, because the
-10,000 free Neurons a day are shared with `cloudflare-llama-4-scout`, whose token quota assumes
-it has them all (PLAN-NOTES, M13). No provider publishes a per-request input count, so the
+its published 1,500 requests a minute for this model; its share of the account's 10,000 free
+Neurons a day (18,582 Neurons per million input tokens) is counted in the quota group
+`cloudflare-free-neurons`, shared with `cloudflare-llama-4-scout` (since M14, 2026-11-08; ADR 025
+note). No provider publishes a per-request input count, so the
 gateway's own caps apply: 2,048 inputs and 300,000 estimated tokens per request (OpenAI's documented
 limits for its embeddings API, the format the gateway copies: the API reference as mirrored in
 <https://docs.rs/async-openai/latest/src/async_openai/types/embeddings/embedding.rs.html> and
@@ -131,7 +132,7 @@ after calling tools (answered as `tool_calls`).
 | Mistral | Free mode exists with "restrictive" limits shown only in the console (admin.mistral.ai); which models it allows is not published. | <https://docs.mistral.ai/deployment/laplateforme/tier> via search (2026-11-03) | none |
 | NVIDIA NIM | No official figure found; forum posts report 40 requests/min for build.nvidia.com free access, for development, not production. | NVIDIA developer forum (2026-11-03), not official | none |
 | OpenRouter | `:free` models: 20 requests/min; 50 requests/day with fewer than 10 credits ever purchased (1,000/day with 10 or more). Per account, across all `:free` models. | <https://openrouter.ai/docs/api/reference/limits> (2026-11-03) | `openrouter-gemma-4-31b-free`: 20/min, 50/day (the only `:free` deployment, so the per-account limit applies to it alone) |
-| Cloudflare Workers AI | 10,000 Neurons/day free, reset at 00:00 UTC; text generation 300 requests/min. Llama 4 Scout costs 24,545 Neurons per million input tokens and 77,273 per million output tokens. | <https://developers.cloudflare.com/workers-ai/platform/pricing/> and <https://developers.cloudflare.com/workers-ai/platform/limits/> (2026-11-03) | 300/min; 129,000 tokens/day (derived: 10,000 / 77,273 x 1,000,000 = 129,411 tokens if every token were output; input costs fewer Neurons, so 129,000 tokens a day stay within 10,000 Neurons) |
+| Cloudflare Workers AI | 10,000 Neurons/day free per account, "All limits reset daily at 00:00 UTC"; text generation 300 requests/min. Llama 4 Scout costs 24,545 Neurons per million input tokens and 77,273 per million output tokens; `bge-large-en-v1.5` 18,582 per million input tokens. | <https://developers.cloudflare.com/workers-ai/platform/pricing/> (rechecked 2026-11-08, page last updated 2026-10-20) and <https://developers.cloudflare.com/workers-ai/platform/limits/> (2026-11-03) | Llama 4 Scout 300/min; both deployments in the quota group `cloudflare-free-neurons` (10,000 Neurons a day, each try counted at its model's Neurons per million input and output tokens). Until M14, Llama 4 Scout had a derived 129,000 tokens a day instead (10,000 / 77,273 x 1,000,000, as if every token were output), which assumed it had all the Neurons. |
 | Z.AI | GLM-4.7-Flash is free; no rate limit on the official pricing or model pages (secondary sources say one request at a time). | <https://docs.z.ai/guides/overview/pricing>, <https://docs.z.ai/guides/llm/glm-4.7> (2026-11-03) | none |
 
 Deployments without a quota are still protected by the provider's own 429: the gateway puts the

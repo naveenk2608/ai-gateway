@@ -65,3 +65,38 @@ account, so the count has to be shared too.
 - Tested: the window math; a mock deployment with a quota of 3 requests a day is skipped on the
   4th request, with the reason stored, and refused with a 429 when it is the only one; a 429 on
   one instance makes a second instance skip a deployment that would have answered it.
+
+## Note (2026-11-08, M14): quota groups
+
+Some free allowances belong to the provider account, not to one model: Cloudflare's 10,000 free
+Neurons a day are spent by every Workers AI model of the account, and OpenRouter's `:free` limit
+counts every `:free` model. A per-deployment quota cannot express that: two deployments each
+counted as if they had the whole allowance (PLAN-NOTES rows of 2026-11-03 and 2026-11-06).
+
+- The models file gets `quotaGroups`: a named allowance with a `unit` (e.g. `neurons`) and a limit
+  `perMinute` and/or `perDay`, from the provider's own docs. A deployment joins one with
+  `quotaGroup`: the group, and how its use converts to the unit (`perRequest`,
+  `perMillionInputTokens`, `perMillionOutputTokens`, e.g. Cloudflare's Neurons per million tokens
+  for that model). Config validation refuses an unknown group and a share with no rate.
+- The same Lua script counts the group together with the deployment's own quota, in the same fixed
+  UTC windows: before a try, the units of its prompt estimate and output cap (rounded up) are
+  reserved if the group has room; when the try ends, they are corrected to the units of its
+  reported input and output tokens (the prompt estimate when it reported none). A group that would
+  be exceeded skips the deployment like its own quota, and the reason names the group:
+  `skipped cloudflare-llama-4-scout (quota group cloudflare-free-neurons, 9,990 of 10,000 neurons
+  today)`. Every deployment in the group stops at once, since they share the counter.
+- Redis down: fail open, as for the quotas above.
+- Configured: `cloudflare-llama-4-scout` (24,545 and 77,273 Neurons per million input and output
+  tokens) and `cloudflare-bge-large-en-v1.5` (18,582 per million input tokens) share
+  `cloudflare-free-neurons` (10,000 Neurons a day), from
+  <https://developers.cloudflare.com/workers-ai/platform/pricing/> (rechecked 2026-11-08). The Llama
+  deployment's derived token quota (129,000 a day) is replaced by the group; both keep their
+  per-model requests per minute. OpenRouter still has a single `:free` deployment, so its own
+  quota is the account's; a second one would join a group for the account's limit.
+- Tested: the unit conversion and the skip reason (`routing/quota.test.ts`), config validation
+  (`models-config.test.ts`, `default-models.test.ts`), and against Redis (`test/quota-groups.test.ts`):
+  two deployments of a group are refused together once the allowance would be exceeded, a
+  reservation corrected to the reported tokens frees the difference, and with Redis down every
+  deployment is tried.
+- Not yet shown: the group's use in `GET /admin/models/quotas` and the quota gauge, which read
+  per-deployment counts only (PLAN-NOTES).
