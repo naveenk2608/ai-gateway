@@ -46,3 +46,27 @@ load during an outage (retry storms), and repeats requests that fail the same wa
 - Failed attempts are not charged: their usage is unknown. Budgets reserve the costliest
   deployment of the route, since attempts run one at a time.
 - Retries add latency to failing requests (bounded by the attempt cap and maximum delay).
+
+## Note (2026-11-08, M14): a retry budget per deployment
+
+`RETRY_MAX_ATTEMPTS` bounds the tries of one request, but nothing bounded retries across requests:
+when a provider struggled, every request retried it, adding load just when it could least take it.
+Each instance now keeps a retry budget per deployment: within a sliding window of
+`RETRY_BUDGET_WINDOW_MS` (10 s), retries on a deployment may be at most `RETRY_BUDGET_RATIO` (0.2) of
+its first tries in the window, or `RETRY_BUDGET_MIN_RETRIES` (3), whichever is more, so a single
+failure in quiet traffic still gets its retry. The model is Envoy's retry budget, whose
+`budget_percent` defaults to 20% and `min_retry_concurrency` to 3
+(<https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/circuit_breaker.proto>,
+checked 2026-11-08); Envoy counts retries in flight against requests in flight, while this budget
+counts them over a window, as Finagle's and Linkerd's do (Linkerd's example `ttl: 10s`, and
+"at most an additional 20% to the request load", <https://linkerd.io/2.11/tasks/configuring-retries/>,
+checked 2026-11-08). Their floor of 10 retries a second would allow 100 retries in a window, more
+than a free tier takes, so the floor is Envoy's 3. A first try is any try that is not a retry on
+the same deployment, so a fallback (the next deployment's first try) is never limited by the
+budget; breakers and `RETRY_MAX_ATTEMPTS` still are. When the budget is used up, the request
+moves on to the next deployment, whose reason reads
+`fallback after a failed (server_error), retry budget used up`, and
+`gateway_retry_budget_skips_total{deployment}` counts the retry not made. `RETRY_BUDGET_ENABLED=false`
+switches it off. The budget lives in each instance's memory: N instances allow N budgets. Tested in
+`routing/retry-budget.test.ts`: in a burst of 50 failing requests, 10 retries (against 50 without
+it) and the rest fall back at once; in quiet traffic a single failure still retries.
