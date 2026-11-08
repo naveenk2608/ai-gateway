@@ -432,6 +432,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           clock,
           clientSignal: disconnect.signal,
           log: request.log,
+          stream: body.stream === true,
           maxTokens: clientMaxTokens ?? Math.max(...deployments.map((d) => d.maxOutputTokens)),
           budget: settlement.budget,
           unfit: fitted.unfit,

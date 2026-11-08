@@ -386,7 +386,7 @@
       ]
     },
     "chat-fast": {
-      "policy": "lowest_latency",
+      "policy": "peak_ewma",
       "targets": [
         {
           "deployment": "groq-gpt-oss-120b"

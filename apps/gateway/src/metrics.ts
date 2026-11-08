@@ -4,6 +4,7 @@ import { Counter, Gauge, Histogram } from 'prom-client';
 import type { EventBus } from './events/bus.js';
 import type { ProviderErrorKind } from './providers/errors.js';
 import type { BreakerBoard, BreakerState, Transition } from './routing/breaker.js';
+import type { PeakEwma } from './routing/peak-ewma.js';
 
 /**
  * The gateway's Prometheus metrics (ADR 017). Label values come only from fixed sets or from
@@ -70,6 +71,8 @@ export interface MetricLabels {
 /** Live state read when Prometheus scrapes. */
 export interface MetricSources {
   breakers: BreakerBoard;
+  /** Latency estimates and tries in flight per deployment (ADR 030); absent in some unit tests. */
+  peakEwma?: PeakEwma;
   events: EventBus;
   pool: { totalCount: number; idleCount: number; waitingCount: number };
   /** Named round trips (postgres, redis); each rejects when its dependency is down. */
@@ -286,6 +289,34 @@ export class GatewayMetrics {
         }
       },
     });
+
+    const peakEwma = sources.peakEwma;
+    if (peakEwma) {
+      new Gauge({
+        name: 'gateway_peak_ewma_estimate_seconds',
+        help: "Each deployment's peak EWMA latency estimate on this instance (ADR 030), decayed to now: time to first token (mode stream) or the whole response (mode plain). Only measured estimates.",
+        labelNames: ['deployment', 'mode'],
+        registers,
+        collect() {
+          this.reset();
+          for (const e of peakEwma.estimates()) {
+            if (!deployments.has(e.deployment)) continue;
+            this.set({ deployment: e.deployment, mode: e.mode }, e.ms / 1000);
+          }
+        },
+      });
+      new Gauge({
+        name: 'gateway_upstream_in_flight',
+        help: "Each deployment's provider tries in flight on this instance, from the start of a try until its response or stream ends.",
+        labelNames: ['deployment'],
+        registers,
+        collect() {
+          for (const deployment of deployments) {
+            this.set({ deployment }, peakEwma.inFlight(deployment));
+          }
+        },
+      });
+    }
 
     new Counter({
       name: 'gateway_usage_events_published_total',

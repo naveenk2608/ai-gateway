@@ -246,7 +246,13 @@ const deployment = z.preprocess(
   z.discriminatedUnion('adapter', [mockDeployment, ollamaDeployment, openAICompatibleDeployment]),
 );
 
-export const ROUTING_POLICIES = ['priority', 'weighted', 'lowest_latency', 'cost_aware'] as const;
+export const ROUTING_POLICIES = [
+  'priority',
+  'weighted',
+  'lowest_latency',
+  'cost_aware',
+  'peak_ewma',
+] as const;
 export type RoutingPolicy = (typeof ROUTING_POLICIES)[number];
 
 const target = z

@@ -142,7 +142,7 @@ describe('the default models file', () => {
 
   it('has chat-fast, chat-cheap and chat-variety, each with the mock as its only last resort', () => {
     for (const [name, policy] of [
-      ['chat-fast', 'lowest_latency'],
+      ['chat-fast', 'peak_ewma'],
       ['chat-cheap', 'cost_aware'],
       ['chat-variety', 'weighted'],
     ] as const) {

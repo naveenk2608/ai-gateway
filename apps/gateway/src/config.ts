@@ -104,6 +104,15 @@ export const gatewayConfigSchema = z
      * `upstream_timeout`. Below a deployment's own `timeoutMs`, it also cuts a single try.
      */
     REQUEST_DEADLINE_MS: z.coerce.number().int().min(100).max(600_000).default(50_000),
+    /**
+     * The `peak_ewma` routing policy (ADR 030). Off, its routes are ordered as `lowest_latency`.
+     * The decay is the time constant of the latency estimate (Finagle's `decayTime` default,
+     * 10 s); the default estimate is what a deployment with no sample yet is scored with (tower's
+     * documented default of 1 s), so a new deployment gets some traffic but not all of it.
+     */
+    PEAK_EWMA_ENABLED: flag.default(true),
+    PEAK_EWMA_DECAY_MS: z.coerce.number().int().min(100).max(600_000).default(10_000),
+    PEAK_EWMA_DEFAULT_MS: z.coerce.number().int().min(1).max(600_000).default(1_000),
     /** Circuit breakers (ADR 012): consecutive failures that open one, and how long it stays open. */
     BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).max(1_000).default(5),
     BREAKER_OPEN_MS: z.coerce.number().int().min(100).max(3_600_000).default(30_000),

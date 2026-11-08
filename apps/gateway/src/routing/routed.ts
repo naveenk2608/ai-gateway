@@ -8,6 +8,7 @@ import type { AttemptContext, AttemptOutcome } from '../proxy/attempt.js';
 import type { RequestTrace } from '../proxy/trace.js';
 import { countsAsFailure, type BreakerBoard } from './breaker.js';
 import type { QuotaBoard, QuotaTicket } from './quota.js';
+import type { PeakEwma } from './peak-ewma.js';
 import { planRoute, type LatencyTracker } from './router.js';
 
 export interface RetrySettings {
@@ -23,6 +24,11 @@ export interface RetrySettings {
 export interface RoutingDeps {
   breakers: BreakerBoard;
   latency: LatencyTracker;
+  /**
+   * Peak EWMA estimates and tries in flight per deployment on this instance (ADR 030). Without it
+   * (unit tests), `peak_ewma` routes are ordered as `lowest_latency`.
+   */
+  peakEwma?: PeakEwma | undefined;
   prices: PriceBook;
   retry: RetrySettings;
   /** A number in [0, 1), for weighted picks and backoff jitter. */
@@ -46,6 +52,8 @@ export interface RoutedRequest {
   clock: Clock;
   clientSignal: AbortSignal;
   log: FastifyBaseLogger;
+  /** Whether the response streams: `peak_ewma` then scores time to first token. */
+  stream?: boolean | undefined;
   /** For cost-aware ordering: the output cap the request may use. */
   maxTokens: number;
   /** The project's budget use at admission and its soft threshold, when it has a budget. */
@@ -90,6 +98,8 @@ export async function runRouted<T>(
   const { route, clock, clientSignal } = req;
   const candidates = planRoute(route, {
     latency: deps.latency,
+    peakEwma: deps.peakEwma,
+    stream: req.stream,
     prices: deps.prices,
     random: deps.random,
     at: req.trace.startedAt,
@@ -151,6 +161,14 @@ export async function runRouted<T>(
         ].join('; ');
       skipped.length = 0;
       attempts++;
+      // In flight from here until the try's response or stream ends, however it ends (ADR 030).
+      deps.peakEwma?.begin(id);
+      let inFlight = true;
+      const landed = () => {
+        if (!inFlight) return;
+        inFlight = false;
+        deps.peakEwma?.end(id);
+      };
       const ctx: AttemptContext = {
         deployment: candidate.deployment,
         clock,
@@ -161,6 +179,7 @@ export async function runRouted<T>(
         passedOver: [...passedOver],
         ...(deadlineAt === undefined ? {} : { deadlineAt }),
         onEnd: (outcome) => {
+          landed();
           settleHealth(deps, candidate.deployment, outcome);
           settleQuota(deps, candidate.deployment, ticket, outcome, promptTokens);
         },
@@ -168,6 +187,8 @@ export async function runRouted<T>(
       try {
         return await start(ctx);
       } catch (err) {
+        // Normally the attempt ended already (onEnd); not if it failed before it began.
+        landed();
         if (!(err instanceof ProviderError) || !FALLBACK.has(err.kind)) throw err;
         lastError = err;
         failed = { id, kind: err.kind };
@@ -253,15 +274,31 @@ export function cutShortByDeadline(deployment: Deployment, outcome: AttemptOutco
   return outcome.timeoutPhase === 'deadline' && outcome.latencyMs < deployment.timeoutMs;
 }
 
+/**
+ * A try that waited its deployment's whole `timeoutMs` for its response (or first event): the
+ * deployment was at least that slow, so `peak_ewma` records the timeout as its latency (ADR 030).
+ * An idle timeout after the first event is not one: the first event did come.
+ */
+export function ranFullTimeout(deployment: Deployment, outcome: AttemptOutcome): boolean {
+  const phase = outcome.timeoutPhase;
+  if (phase === 'response' || phase === 'first_event') return true;
+  return phase === 'deadline' && outcome.latencyMs >= deployment.timeoutMs;
+}
+
 function settleHealth(deps: RoutingDeps, deployment: Deployment, outcome: AttemptOutcome): void {
   const breaker = deps.breakers.get(deployment.id);
+  const mode = outcome.stream === true ? 'stream' : 'plain';
   if (outcome.error === undefined) {
     breaker.onSuccess();
     deps.latency.record(deployment.id, outcome.ttftMs ?? outcome.latencyMs);
+    deps.peakEwma?.record(deployment.id, mode, outcome.ttftMs ?? outcome.latencyMs);
   } else if (cutShortByDeadline(deployment, outcome)) {
     breaker.onNeutral();
   } else if (outcome.error instanceof ProviderError && countsAsFailure(outcome.error.kind)) {
     breaker.onFailure(outcome.error.kind);
+    if (ranFullTimeout(deployment, outcome)) {
+      deps.peakEwma?.record(deployment.id, mode, deployment.timeoutMs);
+    }
   } else {
     breaker.onNeutral();
   }

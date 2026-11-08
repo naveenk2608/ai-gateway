@@ -44,6 +44,7 @@ import { registerModels } from './proxy/models.js';
 import { BreakerBoard } from './routing/breaker.js';
 import { HealthChecker, HealthReporter } from './routing/health.js';
 import type { RoutingDeps } from './routing/routed.js';
+import { PeakEwma } from './routing/peak-ewma.js';
 import { QuotaBoard, quotaUsedShare } from './routing/quota.js';
 import { LatencyTracker } from './routing/router.js';
 import { drainAndClose, type DrainOutcome } from './shutdown.js';
@@ -239,9 +240,18 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     quotas,
   });
   const quotaUsage = () => quotas.usage(deployments);
+  const peakEwma = new PeakEwma(
+    {
+      enabled: config.PEAK_EWMA_ENABLED,
+      decayMs: config.PEAK_EWMA_DECAY_MS,
+      defaultMs: config.PEAK_EWMA_DEFAULT_MS,
+    },
+    clock,
+  );
   const routing: RoutingDeps = {
     breakers,
     latency: new LatencyTracker(),
+    peakEwma,
     prices,
     quotas,
     random: deps.random ?? Math.random,
@@ -265,6 +275,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
 
   metrics.watch({
     breakers,
+    peakEwma,
     events,
     pool,
     checks,

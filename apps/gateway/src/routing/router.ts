@@ -1,6 +1,7 @@
 import type { RoutingPolicy } from '../models-config.js';
 import type { PriceBook } from '../limits/prices.js';
 import type { Deployment, Route } from '../providers/registry.js';
+import type { LatencyMode, PeakEwma, Score } from './peak-ewma.js';
 
 /**
  * Exponentially weighted moving average of each deployment's time to the start of a response
@@ -35,8 +36,15 @@ export interface Candidate {
 
 export interface PlanContext {
   latency: LatencyTracker;
+  /**
+   * Latency estimates and tries in flight for `peak_ewma` (ADR 030). Absent or switched off,
+   * `peak_ewma` routes are ordered as `lowest_latency`.
+   */
+  peakEwma?: PeakEwma | undefined;
+  /** Whether the request streams: `peak_ewma` scores it with the time to first token. */
+  stream?: boolean | undefined;
   prices: PriceBook;
-  /** A number in [0, 1); injected so weighted picks are repeatable in tests. */
+  /** A number in [0, 1); injected so weighted and peak_ewma picks are repeatable in tests. */
   random: () => number;
   at: number;
   promptTokens: number;
@@ -110,6 +118,16 @@ function orderByPolicy(
       }
       return order;
     }
+    case 'peak_ewma': {
+      const tracker = ctx.peakEwma;
+      if (!tracker?.enabled) {
+        return orderByPolicy('lowest_latency', targets, ctx).map((c) => ({
+          deployment: c.deployment,
+          reason: `peak_ewma off: ${c.reason}`,
+        }));
+      }
+      return peakEwmaOrder(targets, tracker, ctx.stream === true ? 'stream' : 'plain', ctx.random);
+    }
     case 'lowest_latency': {
       // Unmeasured deployments go first, so each gets measured.
       const scored = targets.map((t, i) => ({ t, i, ms: ctx.latency.get(t.deployment.id) }));
@@ -141,4 +159,61 @@ function orderByPolicy(
       }));
     }
   }
+}
+
+/** A score as stored in the routing reason: `a 240 (120 ms x 2)`, with where the estimate came from. */
+function describeScore(id: string, s: Score): string {
+  const ms = Math.round(s.estimateMs).toLocaleString('en-US');
+  const estimate =
+    s.source === 'default'
+      ? `no estimate yet, default ${ms} ms`
+      : s.source === 'stream'
+        ? `${ms} ms to first token`
+        : `${ms} ms`;
+  return `${id} ${Math.round(s.score).toLocaleString('en-US')} (${estimate} x ${s.inFlight} in flight + 1)`;
+}
+
+/**
+ * Power of two choices over peak EWMA scores (ADR 030): two different deployments picked at
+ * random, the lower score first (the first picked on a tie), then every other one by score, so
+ * the fallbacks are the next best. Scoring decays each estimate it reads (PeakEwma.score).
+ */
+function peakEwmaOrder(
+  targets: Route['targets'],
+  tracker: PeakEwma,
+  mode: LatencyMode,
+  random: () => number,
+): Candidate[] {
+  const scored = targets.map((t, i) => ({ t, i, s: tracker.score(t.deployment.id, mode) }));
+  if (scored.length === 1) {
+    const only = scored[0]!;
+    return [
+      {
+        deployment: only.t.deployment,
+        reason: `peak EWMA: only choice, ${describeScore(only.t.deployment.id, only.s)}`,
+      },
+    ];
+  }
+  const n = scored.length;
+  const first = Math.min(n - 1, Math.floor(random() * n));
+  let second = Math.min(n - 2, Math.floor(random() * (n - 1)));
+  if (second >= first) second++;
+  const a = scored[first]!;
+  const b = scored[second]!;
+  const [winner, loser] = b.s.score < a.s.score ? [b, a] : [a, b];
+  const rest = scored
+    .filter((x) => x !== winner)
+    .sort((x, y) => x.s.score - y.s.score || x.i - y.i);
+  return [
+    {
+      deployment: winner.t.deployment,
+      reason:
+        `peak EWMA: picked ${describeScore(winner.t.deployment.id, winner.s)} over ` +
+        describeScore(loser.t.deployment.id, loser.s),
+    },
+    ...rest.map((x, rank) => ({
+      deployment: x.t.deployment,
+      reason: `peak EWMA fallback ${rank + 1}: ${describeScore(x.t.deployment.id, x.s)}`,
+    })),
+  ];
 }

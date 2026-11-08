@@ -91,6 +91,8 @@ export interface AttemptOutcome {
   rateLimit?: RateLimitHeaders | undefined;
   /** Which of the attempt's limits cut it, when it timed out (`deadline`: the request's own). */
   timeoutPhase?: TimeoutPhase | undefined;
+  /** A streamed try: its latency sample is the time to first token (ADR 030). */
+  stream?: boolean | undefined;
 }
 
 /** The phase of the gateway's own timeout behind a failure, if one cut the attempt. */
@@ -210,6 +212,7 @@ class Attempt {
       usage: this.#usage,
       rateLimit: this.#rateLimit,
       timeoutPhase: timeoutPhaseOf(error),
+      stream: this.#stream,
     });
     this.#ctx.trace?.recordAttempt({
       id: this.id,
