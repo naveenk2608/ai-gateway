@@ -54,6 +54,8 @@ const requestSummarySchema = z.object({
   cacheHit: z.boolean(),
   /** Answered by an identical request's upstream call on the same instance (M14, ADR 031). */
   coalesced: z.boolean(),
+  /** Answered with an earlier request's answer for its Idempotency-Key (M15, ADR 032). */
+  replayed: z.boolean(),
   /** The /v1 endpoint: `chat` or `embeddings` (M13). */
   endpoint: z.enum(['chat', 'embeddings']),
   startedAt: z.string(),
@@ -362,6 +364,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
           'r.attempt_count',
           'r.cache_hit',
           'r.coalesced',
+          'r.replayed',
           'r.endpoint',
           'r.started_at',
           'r.latency_ms',
@@ -404,6 +407,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: AdminDeps): 
           attemptCount: r.attempt_count,
           cacheHit: r.cache_hit,
           coalesced: r.coalesced,
+          replayed: r.replayed,
           endpoint: r.endpoint,
           startedAt: iso(r.started_at),
           latencyMs: r.latency_ms,

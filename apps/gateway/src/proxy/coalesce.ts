@@ -171,24 +171,38 @@ export interface SharedStream extends OpenStream {
   whenClosed(fn: () => void): void;
 }
 
+export interface ShareOptions {
+  /** Called with the whole answer when the finish event arrives (to cache or store it). */
+  onAnswer?: ((result: ChatResult) => void) | undefined;
+  /** Called once if the stream ends without an answer (failed, or closed early). */
+  onFailure?: ((error: unknown) => void) | undefined;
+  /**
+   * Read the rest of the stream in the background whenever the leader's client leaves, not only
+   * while followers wait: a request with an Idempotency-Key is finished and stored (ADR 032).
+   */
+  keepReading?: boolean | undefined;
+}
+
 /**
- * Shares a streamed leader's upstream stream with its flight (ADR 031). Events pass through to the
- * leader's SSE body as they come and are assembled into one answer, which resolves the flight (and
- * goes to `onAnswer`, to be cached) when the finish event arrives. If the leader's client leaves
- * while followers wait, the rest of the stream is read in the background, so the followers still
- * get the answer and the leader's record still holds the attempt and its usage; `whenClosed`
- * callbacks then run after that read ends.
+ * Shares a streamed leader's upstream stream with its flight (ADR 031) and its Idempotency-Key
+ * (ADR 032). Events pass through to the leader's SSE body as they come and are assembled into one
+ * answer, which resolves the flight (and goes to `onAnswer`, to be cached or stored) when the
+ * finish event arrives. If the leader's client leaves while followers wait, or `keepReading` is
+ * set, the rest of the stream is read in the background, so the answer is still complete and the
+ * leader's record still holds the attempt and its usage; `whenClosed` callbacks then run after
+ * that read ends.
  */
 export function shareStream(
   stream: OpenStream,
-  flight: Flight<ChatResult>,
+  flight: Flight<ChatResult> | undefined,
   trace: RequestTrace,
-  onAnswer?: (result: ChatResult) => void,
+  { onAnswer, onFailure, keepReading = false }: ShareOptions = {},
 ): SharedStream {
   const text: string[] = [];
   const calls: ToolCall[] = [];
   let closed = false;
   let draining = false;
+  let answered = false;
   const waiting: (() => void)[] = [];
 
   const see = (r: IteratorResult<StreamEvent>, background: boolean) => {
@@ -213,7 +227,8 @@ export function shareStream(
         finishReason: event.finishReason,
         usage: event.usage,
       };
-      flight.resolve(result);
+      answered = true;
+      flight?.resolve(result);
       onAnswer?.(result);
     }
     return r;
@@ -222,7 +237,9 @@ export function shareStream(
   const finish = (error?: unknown) => {
     if (closed) return;
     closed = true;
-    flight.reject(error ?? new ProviderError('connection', 'stream ended without a finish event'));
+    const failure = error ?? new ProviderError('connection', 'stream ended without a finish event');
+    flight?.reject(failure);
+    if (!answered) onFailure?.(failure);
     stream.close(error);
     for (const fn of waiting.splice(0)) fn();
   };
@@ -245,7 +262,8 @@ export function shareStream(
     close: (error?: unknown) => {
       if (closed || draining) return;
       const clientLeft = error instanceof ProviderError && error.kind === 'canceled';
-      if (clientLeft && !flight.settled && flight.followersWaiting > 0) {
+      const followersWait = flight !== undefined && !flight.settled && flight.followersWaiting > 0;
+      if (clientLeft && !answered && (keepReading || followersWait)) {
         draining = true;
         void drain();
         return;

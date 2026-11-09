@@ -395,6 +395,40 @@ With `CACHE_ENABLED=true`, embeddings are cached by project, model, inputs, `dim
 `encoding_format`, without the temperature rule (an input always gives the same vector);
 `x-gateway-cache: off` skips the cache. Hits cost nothing and are recorded with `cacheHit: true`.
 
+### Idempotency-Key
+
+A client that may retry a request (after a dropped connection, say) can send an
+`Idempotency-Key` with `POST /v1/chat/completions` or `POST /v1/embeddings`
+([ADR 032](docs/adr/032-idempotency-key.md)). As the IETF draft (version -08) defines it, the
+value is a quoted string: `Idempotency-Key: "8e03978e-40d5-43e8-bc93-6894a57f9324"` (1 to 255
+printable ASCII characters).
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H "authorization: Bearer $GATEWAY_KEY" -H 'content-type: application/json' \
+  -H 'Idempotency-Key: "order-1234-summary"' \
+  -d '{"model": "mock-1", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+- The first request with a key runs as usual; a repeat with the same key and body (ignoring
+  `stream`, `stream_options` and `user`) within 24 hours gets the first answer, as JSON or as a
+  stream as it asks, with `Idempotent-Replayed: true` and the same response ID. It makes no
+  provider call and costs nothing (recorded with `replayed: true`).
+- The same key with a different body is 422 `idempotency_key_reused`; a key still being processed
+  is 409 `idempotency_key_in_progress` with `retry-after` (a repeat on the same instance waits for
+  it instead, within its own deadline); a malformed key is 400 `invalid_idempotency_key`.
+- If the client leaves, the call is not cancelled: it finishes within its timeouts and
+  `REQUEST_DEADLINE_MS`, is stored, and is charged once (the first request is recorded as
+  cancelled with its cost); the retry gets the answer.
+- A failed request releases its key, so a retry runs again. An answer larger than
+  `IDEMPOTENCY_MAX_BODY_BYTES` (256 KiB) is not kept: a repeat then gets 409
+  `idempotency_answer_not_stored` rather than a second call.
+- Keys belong to one project and one endpoint, are kept in Postgres for
+  `IDEMPOTENCY_KEY_TTL_HOURS` (24, Stripe's documented window) and deleted by the worker after
+  that. A running request holds its key for at most `IDEMPOTENCY_LOCK_MS` (10 minutes) before
+  another instance may take it over. If Postgres is down, requests with a key get 503
+  `idempotency_unavailable`. `IDEMPOTENCY_ENABLED=false` ignores the header.
+
 ### Errors
 
 Errors use the OpenAI shape `{"error": {"message", "type", "param", "code"}}` and never include
@@ -408,15 +442,20 @@ can help.
 | 400 | `unsupported_parameter` | `dimensions` on an embeddings model that does not take it, or outside its range. |
 | 400 | `model_capability_unsupported` | No deployment of the model supports what the request uses (tools, a `tool_choice`, a response format, images); `param` names the field. |
 | 400 | `request_exceeds_limit` | The request could never fit: more tokens than the TPM limit, or a worst-case cost above the project's per-request cap or whole budget (lower `max_tokens`); or an embeddings request over its input caps. |
+| 400 | `invalid_idempotency_key` | The `Idempotency-Key` header is not one quoted string of 1 to 255 printable ASCII characters. |
 | 401 | `invalid_api_key` | Missing, unknown, revoked or expired key. |
 | 429 | `too_many_invalid_api_keys` | The client IP sent too many key IDs that do not exist; refused before any key lookup, with `retry-after`. |
 | 403 | `model_not_allowed` | The model is outside the project's allow-list. |
 | 404 | `model_not_found` | No such model, or none of its deployments is enabled. |
+| 409 | `idempotency_key_in_progress` | A request with the same `Idempotency-Key` is still running, with `retry-after`. |
+| 409 | `idempotency_answer_not_stored` | The request with this `Idempotency-Key` completed, but its answer was too large to keep. |
+| 422 | `idempotency_key_reused` | The `Idempotency-Key` was used with a different body. |
 | 429 | `rpm_limit_exceeded`, `tpm_limit_exceeded`, `concurrency_limit_exceeded` | A key or project limit, with `retry-after`. |
 | 429 | `budget_exceeded` | The monthly budget is used up; `retry-after` is the start of next month. |
 | 429 | `upstream_rate_limited` | The last deployment tried was rate limited by its provider. |
 | 502 | `upstream_error`, `upstream_unavailable`, `upstream_invalid_response`, `upstream_auth_failed`, `upstream_model_not_found` | The providers tried failed or are misconfigured (the last failure is reported). |
 | 503 | `deployments_unavailable` | Every deployment of the model has an open circuit breaker. |
+| 503 | `idempotency_unavailable` | Postgres is unreachable, so a request with an `Idempotency-Key` cannot be checked. |
 | 503 | `limits_unavailable` | Redis is unreachable and `LIMITS_FAIL_MODE=closed`; only requests with limits are affected. |
 | 504 | `upstream_timeout` | The deployment's timeout passed. |
 
@@ -1181,7 +1220,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Event bus | `EVENT_BUS` (`redis` or `sqs`), `SQS_QUEUE_URL`, `SQS_DLQ_URL`, `AWS_REGION`, `SQS_ENDPOINT` (LocalStack only), `EVENTS_*`, `WORKER_*` |
 | Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*`, `UNKNOWN_KEYS_PER_MINUTE_PER_IP`, `UNKNOWN_KEY_CACHE_MS` |
 | Routing | `RETRY_*` (with `RETRY_BUDGET_*`), `PEAK_EWMA_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
-| Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `CACHE_MEMORY_GUARD_ENABLED`, `CACHE_MEMORY_CHECK_INTERVAL_MS`, `CACHE_MAX_MEMORY_SHARE`, `CACHE_MAX_MEMORY_BYTES`, `COALESCE_ENABLED` |
+| Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `CACHE_MEMORY_GUARD_ENABLED`, `CACHE_MEMORY_CHECK_INTERVAL_MS`, `CACHE_MAX_MEMORY_SHARE`, `CACHE_MAX_MEMORY_BYTES`, `COALESCE_ENABLED`, `IDEMPOTENCY_ENABLED`, `IDEMPOTENCY_KEY_TTL_HOURS`, `IDEMPOTENCY_LOCK_MS`, `IDEMPOTENCY_MAX_BODY_BYTES` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
 | Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |
 | Retention and shutdown | `ROLLUP_RETENTION_*`, `SHUTDOWN_TIMEOUT_MS`, `MIGRATE_ON_START` |

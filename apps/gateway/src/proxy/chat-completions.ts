@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import type { Clock } from '@ai-gateway/shared';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { apiKeyAuth } from '../auth/api-key-auth.js';
 import type { KeyVerifier } from '../auth/key-verifier.js';
 import { GatewayError } from '../errors.js';
@@ -30,6 +31,20 @@ import {
   type OpenStream,
 } from './attempt.js';
 import { follow, shareStream, type Coalescer } from './coalesce.js';
+import {
+  answerNotStored,
+  IDEMPOTENCY_HEADER,
+  idempotencyUnavailable,
+  keyInProgress,
+  keyReused,
+  parseIdempotencyKey,
+  REPLAYED_HEADER,
+  requestFingerprint,
+  type Claim,
+  type IdempotencyGate,
+  type IdempotentLead,
+  type StoredResponse,
+} from './idempotency.js';
 import { estimateChatPromptTokens } from './estimate.js';
 import {
   chatCompletionRequestSchema,
@@ -40,7 +55,7 @@ import {
   type ChatCompletionRequest,
 } from './schema.js';
 import { setRateLimitHeaders } from './rate-limit-headers.js';
-import { routingHeaders } from './routing-headers.js';
+import { replayHeaders, routingHeaders } from './routing-headers.js';
 import { RequestTrace } from './trace.js';
 import { toGatewayError } from './upstream-errors.js';
 
@@ -62,6 +77,8 @@ export interface ChatRouteOptions {
   cache?: ResponseCache | null;
   /** Identical cacheable requests in flight share one upstream call (ADR 031). */
   coalescer?: Coalescer | null;
+  /** Idempotency-Key: a retry is answered with the first answer (ADR 032). */
+  idempotency?: IdempotencyGate | null;
   /** Records each finished request (attempts, routing, latency, tokens). */
   metrics?: GatewayMetrics;
 }
@@ -74,6 +91,25 @@ interface ResponseMeta {
 
 const internalError = new GatewayError('internal_error', 'Internal server error', {
   httpStatus: 500,
+});
+
+/** What an Idempotency-Key keeps of a chat answer (ADR 032): the response's ID and the answer. */
+const storedChatSchema = z.object({
+  meta: z.object({ id: z.string(), created: z.number(), model: z.string() }),
+  answer: z.object({
+    content: z.string(),
+    toolCalls: z
+      .array(z.object({ id: z.string(), name: z.string(), arguments: z.string() }))
+      .optional(),
+    finishReason: z.enum(['stop', 'length', 'content_filter', 'tool_calls']),
+    usage: z
+      .object({
+        promptTokens: z.number().int().min(0),
+        completionTokens: z.number().int().min(0),
+        totalTokens: z.number().int().min(0),
+      })
+      .nullable(),
+  }),
 });
 
 /** An abort signal that fires if the client disconnects before the response is complete. */
@@ -330,6 +366,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
     routing,
     cache = null,
     coalescer = null,
+    idempotency = null,
     metrics,
   } = options;
   app.decorateRequest('apiKey', null);
@@ -425,6 +462,10 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
 
       const clientMaxTokens = body.max_completion_tokens ?? body.max_tokens ?? undefined;
       const deployments = route.targets.map((t) => t.deployment);
+      // A malformed Idempotency-Key is a 400 before limits are spent (ADR 032).
+      const idemKey = idempotency?.settings.enabled
+        ? parseIdempotencyKey(request.headers[IDEMPOTENCY_HEADER])
+        : undefined;
       // Limits and budget (M4): throws the 429/503 the client sees, before any provider call.
       const settlement = await admission.admit({
         key: apiKey,
@@ -438,7 +479,106 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
       // From here the settlement is released exactly once: by the stream when it ends, or below.
       let streamOwnsSettlement = false;
       const disconnect = watchDisconnect(reply.raw);
+      /** The request holding its Idempotency-Key, which completes it with the answer or fails it. */
+      let lead: IdempotentLead | undefined;
       try {
+        const meta: ResponseMeta = {
+          id: `chatcmpl-${request.id}`,
+          created: Math.floor(clock.now() / 1000),
+          model: body.model,
+        };
+        const deadlineAt =
+          routing.deadlineMs === undefined ? undefined : trace.startedAt + routing.deadlineMs;
+        /** Answers with a complete answer the request did not call for: a hit, a flight's or a replay. */
+        const replay = (answer: ChatResult, m: ResponseMeta = meta) => {
+          trace.markFirstToken();
+          trace.setUsage(answer.usage);
+          trace.addCompletionText(answer.content);
+          limitHeaders();
+          if (body.stream !== true) return toChatCompletion(m, answer);
+          const write = chunkWriter(m, body.stream_options?.include_usage === true);
+          const chunks = [
+            write.role(),
+            ...(answer.content !== '' || !answer.toolCalls?.length
+              ? [write.content(answer.content)]
+              : []),
+            ...(answer.toolCalls ?? []).flatMap((call, index) => [
+              write.toolCall(index, call.id, call.name),
+              write.toolArguments(index, call.arguments),
+            ]),
+            write.finish(answer.finishReason),
+            ...(write.includeUsage && answer.usage ? [write.usage(answer.usage)] : []),
+            SSE_DONE,
+          ];
+          void reply
+            .header('content-type', 'text/event-stream; charset=utf-8')
+            .header('cache-control', 'no-cache');
+          return reply.send(Readable.from(chunks, { objectMode: false }) as never);
+        };
+
+        // Idempotency-Key (ADR 032): a repeat is answered with the first request's answer, waits
+        // for it on this instance, or gets 409 / 422; the first request leads.
+        if (idempotency && idemKey !== undefined) {
+          const replayStored = (stored: StoredResponse) => {
+            if (stored.body === null) throw answerNotStored();
+            const kept = storedChatSchema.safeParse(stored.body);
+            if (!kept.success) throw internalError;
+            trace.replayed = true;
+            for (const [name, value] of Object.entries(stored.headers)) {
+              void reply.header(name, value);
+            }
+            void reply.header(REPLAYED_HEADER, 'true');
+            return replay(kept.data.answer, kept.data.meta);
+          };
+          let claim: Claim;
+          try {
+            claim = await idempotency.claim({
+              projectId: apiKey.projectId,
+              endpoint: 'chat',
+              key: idemKey,
+              fingerprint: requestFingerprint(body),
+              requestId: request.id,
+              deadlineMs: routing.deadlineMs,
+            });
+          } catch (err) {
+            request.log.warn({ err }, 'idempotency key check failed');
+            throw idempotencyUnavailable();
+          }
+          switch (claim.kind) {
+            case 'mismatch':
+              throw keyReused();
+            case 'busy':
+              throw keyInProgress(claim.retryAfterSeconds);
+            case 'replay':
+              return replayStored(claim.stored);
+            case 'wait': {
+              let stored: StoredResponse;
+              try {
+                stored = await follow(claim.flight, {
+                  clock,
+                  clientSignal: disconnect.signal,
+                  deadlineAt,
+                });
+              } catch (err) {
+                // Past this request's own deadline it stops waiting: the first still runs.
+                if (err instanceof ProviderError && err.kind === 'timeout') throw keyInProgress(1);
+                throw upstreamFailure(err);
+              }
+              return replayStored(stored);
+            }
+            case 'lead':
+              lead = claim.lead;
+          }
+        }
+        /** Stores the answer under the key, with the routing headers a replay repeats. */
+        const keep = async (answer: ChatResult) => {
+          await lead?.complete({
+            status: 200,
+            headers: replayHeaders(reply),
+            body: { meta, answer },
+          });
+        };
+
         const routed = {
           route,
           trace,
@@ -461,11 +601,6 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
             maxTokens: clientMaxTokens ?? ctx.deployment.maxOutputTokens,
           };
         };
-        const meta: ResponseMeta = {
-          id: `chatcmpl-${request.id}`,
-          created: Math.floor(clock.now() / 1000),
-          model: body.model,
-        };
 
         // Exact-match cache (ADR 013), after admission so hits still count toward RPM. The same
         // key coalesces identical requests in flight (ADR 031), whether the cache is on or not.
@@ -473,38 +608,13 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         const reusable = cacheable(body, typeof header === 'string' ? header : undefined);
         const key =
           reusable && (cache || coalescer?.enabled) ? cacheKey(apiKey.projectId, body) : null;
-        /** Answers with a complete answer the request did not call for: a hit or a flight's. */
-        const replay = (answer: ChatResult) => {
-          trace.markFirstToken();
-          trace.setUsage(answer.usage);
-          trace.addCompletionText(answer.content);
-          limitHeaders();
-          if (body.stream !== true) return toChatCompletion(meta, answer);
-          const write = chunkWriter(meta, body.stream_options?.include_usage === true);
-          const chunks = [
-            write.role(),
-            ...(answer.content !== '' || !answer.toolCalls?.length
-              ? [write.content(answer.content)]
-              : []),
-            ...(answer.toolCalls ?? []).flatMap((call, index) => [
-              write.toolCall(index, call.id, call.name),
-              write.toolArguments(index, call.arguments),
-            ]),
-            write.finish(answer.finishReason),
-            ...(write.includeUsage && answer.usage ? [write.usage(answer.usage)] : []),
-            SSE_DONE,
-          ];
-          void reply
-            .header('content-type', 'text/event-stream; charset=utf-8')
-            .header('cache-control', 'no-cache');
-          return reply.send(Readable.from(chunks, { objectMode: false }) as never);
-        };
         if (cache && key) {
           const hit = await cache.get(key);
           metrics?.cacheLookup(hit !== null);
           void reply.header(CACHE_HEADER, hit ? 'hit' : 'miss');
           if (hit) {
             trace.cacheHit = true;
+            await keep(hit);
             return replay(hit);
           }
         }
@@ -522,39 +632,44 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
             answer = await follow(joined.flight, {
               clock,
               clientSignal: disconnect.signal,
-              deadlineAt:
-                routing.deadlineMs === undefined ? undefined : trace.startedAt + routing.deadlineMs,
+              deadlineAt,
             });
           } catch (err) {
             throw upstreamFailure(err);
           }
+          await keep(answer);
           return replay(answer);
         }
         const flight = joined?.flight;
         // The leader takes part in its flight until its client leaves or its request ends; the
-        // upstream call follows the flight's signal, which aborts only when nobody waits.
+        // upstream call follows the flight's signal, which aborts only when nobody waits. With an
+        // Idempotency-Key, the client leaving cancels nothing: the call finishes within its
+        // timeouts and the deadline, and its answer is stored for the retry (ADR 032).
         const leaveFlight = flight?.enter('leader');
-        if (leaveFlight) {
+        if (leaveFlight && !lead) {
           if (disconnect.signal.aborted) leaveFlight();
           else disconnect.signal.addEventListener('abort', leaveFlight, { once: true });
         }
-        const lead = flight ? { ...routed, clientSignal: flight.signal } : routed;
+        const callSignal = flight?.signal ?? (lead ? new AbortController().signal : undefined);
+        const call = callSignal ? { ...routed, clientSignal: callSignal } : routed;
 
         if (body.stream !== true) {
           try {
-            const result = await runRouted(routing, lead, (ctx) => runChat(ctx, requestFor(ctx)));
+            const result = await runRouted(routing, call, (ctx) => runChat(ctx, requestFor(ctx)));
             flight?.resolve(result);
             routingHeaders(reply, served);
             limitHeaders();
             trace.setUsage(result.usage);
             trace.addCompletionText(result.content);
-            for (const call of result.toolCalls ?? []) {
-              trace.addCompletionText(`${call.name} ${call.arguments}`);
+            for (const toolCall of result.toolCalls ?? []) {
+              trace.addCompletionText(`${toolCall.name} ${toolCall.arguments}`);
             }
             store?.(result);
-            if (flight && disconnect.signal.aborted) {
-              // Its client left while followers kept the call going: recorded as cancelled, with
-              // the call's attempt, usage and cost, since nothing else carries them (ADR 031).
+            await keep(result);
+            if ((flight || lead) && disconnect.signal.aborted) {
+              // Its client left while followers or its Idempotency-Key kept the call going:
+              // recorded as cancelled, with the call's attempt, usage and cost, since nothing
+              // else carries them (ADR 031, ADR 032).
               trace.setError('client_closed_request');
               emit(trace, 499);
             }
@@ -569,15 +684,26 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
 
         let stream: OpenStream;
         try {
-          stream = await runRouted(routing, lead, (ctx) => openStream(ctx, requestFor(ctx)));
+          stream = await runRouted(routing, call, (ctx) => openStream(ctx, requestFor(ctx)));
         } catch (err) {
           flight?.reject(err);
           leaveFlight?.();
           throw upstreamFailure(err);
         }
         // Followers get the whole answer; a leader whose client leaves is read to the end for
-        // them, and its record waits for that (ADR 031).
-        const shared = flight ? shareStream(stream, flight, trace, store) : undefined;
+        // them, or for its Idempotency-Key, and its record waits for that (ADR 031, ADR 032).
+        const holder = lead;
+        const shared =
+          flight || holder
+            ? shareStream(stream, flight, trace, {
+                onAnswer: (result) => {
+                  store?.(result);
+                  void keep(result);
+                },
+                onFailure: (err) => void holder?.fail(err),
+                keepReading: holder !== undefined,
+              })
+            : undefined;
         if (shared) stream = shared;
         trace.markFirstToken();
         routingHeaders(reply, served);
@@ -619,11 +745,17 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         });
         // The typed reply expects the JSON schema's shape; Fastify pipes streams without serializing.
         return reply.send(sse as never);
+      } catch (err) {
+        // A key whose request failed is released, so the client may retry with it (ADR 032).
+        if (lead && !streamOwnsSettlement) await lead.fail(err);
+        throw err;
       } finally {
         if (!streamOwnsSettlement) {
           disconnect.dispose();
           settlement.release();
         }
+        // Every path above completes or fails the key; this only guards against a missed one.
+        if (lead && !lead.done && !streamOwnsSettlement) await lead.fail(internalError);
       }
     },
   );

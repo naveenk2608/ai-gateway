@@ -112,6 +112,7 @@ export async function ingestEvents(
         ttft_ms: r.ttftMs,
         cache_hit: event.cacheHit === true,
         coalesced: event.coalesced === true,
+        replayed: event.replayed === true,
         // Events from gateways before M13 have no endpoint: they were all chat requests.
         endpoint: r.endpoint ?? 'chat',
       })),
@@ -151,7 +152,7 @@ export async function ingestEvents(
       // A cache hit, or a request answered by an identical request's call, used no provider: its
       // tokens are recorded, at no cost (ADR 013, ADR 031). A request rejected before any
       // provider call has no usage to account.
-      if (!event.cacheHit && !(event.coalesced && event.usage)) return [];
+      if (!event.cacheHit && !((event.coalesced || event.replayed) && event.usage)) return [];
       return [
         {
           id: uuidv7(Date.parse(event.occurredAt)),

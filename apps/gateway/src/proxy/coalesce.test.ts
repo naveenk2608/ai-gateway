@@ -132,7 +132,7 @@ describe('shareStream', () => {
     const { flight } = new Coalescer(true).join<ChatResult>('k');
     const { stream, closed } = fakeStream(events);
     const stored: ChatResult[] = [];
-    const shared = shareStream(stream, flight, trace(), (r) => stored.push(r));
+    const shared = shareStream(stream, flight, trace(), { onAnswer: (r) => stored.push(r) });
     while (!(await shared.next()).done);
     shared.close();
     const expected = { content: 'Hello', finishReason: 'stop', usage: answer.usage };

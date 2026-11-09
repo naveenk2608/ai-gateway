@@ -99,6 +99,9 @@ function requestColumns(slowest: number, open: (id: string) => void, providerOf:
         if (c.row.original.coalesced) {
           return <span className="badge tone-accent">coalesced</span>;
         }
+        if (c.row.original.replayed) {
+          return <span className="badge tone-accent">replayed</span>;
+        }
         if (!deployment) return '—';
         return (
           <div className="deployment-cell">
@@ -189,6 +192,11 @@ function RoutingHistory({ detail, providerOf }: { detail: Detail; providerOf: Pr
           Answered with the call of an identical request in flight: no provider was called for this
           one.
         </Empty>
+      ) : detail.replayed && detail.attempts.length === 0 ? (
+        <Empty>
+          Answered with the stored answer of an earlier request with the same Idempotency-Key: no
+          provider was called for this one.
+        </Empty>
       ) : detail.attempts.length === 0 ? (
         <Empty>Rejected before any provider was called ({detail.errorCode}).</Empty>
       ) : (
@@ -238,6 +246,7 @@ function RequestFacts({ detail, providerOf }: { detail: Detail; providerOf: Prov
         {detail.endpoint === 'embeddings' && <span className="badge">embeddings</span>}
         {detail.cacheHit && <span className="badge tone-accent">cache hit</span>}
         {detail.coalesced && <span className="badge tone-accent">coalesced</span>}
+        {detail.replayed && <span className="badge tone-accent">replayed</span>}
       </div>
       <dl className="facts">
         <dt>Model</dt>

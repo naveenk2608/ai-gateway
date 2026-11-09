@@ -12,7 +12,7 @@ import {
 } from './consumer.js';
 import { ingestEvents } from './ingest.js';
 import type { WorkerMetrics } from './metrics.js';
-import { pruneRollups, type RollupRetention } from './retention.js';
+import { pruneIdempotencyKeys, pruneRollups, type RollupRetention } from './retention.js';
 
 export interface SqsConsumerOptions {
   sqs: SqsApi;
@@ -294,6 +294,12 @@ export class SqsUsageConsumer implements EventConsumer {
       }
     } catch (err) {
       this.#o.logger.warn({ err }, 'rollup retention failed');
+    }
+    try {
+      const keys = await pruneIdempotencyKeys(this.#o.db, now);
+      if (keys > 0) this.#o.logger.info({ deleted: keys }, 'expired idempotency keys deleted');
+    } catch (err) {
+      this.#o.logger.warn({ err }, 'idempotency key retention failed');
     }
   }
 }

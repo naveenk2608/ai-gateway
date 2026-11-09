@@ -15,14 +15,29 @@ import type { EventBus } from '../events/bus.js';
 import type { AdmissionControl } from '../limits/admission.js';
 import type { GatewayMetrics } from '../metrics.js';
 import { MAX_EMBEDDING_INPUTS } from '../models-config.js';
+import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { Usage } from '../providers/types.js';
 import { runRouted, type RoutingDeps } from '../routing/routed.js';
 import { runEmbed, type AttemptContext } from './attempt.js';
 import { upstreamFailure, watchDisconnect } from './chat-completions.js';
 import { follow, type Coalescer } from './coalesce.js';
+import {
+  answerNotStored,
+  IDEMPOTENCY_HEADER,
+  idempotencyUnavailable,
+  keyInProgress,
+  keyReused,
+  parseIdempotencyKey,
+  REPLAYED_HEADER,
+  requestFingerprint,
+  type Claim,
+  type IdempotencyGate,
+  type IdempotentLead,
+  type StoredResponse,
+} from './idempotency.js';
 import { setRateLimitHeaders } from './rate-limit-headers.js';
-import { routingHeaders } from './routing-headers.js';
+import { replayHeaders, routingHeaders } from './routing-headers.js';
 import { errorBodySchema } from './schema.js';
 import { RequestTrace } from './trace.js';
 
@@ -67,6 +82,18 @@ export const embeddingsResponseSchema = z.object({
   usage: z.object({ prompt_tokens: z.number().int(), total_tokens: z.number().int() }),
 });
 
+/** What an Idempotency-Key keeps of an embeddings answer (ADR 032): the data as sent, and usage. */
+const storedEmbeddingsSchema = z.object({
+  data: z.array(z.union([z.array(z.number()), z.string()])).min(1),
+  usage: z
+    .object({
+      promptTokens: z.number().int().min(0),
+      completionTokens: z.number().int().min(0),
+      totalTokens: z.number().int().min(0),
+    })
+    .nullable(),
+});
+
 export interface EmbeddingsRouteOptions {
   registry: ProviderRegistry;
   clock: Clock;
@@ -77,6 +104,8 @@ export interface EmbeddingsRouteOptions {
   cache?: ResponseCache | null;
   /** Identical requests in flight share one upstream call (ADR 031). */
   coalescer?: Coalescer | null;
+  /** Idempotency-Key: a retry is answered with the first answer (ADR 032). */
+  idempotency?: IdempotencyGate | null;
   metrics?: GatewayMetrics;
 }
 
@@ -105,6 +134,7 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
     routing,
     cache = null,
     coalescer = null,
+    idempotency = null,
     metrics,
   } = options;
   /** Hands the finished trace to the event bus, once (a second call does nothing). */
@@ -234,6 +264,10 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
       }
 
       const deployments = route.targets.map((t) => t.deployment);
+      // A malformed Idempotency-Key is a 400 before limits are spent (ADR 032).
+      const idemKey = idempotency?.settings.enabled
+        ? parseIdempotencyKey(request.headers[IDEMPOTENCY_HEADER])
+        : undefined;
       // Embeddings produce no output tokens: the reservation is the input at its price.
       const settlement = await admission.admit({
         key: apiKey,
@@ -243,8 +277,12 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
         log: request.log,
       });
       const disconnect = watchDisconnect(reply.raw);
+      /** The request holding its Idempotency-Key, which completes it with the answer or fails it. */
+      let lead: IdempotentLead | undefined;
       try {
         const encoding = body.encoding_format ?? 'float';
+        const deadlineAt =
+          routing.deadlineMs === undefined ? undefined : trace.startedAt + routing.deadlineMs;
         const answer = (data: (number[] | string)[], usage: Usage | null) => {
           setRateLimitHeaders(reply, settlement.rateLimits);
           const tokens = usage?.promptTokens ?? trace.estimatedPromptTokens;
@@ -258,6 +296,71 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
             model: body.model,
             usage: { prompt_tokens: tokens, total_tokens: usage?.totalTokens ?? tokens },
           };
+        };
+
+        // Idempotency-Key (ADR 032): a repeat is answered with the first request's vectors, waits
+        // for them on this instance, or gets 409 / 422; the first request leads.
+        if (idempotency && idemKey !== undefined) {
+          const replayStored = (stored: StoredResponse) => {
+            if (stored.body === null) throw answerNotStored();
+            const kept = storedEmbeddingsSchema.safeParse(stored.body);
+            if (!kept.success) {
+              throw new GatewayError('internal_error', 'Internal server error', {
+                httpStatus: 500,
+              });
+            }
+            trace.replayed = true;
+            trace.setUsage(kept.data.usage);
+            if (!kept.data.usage) trace.estimatePromptOnly();
+            for (const [name, value] of Object.entries(stored.headers)) {
+              void reply.header(name, value);
+            }
+            void reply.header(REPLAYED_HEADER, 'true');
+            return answer(kept.data.data, kept.data.usage);
+          };
+          let claim: Claim;
+          try {
+            claim = await idempotency.claim({
+              projectId: apiKey.projectId,
+              endpoint: 'embeddings',
+              key: idemKey,
+              fingerprint: requestFingerprint(body),
+              requestId: request.id,
+              deadlineMs: routing.deadlineMs,
+            });
+          } catch (err) {
+            request.log.warn({ err }, 'idempotency key check failed');
+            throw idempotencyUnavailable();
+          }
+          switch (claim.kind) {
+            case 'mismatch':
+              throw keyReused();
+            case 'busy':
+              throw keyInProgress(claim.retryAfterSeconds);
+            case 'replay':
+              return replayStored(claim.stored);
+            case 'wait': {
+              let stored: StoredResponse;
+              try {
+                stored = await follow(claim.flight, {
+                  clock,
+                  clientSignal: disconnect.signal,
+                  deadlineAt,
+                });
+              } catch (err) {
+                // Past this request's own deadline it stops waiting: the first still runs.
+                if (err instanceof ProviderError && err.kind === 'timeout') throw keyInProgress(1);
+                throw upstreamFailure(err);
+              }
+              return replayStored(stored);
+            }
+            case 'lead':
+              lead = claim.lead;
+          }
+        }
+        /** Stores the vectors under the key, with the routing headers a replay repeats. */
+        const keep = async (entry: CachedEmbeddings) => {
+          await lead?.complete({ status: 200, headers: replayHeaders(reply), body: entry });
         };
 
         const header = request.headers[CACHE_HEADER];
@@ -274,6 +377,7 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
             trace.cacheHit = true;
             trace.setUsage(hit.usage);
             if (!hit.usage) trace.estimatePromptOnly();
+            await keep(hit);
             return answer(hit.data, hit.usage);
           }
         }
@@ -291,21 +395,22 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
             shared = await follow(joined.flight, {
               clock,
               clientSignal: disconnect.signal,
-              deadlineAt:
-                routing.deadlineMs === undefined ? undefined : trace.startedAt + routing.deadlineMs,
+              deadlineAt,
             });
           } catch (err) {
             throw upstreamFailure(err);
           }
           trace.setUsage(shared.usage);
           if (!shared.usage) trace.estimatePromptOnly();
+          await keep(shared);
           return answer(shared.data, shared.usage);
         }
         const flight = joined?.flight;
         // The leader takes part until its client leaves or it ends; the call stops only when
-        // nobody waits for it.
+        // nobody waits for it. With an Idempotency-Key, the client leaving cancels nothing: the
+        // call finishes within its timeouts and the deadline, and is stored (ADR 032).
         const leaveFlight = flight?.enter('leader');
-        if (leaveFlight) {
+        if (leaveFlight && !lead) {
           if (disconnect.signal.aborted) leaveFlight();
           else disconnect.signal.addEventListener('abort', leaveFlight, { once: true });
         }
@@ -318,7 +423,8 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
               route,
               trace,
               clock,
-              clientSignal: flight ? flight.signal : disconnect.signal,
+              clientSignal:
+                flight?.signal ?? (lead ? new AbortController().signal : disconnect.signal),
               log: request.log,
               maxTokens: 0,
               budget: settlement.budget,
@@ -340,9 +446,10 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
           const entry: CachedEmbeddings = { data, usage: result.usage };
           flight?.resolve(entry);
           if (cache && key) cache.setEmbeddings(key, entry);
-          if (flight && disconnect.signal.aborted) {
-            // Its client left while followers kept the call going: recorded as cancelled, with
-            // the call's attempt, usage and cost (ADR 031).
+          await keep(entry);
+          if ((flight || lead) && disconnect.signal.aborted) {
+            // Its client left while followers or its Idempotency-Key kept the call going:
+            // recorded as cancelled, with the call's attempt, usage and cost (ADR 031, ADR 032).
             trace.setError('client_closed_request');
             emit(trace, 499);
           }
@@ -353,9 +460,19 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
         } finally {
           leaveFlight?.();
         }
+      } catch (err) {
+        // A key whose request failed is released, so the client may retry with it (ADR 032).
+        await lead?.fail(err);
+        throw err;
       } finally {
         disconnect.dispose();
         settlement.release();
+        // Every path above completes or fails the key; this only guards against a missed one.
+        if (lead && !lead.done) {
+          await lead.fail(
+            new GatewayError('internal_error', 'Internal server error', { httpStatus: 500 }),
+          );
+        }
       }
     },
   );

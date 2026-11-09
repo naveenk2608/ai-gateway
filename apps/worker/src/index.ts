@@ -15,6 +15,7 @@ export {
 } from './consumer.js';
 export { SqsUsageConsumer, type SqsConsumerOptions } from './sqs-consumer.js';
 export { ingestEvents } from './ingest.js';
+export { pruneIdempotencyKeys } from './retention.js';
 export { watchPipeline, WorkerMetrics } from './metrics.js';
 export {
   readPipelineState,

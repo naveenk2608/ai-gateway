@@ -86,6 +86,11 @@ export const usageEventSchema = z.object({
    */
   coalesced: z.boolean().optional(),
   /**
+   * Answered with the stored answer of an earlier request with the same Idempotency-Key (M15,
+   * ADR 032): no attempts, and the usage costs nothing, like a cache hit. Older events have none.
+   */
+  replayed: z.boolean().optional(),
+  /**
    * The gateway request's W3C trace and span IDs (ADR 017), so the worker's log line for this
    * event joins the same trace. Older events have none.
    */

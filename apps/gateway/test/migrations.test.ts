@@ -14,6 +14,7 @@ const TABLES = [
   'budget_periods',
   'budget_reservations',
   'failed_events',
+  'idempotency_keys',
   'model_deployments',
   'model_prices',
   'project_members',
@@ -45,6 +46,7 @@ const MIGRATIONS = [
   '0010_request-endpoint',
   '0011_embedding-prices',
   '0012_request-coalesced',
+  '0013_idempotency-keys',
 ];
 
 /** A throwaway database, so migrations run from scratch. */

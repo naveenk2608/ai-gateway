@@ -42,6 +42,11 @@ const requestDetailSchema = z.object({
    * (M14, ADR 031): no attempts, zero cost, like a cache hit.
    */
   coalesced: z.boolean(),
+  /**
+   * Answered with the stored answer of an earlier request with the same Idempotency-Key (M15,
+   * ADR 032): no attempts, zero cost.
+   */
+  replayed: z.boolean(),
   /** The /v1 endpoint: `chat` or `embeddings` (M13). */
   endpoint: z.enum(['chat', 'embeddings']),
   /** Null for requests rejected before any provider call. */
@@ -127,6 +132,7 @@ export function registerRequestRoutes(app: FastifyInstance, deps: AdminDeps): vo
         ttftMs: record.ttft_ms,
         cacheHit: record.cache_hit,
         coalesced: record.coalesced,
+        replayed: record.replayed,
         endpoint: record.endpoint,
         usage: usage
           ? {

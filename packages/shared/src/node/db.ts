@@ -123,6 +123,8 @@ export interface RequestRecordsTable {
   cache_hit: Generated<boolean>;
   /** Answered by an identical request's upstream call (M14, migration 0012). */
   coalesced: Generated<boolean>;
+  /** Answered with the stored answer of an earlier request with its Idempotency-Key (M15, 0013). */
+  replayed: Generated<boolean>;
   /** The /v1 endpoint the request came to (migration 0010); `chat` for every older row. */
   endpoint: Generated<RequestEndpoint>;
   created_at: CreatedAt;
@@ -218,6 +220,26 @@ export interface AuditLogsTable {
   created_at: CreatedAt;
 }
 
+/** An Idempotency-Key and the answer it replays (M15, migration 0013, ADR 032). */
+export interface IdempotencyKeysTable {
+  id: string;
+  project_id: string;
+  endpoint: RequestEndpoint;
+  idempotency_key: string;
+  fingerprint: string;
+  status: 'in_progress' | 'completed';
+  request_id: string;
+  owner: string;
+  locked_until: Timestamp;
+  response_status: number | null;
+  response_headers: Json | null;
+  response: Json | null;
+  response_bytes: number | null;
+  created_at: CreatedAt;
+  completed_at: Timestamp | null;
+  expires_at: Timestamp;
+}
+
 export interface FailedEventsTable {
   id: string;
   stream: string;
@@ -278,6 +300,7 @@ export interface Database {
   provider_health_events: ProviderHealthEventsTable;
   audit_logs: AuditLogsTable;
   failed_events: FailedEventsTable;
+  idempotency_keys: IdempotencyKeysTable;
   usage_rollups_minute: UsageRollupsTable;
   usage_rollups_hour: UsageRollupsTable;
   usage_rollups_day: UsageRollupsTable;

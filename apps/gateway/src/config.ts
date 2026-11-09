@@ -190,6 +190,19 @@ export const gatewayConfigSchema = z
      * default: it keeps nothing beyond the requests themselves, whether CACHE_ENABLED is on or not.
      */
     COALESCE_ENABLED: flag.default(true),
+    /**
+     * Idempotency-Key on POST /v1/chat/completions and /v1/embeddings (M15, ADR 032): a retry with
+     * the same key and body gets the first answer instead of a second call. On by default: it acts
+     * only on requests that send the header, and keeps small rows in Postgres that expire after
+     * IDEMPOTENCY_KEY_TTL_HOURS (24: Stripe keeps keys at least 24 hours,
+     * docs.stripe.com/error-low-level, checked 2026-11-09). A running request holds its key for
+     * IDEMPOTENCY_LOCK_MS before another instance may take it over (a crashed holder); answers
+     * larger than IDEMPOTENCY_MAX_BODY_BYTES are not kept (a repeat then gets 409).
+     */
+    IDEMPOTENCY_ENABLED: flag.default(true),
+    IDEMPOTENCY_KEY_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(24),
+    IDEMPOTENCY_LOCK_MS: z.coerce.number().int().min(10_000).max(3_600_000).default(600_000),
+    IDEMPOTENCY_MAX_BODY_BYTES: z.coerce.number().int().min(1_024).max(10_000_000).default(262_144),
 
     /** Apply pending migrations at startup, under an advisory lock (safe with several instances). */
     MIGRATE_ON_START: flag.default(true),

@@ -14,3 +14,13 @@ export function routingHeaders(reply: FastifyReply, served: AttemptContext | und
     void reply.header(FALLBACK_HEADER, served.passedOver.join(', '));
   }
 }
+
+/** The routing headers a replay repeats (ADR 032): which deployment answered, and fallbacks. */
+export function replayHeaders(reply: FastifyReply): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const name of [DEPLOYMENT_HEADER, FALLBACK_HEADER]) {
+    const value = reply.getHeader(name);
+    if (typeof value === 'string') kept[name] = value;
+  }
+  return kept;
+}

@@ -9,7 +9,7 @@ import {
 import type { Db, Logger, Redis } from '@ai-gateway/shared/node';
 import { ingestEvents } from './ingest.js';
 import type { WorkerMetrics } from './metrics.js';
-import { pruneRollups, type RollupRetention } from './retention.js';
+import { pruneIdempotencyKeys, pruneRollups, type RollupRetention } from './retention.js';
 
 export interface ConsumerOptions {
   /** A dedicated connection: XREADGROUP BLOCK holds it. */
@@ -510,6 +510,12 @@ export class UsageConsumer implements EventConsumer {
       }
     } catch (err) {
       this.#o.logger.warn({ err }, 'rollup retention failed');
+    }
+    try {
+      const keys = await pruneIdempotencyKeys(this.#o.db, now);
+      if (keys > 0) this.#o.logger.info({ deleted: keys }, 'expired idempotency keys deleted');
+    } catch (err) {
+      this.#o.logger.warn({ err }, 'idempotency key retention failed');
     }
   }
 

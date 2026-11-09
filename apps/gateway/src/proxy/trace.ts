@@ -55,6 +55,11 @@ export class RequestTrace {
    * (ADR 031): no attempts of its own, and no cost, like a cache hit.
    */
   coalesced = false;
+  /**
+   * Answered with the stored answer of an earlier request with the same Idempotency-Key (ADR 032):
+   * no attempts of its own, and no cost, like a cache hit.
+   */
+  replayed = false;
   #finished = false;
   /** Set once the SSE body owns the response; the stream then finishes the trace itself. */
   streaming = false;
@@ -161,6 +166,7 @@ export class RequestTrace {
       ...(this.#budget ? { budget: this.#budget } : {}),
       ...(this.cacheHit ? { cacheHit: true } : {}),
       ...(this.coalesced ? { coalesced: true } : {}),
+      ...(this.replayed ? { replayed: true } : {}),
       ...(this.#start.traceContext
         ? {
             trace: {

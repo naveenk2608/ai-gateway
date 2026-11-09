@@ -47,6 +47,7 @@ import { HealthChecker, HealthReporter } from './routing/health.js';
 import type { RoutingDeps } from './routing/routed.js';
 import { PeakEwma } from './routing/peak-ewma.js';
 import { MemoryGuard } from './cache/memory-guard.js';
+import { IdempotencyGate } from './proxy/idempotency.js';
 import { QuotaBoard, quotaUsedShare } from './routing/quota.js';
 import { RetryBudget } from './routing/retry-budget.js';
 import { LatencyTracker } from './routing/router.js';
@@ -207,11 +208,13 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     failMode: config.LIMITS_FAIL_MODE,
   });
 
+  /** This process, in health reports and as the holder of Idempotency-Key locks. */
+  const instanceId = `${hostname()}-${process.pid}-${uuidv7().slice(-8)}`;
   const reporter = new HealthReporter({
     redis,
     db,
     logger,
-    instanceId: `${hostname()}-${process.pid}-${uuidv7().slice(-8)}`,
+    instanceId,
   });
   const deployments = registry.deployments();
   const breakers = new BreakerBoard(
@@ -303,6 +306,15 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       })
     : null;
   const coalescer = new Coalescer(config.COALESCE_ENABLED);
+  const idempotency = new IdempotencyGate(
+    {
+      enabled: config.IDEMPOTENCY_ENABLED,
+      ttlMs: config.IDEMPOTENCY_KEY_TTL_HOURS * 3_600_000,
+      lockMs: config.IDEMPOTENCY_LOCK_MS,
+      maxBodyBytes: config.IDEMPOTENCY_MAX_BODY_BYTES,
+    },
+    { db, clock, logger, instanceId },
+  );
 
   metrics.watch({
     breakers,
@@ -352,6 +364,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       routing,
       cache,
       coalescer,
+      idempotency,
       metrics,
     });
     registerEmbeddings(instance, {
@@ -363,6 +376,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       routing,
       cache,
       coalescer,
+      idempotency,
       metrics,
     });
     registerModels(instance, { registry, verifier, clock });
