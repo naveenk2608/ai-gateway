@@ -840,9 +840,22 @@ a provider fails, and routing changes without a redeploy.
 
 **Acceptance**
 
-- [ ] A retried request with the same key is charged once.
-- [ ] A failed alert is retried and delivered.
-- [ ] A routing change shows on two instances within seconds.
+- [x] A retried request with the same key is charged once (`test/idempotency.test.ts` against
+      Postgres and Redis: two requests with one key make one upstream call, the repeat is recorded
+      `replayed` at zero cost; also when the client left mid-stream; another body gets 422).
+      Not checked on the demo: the live-check script was refused in this session (PLAN-NOTES,
+      "M15 real-provider checks", with the commands).
+- [x] A failed alert is retried and delivered (`apps/worker/test/alerts.test.ts`: a 500 is retried
+      after the first delay of the Standard Webhooks schedule and then delivered; each budget
+      threshold is queued once; refused addresses are never sent to).
+- [x] A routing change shows on two instances within seconds (`test/route-overrides.test.ts`: a
+      change through one instance is used by the other within seconds, and within the 1 s test
+      interval when no message is sent; rollback and reset).
+- [x] A deployment that always fails fast is no longer tried first whenever it is drawn
+      (`routing/peak-ewma.test.ts`: first tries 297 of 600 under M14's rules, 24 under M15's).
+- [x] The cache stops storing above its memory share and requests still work
+      (`cache/memory-guard.test.ts` with fake INFO replies).
+- [x] CI is green, and the git log and git grep checks are clean (PLAN-NOTES, "M15 run").
 
 **PLAN-NOTES rows it closes**
 

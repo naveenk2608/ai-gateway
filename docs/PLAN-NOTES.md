@@ -4,7 +4,7 @@ Deferred work, open questions and known issues found while building. Newest firs
 
 | Date | Milestone | Note | Status |
 | --- | --- | --- | --- |
-| 2026-11-09 | M15 | M15 run. **Done**: plan `2bf85a5` (docs/ROADMAP.md, "M15 plan"); A failure penalty and decay toward the default for `peak_ewma`, ADR 030 note (`b47b6bd`; its CI's integration job failed in `test/quota-groups.test.ts`, an M14 test whose fixed 2026-11-08 clock made its Redis counters expire at once once that day had passed: fixed in `fd83a63`); B memory cap for the response cache (`cache/memory-guard.ts`, `467150e`; its CI's image-scan job failed on a 504 while downloading Trivy and was re-run); C `Idempotency-Key` (migration 0013, `proxy/idempotency.ts`, both handlers, the worker's deletion, ADR 032; `d649391`); D webhook alerts (migration 0014, encryption and signatures in `shared/node/alerts.ts`, the worker's outbox dispatcher with SSRF checks, budget, breaker and dead-letter detection, the admin API `88ef97e`; tests made independent of other files' queued rows `9401a50`; the Settings tab, README and ADR 033 `dace1d0`); E route overrides per project (migration 0015, `routing/overrides.ts`, the `routes` invalidation message, the admin API `c45bf88`; the Models page editor, its browser test, README and ADR 034 in this part's last commit). **Left**: parts F and G. **Next step**: Part F (live checks of `Idempotency-Key` on the demo once it runs `c45bf88` or later; steps for the owner to try a Discord alert and the routing editor). **Decisions to review**: see the Part A row below. **Reverted / skipped**: nothing. | open |
+| 2026-11-09 | M15 | M15 run. **Done** (all parts, A to G): plan `2bf85a5`; A failure penalty and decay toward the default for `peak_ewma`, ADR 030 note (`b47b6bd`; plus `fd83a63`, a fix for an M14 quota-group test whose fixed 2026-11-08 clock made its Redis counters expire once that day had passed); B memory cap for the response cache (`467150e`); C `Idempotency-Key` with ADR 032 (`d649391`); D webhook alerts: backend `88ef97e`, test isolation `9401a50`, Settings tab, README and ADR 033 `dace1d0`; E route overrides per project: backend `c45bf88`, Models page editor, browser test, README and ADR 034 `a3bb502`; F live checks not run (the script reading `.env` and calling the demo was refused in this session; commands in "M15 real-provider checks"); G README status, ticked roadmap checks and this row. CI green on every push checked (`b47b6bd` apart from its integration job, fixed by `fd83a63`; `467150e` after re-running a Trivy download that hit a 504; `d649391`, `9401a50`, `c45bf88`; `88ef97e` failed in a dispatcher test that claimed other files' rows, fixed by `9401a50`); the final commit's status is in the report. **Left**: nothing in M15's scope; the owner's live checks. **Decisions to review**: the Part A to E rows above. **Reverted**: nothing. **Skipped**: the live checks (above); locally only typecheck, lint of changed files and unit tests ran (Docker's VM left too little memory for integration tests), CI ran every suite. **Settings for Render**: none needed; optional `ALERTS_ENCRYPTION_KEY` (otherwise derived from `API_KEY_PEPPER`), and `CACHE_ENABLED` stays the owner's choice (README, "When CACHE_ENABLED is safe"). | done |
 | 2026-11-09 | M15 | Decisions to review (Part E, ADR 034): overrides are per project and may change only a model's policy and its targets' order, weights and last-resort flags, over the deployments the models file lists for it (no new models or deployments; URLs and keys stay in the file). An override applies to chat and embeddings routes alike; deployments disabled on an instance are skipped, and an override with none left falls back to the file's route. A rollback re-checks the old route against the current file (409 if it no longer fits). Every instance reloads the changed project on the `routes` invalidation message (the instance that made the change reloads before answering), reloads all after a reconnect, and all every 30 s (`ROUTE_OVERRIDES_REFRESH_MS`, my choice: one small query per instance every 30 s). The editor lives on the Models page (the roadmap's place); Settings > Routing still shows the file's routes. `ROUTE_OVERRIDES_ENABLED` is on by default, also on Render: it is free (Postgres rows) and changes nothing until an admin saves an override. | by design |
 | 2026-11-09 | M15 | Decisions to review (Part D, ADR 033): generic receivers are signed as Standard Webhooks describes (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<base64>` over `id.timestamp.body`, `whsec_` secrets of 32 bytes) rather than with header names of our own; the README recommends Stripe's 5-minute timestamp tolerance (the spec names none). Retries follow the spec's schedule (5 s to 24 h, 10 attempts) with half-plus-random jitter. The defaults of my own choosing, each a setting: a breaker alerts at most once per deployment per 15 minutes, dead letters once per hour, deliveries kept 30 days, sends time out after 5 s, the outbox is polled every 5 s. Breaker and dead-letter alerts go to every destination that chose them, in any project, since deployments and the pipeline are shared; budget alerts only to their project. A refused address (private, loopback, link-local, unique local, shared, reserved, documentation, multicast, metadata) or a non-https URL fails the delivery for good; a host that does not resolve is retried. URL kinds are not checked against Discord's or Slack's hosts. The standalone worker gets `API_KEY_PEPPER` (Compose now passes it) only to derive the alert key; without it or `ALERTS_ENCRYPTION_KEY` alerts stay queued. Gateway tests now default to `ALERTS_ENABLED=false` (files share one database). `ALERTS_ENABLED` is on by default, also on Render: nothing is sent until a project adds a destination. | by design |
 | 2026-11-09 | M15 | Decisions to review (Part C, ADR 032): the `Idempotency-Key` value must be the draft's quoted String (RFC 9651); a bare token such as Stripe's `Idempotency-Key: KG5L...` is 400, and so are parameters after the string (the draft defines none). Keys are 1 to 255 characters (Stripe's limit). The fingerprint is the validated body without `stream`, `stream_options` and `user`, so fields the schema drops do not count. Only 2xx answers are stored; a failure deletes the key so the retry runs (Stripe replays stored errors; the draft leaves it open). An answer above `IDEMPOTENCY_MAX_BODY_BYTES` (256 KiB) is kept as completed without its body and a repeat gets 409 `idempotency_answer_not_stored`, never a second call. A replay passes admission first, so it counts toward RPM like a cache hit. A running request holds its key for `IDEMPOTENCY_LOCK_MS` (10 minutes, the gateway's own bound, longer than the 50 s deadline plus a long stream); a crashed holder's key is taken over after that. With Postgres down, requests with a key get 503 `idempotency_unavailable` (running them unchecked could charge twice); requests without one are unaffected. A repeat on another instance gets 409 with `retry-after` (seconds left of the first request's deadline, at least 1) instead of waiting. Expired keys are deleted by the worker on its hourly rollup-retention schedule (no new setting); an expired key not yet deleted is treated as new. `IDEMPOTENCY_ENABLED` is on by default, also on Render: it acts only when a client sends the header and keeps small rows for 24 hours in Postgres. | by design |
@@ -261,3 +261,45 @@ gateway's own `incoming request` log lines on Render.
 What the checks did not show: the records' `coalesced` column and costs (the admin API needs a
 dashboard login; tested in CI by `test/coalescing.test.ts`), and retry-budget skips (no provider
 failed often enough).
+
+## M15 real-provider checks
+
+**Not run (2026-11-09).** In this unattended session the tool that runs commands refused the
+script that reads `DEMO_BASE_URL` and `DEMO_API_KEY` from `.env` and calls the demo, so whether
+they are set was not checked and no request was sent. The behaviour is covered in CI by
+`test/idempotency.test.ts` (against Postgres and Redis). The owner can run the checks below once
+Render has deployed `d649391` or later (every M15 commit after it includes `Idempotency-Key`).
+
+**1. Idempotency-Key** (Git Bash; `DEMO_BASE_URL` and `DEMO_API_KEY` exported). The key is a quoted
+string, as the IETF draft defines it; temperature 0.7 keeps the cache and coalescing out of it.
+
+```bash
+KEY='"m15-check-'"$(date +%s)"'"'
+BODY='{"model":"chat-fast","messages":[{"role":"user","content":"Reply with one word: ok"}],"max_tokens":16,"temperature":0.7}'
+call() { curl -s -D "$1.headers" -o "$1.json" "$DEMO_BASE_URL/v1/chat/completions" \
+  -H "authorization: Bearer $DEMO_API_KEY" -H 'content-type: application/json' \
+  -H "Idempotency-Key: $KEY" -d "$2"; }
+call first "$BODY"; call second "$BODY"
+grep -i '^HTTP\|idempotent-replayed\|x-gateway-deployment' first.headers second.headers
+cmp first.json second.json && echo "same body"
+call other "${BODY/16/17}"; head -1 other.headers; cat other.json
+```
+
+Expected: both calls 200; only `second.headers` has `idempotent-replayed: true`; `same body`; the
+third (another body, same key) `HTTP/1.1 422` with `idempotency_key_reused`. In the dashboard
+(Requests), the second request is marked **replayed**, with no attempts and zero cost. A bare key
+(`-H 'Idempotency-Key: abc'`) gets 400 `invalid_idempotency_key`.
+
+**2. A Discord alert.** In Discord: channel settings > Integrations > Webhooks > New Webhook > Copy
+Webhook URL. In the dashboard: Settings > Alerts > name it, kind **Discord**, paste the URL, tick
+the events, **Add destination**, then **Send test**. The message arrives within the worker's poll
+interval (5 s); Recent deliveries shows `delivered` with `HTTP 204`. A wrong URL shows the
+receiver's status and the retry time. The demo needs no new setting: the URL is encrypted with a
+key derived from `API_KEY_PEPPER` (changing the pepper means adding the destination again).
+
+**3. The routing editor.** Models page > Routing for this project: pick `chat-fast`, set the
+policy to `priority`, move one deployment to the top, **Save as a new version**. Send a few
+`chat-fast` requests: `x-gateway-deployment` names that deployment (unless it is failing or out of
+quota). The history lists the version; **Roll back to** an earlier one, or **Reset to the models
+file**, and the next requests follow the file's route again. Audit log: `route.update`,
+`route.rollback`, `route.reset`.

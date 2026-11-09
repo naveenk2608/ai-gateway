@@ -10,14 +10,16 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: milestones M0-M14 are built.** The MVP (M0-M5), the analytics API (M6), the full
+**Status: milestones M0-M15 are built.** The MVP (M0-M5), the analytics API (M6), the full
 dashboard (M7), observability (M8), benchmarks (M9), the AWS deployment code (M10: Terraform
 tested with a mocked provider, [never applied](docs/aws-deployment.md)), real free providers with
 honest costs (M11, see [docs/providers.md](docs/providers.md)), and fixes and supply-chain safety
 (M12: per-IP limits on unknown API keys, rate-limit headers, chat health checks, and a scanned,
 signed image on GHCR), tools, JSON output and embeddings (M13), and smarter routing (M14: power of
 two choices over peak EWMA latency, a retry budget per deployment, coalescing of identical requests
-in flight, and quota groups for free allowances shared by several deployments). What comes next is
+in flight, and quota groups for free allowances shared by several deployments), and control and
+safety (M15: `Idempotency-Key` replays, signed webhook alerts, routing overrides per project from
+the dashboard, a memory cap for the cache, and failure penalties in peak EWMA). What comes next is
 in [docs/ROADMAP.md](docs/ROADMAP.md).
 Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trade-offs in
 [docs/trade-offs.md](docs/trade-offs.md).
