@@ -10,7 +10,7 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: milestones M0-M15 are built.** The MVP (M0-M5), the analytics API (M6), the full
+**Status: milestones M0-M16 are built.** The MVP (M0-M5), the analytics API (M6), the full
 dashboard (M7), observability (M8), benchmarks (M9), the AWS deployment code (M10: Terraform
 tested with a mocked provider, [never applied](docs/aws-deployment.md)), real free providers with
 honest costs (M11, see [docs/providers.md](docs/providers.md)), and fixes and supply-chain safety
@@ -19,7 +19,9 @@ signed image on GHCR), tools, JSON output and embeddings (M13), and smarter rout
 two choices over peak EWMA latency, a retry budget per deployment, coalescing of identical requests
 in flight, and quota groups for free allowances shared by several deployments), and control and
 safety (M15: `Idempotency-Key` replays, signed webhook alerts, routing overrides per project from
-the dashboard, a memory cap for the cache, and failure penalties in peak EWMA). What comes next is
+the dashboard, a memory cap for the cache, and failure penalties in peak EWMA), and guardrails
+(M16: personal data masked or blocked before the model, JSON answers checked after it). What comes
+next is
 in [docs/ROADMAP.md](docs/ROADMAP.md).
 Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trade-offs in
 [docs/trade-offs.md](docs/trade-offs.md).
@@ -431,6 +433,31 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
   another instance may take it over. If Postgres is down, requests with a key get 503
   `idempotency_unavailable`. `IDEMPOTENCY_ENABLED=false` ignores the header.
 
+### Guardrails
+
+Each project can check what goes to a model and what comes back
+([ADR 035](docs/adr/035-guardrails.md)), on the dashboard's **Security** page (admins edit, viewers
+read; everything is off until turned on):
+
+- **Before the model**, for email addresses, phone numbers (Indian mobile and E.164), payment card
+  numbers (Luhn-checked), Aadhaar numbers (Verhoeff-checked) and PANs: `mask` replaces the value
+  with `[EMAIL]`, `[PHONE]`, `[CARD]`, `[AADHAAR]` or `[PAN]` before any provider, cache or stored
+  answer sees it; `block` answers 400 `guardrail_blocked`, naming the type but never the value;
+  `flag` only records it. Blocked words and phrases (whole words, any case) block or flag, and a
+  cap on estimated prompt tokens answers 400 `guardrail_prompt_too_large`. Every text a provider
+  would see is checked: messages in every role, tool results, earlier tool-call arguments and
+  embeddings input; images are not read.
+- **After the model**: `json_schema` answers are validated against their schema and
+  `json_object` answers must parse; `flag` records a failure, `retry` tries the next deployment
+  once and then answers 502 `guardrail_output_failed`. The same detectors can mask or flag values
+  in answers. Streams are masked as they go, holding back the last 256 characters so a value split
+  across chunks is still caught; a streamed JSON request under `retry` is fetched whole and
+  replayed as a stream.
+- **Records**: for each request, which checks found something and what they did (types, counts
+  and actions, never values), listed on the Security page with filters and counted on the
+  Overview. `GUARDRAILS_ENABLED=false` turns the feature off for every project. The checks take
+  about 5 ms for a 100,000-character prompt on a laptop (`pnpm bench:guardrails`).
+
 ### Errors
 
 Errors use the OpenAI shape `{"error": {"message", "type", "param", "code"}}` and never include
@@ -444,6 +471,8 @@ can help.
 | 400 | `unsupported_parameter` | `dimensions` on an embeddings model that does not take it, or outside its range. |
 | 400 | `model_capability_unsupported` | No deployment of the model supports what the request uses (tools, a `tool_choice`, a response format, images); `param` names the field. |
 | 400 | `request_exceeds_limit` | The request could never fit: more tokens than the TPM limit, or a worst-case cost above the project's per-request cap or whole budget (lower `max_tokens`); or an embeddings request over its input caps. |
+| 400 | `guardrail_blocked` | The project's guardrails block a value type found in the request (named, never shown) or a blocked word. |
+| 400 | `guardrail_prompt_too_large` | The estimated prompt is above the project's guardrail cap. |
 | 400 | `invalid_idempotency_key` | The `Idempotency-Key` header is not one quoted string of 1 to 255 printable ASCII characters. |
 | 401 | `invalid_api_key` | Missing, unknown, revoked or expired key. |
 | 429 | `too_many_invalid_api_keys` | The client IP sent too many key IDs that do not exist; refused before any key lookup, with `retry-after`. |
@@ -456,6 +485,7 @@ can help.
 | 429 | `budget_exceeded` | The monthly budget is used up; `retry-after` is the start of next month. |
 | 429 | `upstream_rate_limited` | The last deployment tried was rate limited by its provider. |
 | 502 | `upstream_error`, `upstream_unavailable`, `upstream_invalid_response`, `upstream_auth_failed`, `upstream_model_not_found` | The providers tried failed or are misconfigured (the last failure is reported). |
+| 502 | `guardrail_output_failed` | The answer did not match the requested JSON format, also after one retry on the next deployment. |
 | 503 | `deployments_unavailable` | Every deployment of the model has an open circuit breaker. |
 | 503 | `idempotency_unavailable` | Postgres is unreachable, so a request with an `Idempotency-Key` cannot be checked. |
 | 503 | `limits_unavailable` | Redis is unreachable and `LIMITS_FAIL_MODE=closed`; only requests with limits are affected. |
@@ -1288,6 +1318,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*`, `UNKNOWN_KEYS_PER_MINUTE_PER_IP`, `UNKNOWN_KEY_CACHE_MS` |
 | Routing | `RETRY_*` (with `RETRY_BUDGET_*`), `PEAK_EWMA_*`, `ROUTE_OVERRIDES_ENABLED`, `ROUTE_OVERRIDES_REFRESH_MS`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
 | Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `CACHE_MEMORY_GUARD_ENABLED`, `CACHE_MEMORY_CHECK_INTERVAL_MS`, `CACHE_MAX_MEMORY_SHARE`, `CACHE_MAX_MEMORY_BYTES`, `COALESCE_ENABLED`, `IDEMPOTENCY_ENABLED`, `IDEMPOTENCY_KEY_TTL_HOURS`, `IDEMPOTENCY_LOCK_MS`, `IDEMPOTENCY_MAX_BODY_BYTES` |
+| Guardrails | `GUARDRAILS_ENABLED` (the checks themselves are set per project on the Security page) |
 | Alerts | `ALERTS_ENABLED`, `ALERTS_ENCRYPTION_KEY`, `ALERTS_POLL_INTERVAL_MS`, `ALERTS_MAX_ATTEMPTS`, `ALERTS_SEND_TIMEOUT_MS`, `ALERTS_BREAKER_INTERVAL_MS`, `ALERTS_DEAD_LETTER_INTERVAL_MS`, `ALERTS_DELIVERY_RETENTION_DAYS` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
 | Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |

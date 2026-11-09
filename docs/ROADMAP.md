@@ -981,9 +981,14 @@ answers that break their schema, and every action taken is recorded.
 
 **Acceptance**
 
-- [ ] Masked values never reach the provider (a test asserts it).
-- [ ] Flags show on the dashboard.
-- [ ] The approach for streamed answers is recorded in an ADR.
+- [x] Masked values never reach the provider (a test asserts it): `proxy/guardrails.test.ts` checks
+      the request each provider received, for every detector, with valid and invalid checksums,
+      and that the cache holds no unmasked value.
+- [x] Flags show on the dashboard: the Security page lists flagged, blocked and masked requests
+      with filters, and the Overview counts them (`pages.test.tsx`; `test/guardrails.test.ts` for
+      the API against Postgres). Not checked on the demo (PLAN-NOTES, "M16 real-provider checks").
+- [x] The approach for streamed answers is recorded in an ADR: ADR 035 (a 256-character hold-back
+      for masking; whole-answer calls for streamed JSON under `retry`).
 
 **ADR to write.** Guardrails on streamed answers: how the after-model checks apply when part of
 the answer has already been sent.

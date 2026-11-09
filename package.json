@@ -24,7 +24,8 @@
     "demo": "tsx scripts/demo.ts",
     "sqs:local": "tsx scripts/localstack-queues.ts",
     "bench": "tsx bench/run.ts",
-    "bench:report": "tsx bench/report.ts"
+    "bench:report": "tsx bench/report.ts",
+    "bench:guardrails": "tsx bench/guardrails.ts"
   },
   "devDependencies": {
     "@aws-sdk/client-sqs": "3.1152.0",

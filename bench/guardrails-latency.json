@@ -1,0 +1,33 @@
+{
+  "measuredAt": "2026-11-09T18:22:56.378Z",
+  "node": "v22.16.0",
+  "cpu": "11th Gen Intel(R) Core(TM) i3-1115G4 @ 3.00GHz",
+  "cores": 4,
+  "memoryGiB": 8,
+  "results": [
+    {
+      "chars": 10000,
+      "runs": 200,
+      "valuesFound": 20,
+      "p50Ms": 0.73,
+      "p95Ms": 1.19,
+      "maxMs": 1.92
+    },
+    {
+      "chars": 100000,
+      "runs": 100,
+      "valuesFound": 216,
+      "p50Ms": 4.81,
+      "p95Ms": 7.73,
+      "maxMs": 9.08
+    },
+    {
+      "chars": 400000,
+      "runs": 20,
+      "valuesFound": 872,
+      "p50Ms": 20.25,
+      "p95Ms": 28.03,
+      "maxMs": 28.03
+    }
+  ]
+}
