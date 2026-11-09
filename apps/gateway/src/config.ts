@@ -123,6 +123,18 @@ export const gatewayConfigSchema = z
     PEAK_EWMA_ENABLED: flag.default(true),
     PEAK_EWMA_DECAY_MS: z.coerce.number().int().min(100).max(600_000).default(10_000),
     PEAK_EWMA_DEFAULT_MS: z.coerce.number().int().min(1).max(600_000).default(1_000),
+    /**
+     * M15 (ADR 030 note of 2026-11-09): a try that failed because the deployment could not serve
+     * (rate limited, server error, connection, invalid response, auth, not found) records its
+     * `timeoutMs` as a penalty sample, so a deployment that always fails fast does not look fast.
+     */
+    PEAK_EWMA_FAILURE_PENALTY: flag.default(true),
+    /**
+     * M15: without new samples, estimates move toward PEAK_EWMA_DEFAULT_MS instead of toward zero
+     * (a penalty fades to the default, not below it). Off: tower's decay toward zero, which also
+     * re-tries idle deployments faster than the default in light, sequential traffic.
+     */
+    PEAK_EWMA_DECAY_TO_DEFAULT: flag.default(true),
     /** Circuit breakers (ADR 012): consecutive failures that open one, and how long it stays open. */
     BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).max(1_000).default(5),
     BREAKER_OPEN_MS: z.coerce.number().int().min(100).max(3_600_000).default(30_000),

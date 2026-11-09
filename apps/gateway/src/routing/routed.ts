@@ -285,6 +285,20 @@ function settleQuota(
 }
 
 /**
+ * Failures that show a deployment could not serve, and record a penalty sample under `peak_ewma`
+ * (ADR 030, note of 2026-11-09). Timeouts follow their own rule (`ranFullTimeout`); a rejected
+ * request (400) or a client that left records nothing.
+ */
+const PENALIZED: ReadonlySet<ProviderErrorKind> = new Set([
+  'rate_limited',
+  'server_error',
+  'connection',
+  'invalid_response',
+  'auth',
+  'not_found',
+]);
+
+/**
  * A try the request's deadline (REQUEST_DEADLINE_MS) cut before it had run for its deployment's
  * own `timeoutMs`: the time the request had left ran out, not the deployment's, so it says nothing
  * about the deployment's health or speed (ADR 012).
@@ -317,6 +331,9 @@ function settleHealth(deps: RoutingDeps, deployment: Deployment, outcome: Attemp
     breaker.onFailure(outcome.error.kind);
     if (ranFullTimeout(deployment, outcome)) {
       deps.peakEwma?.record(deployment.id, mode, deployment.timeoutMs);
+    } else if (PENALIZED.has(outcome.error.kind)) {
+      // It failed fast without serving: a penalty, so it does not look fast (ADR 030, M15 note).
+      deps.peakEwma?.penalize(deployment.id, mode, deployment.timeoutMs);
     }
   } else {
     breaker.onNeutral();

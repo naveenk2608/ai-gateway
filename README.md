@@ -483,10 +483,17 @@ price or weight, but answers when no provider key is set.
   `PEAK_EWMA_DECAY_MS` (10 s, Finagle's default), separately for streams (time to first token) and
   plain calls, and counts the tries in flight. Each request picks two deployments at random and
   tries the one with the lower estimate x (in flight + 1) first; one that slows down loses traffic
-  at its next answer, and a slower one still gets an occasional request, so its estimate stays
-  current. A deployment with no answer yet starts at `PEAK_EWMA_DEFAULT_MS` (1 s, tower's
-  default). A try that times out records its timeout; other failures record nothing.
-  `PEAK_EWMA_ENABLED=false` orders `peak_ewma` routes as `lowest_latency`. The attempt's reason
+  at its next answer. A deployment with no answer yet starts at `PEAK_EWMA_DEFAULT_MS` (1 s,
+  tower's default). A try that times out records its timeout, and since M15 a try that failed
+  because the deployment could not serve (429, 5xx, connection, invalid response, auth, not found)
+  records its `timeoutMs` as a penalty (`PEAK_EWMA_FAILURE_PENALTY`), so a deployment that always
+  fails fast is no longer tried first whenever it is drawn; a 400 or a client that left records
+  nothing. Without new answers an estimate drifts toward the 1 s default, not toward zero
+  (`PEAK_EWMA_DECAY_TO_DEFAULT`): a penalty fades within about a minute, and a deployment slower
+  than the default is tried again as its estimate falls; one faster than the default and left idle
+  drifts up, so in light, one-at-a-time traffic the fastest deployments keep it. Both settings
+  `false` restore M14's rules (tower's decay toward zero). `PEAK_EWMA_ENABLED=false` orders
+  `peak_ewma` routes as `lowest_latency`. The attempt's reason
   names both picks and their scores, e.g.
   `peak EWMA: picked a 120 (120 ms x 0 in flight + 1) over b 400 (200 ms x 1 in flight + 1)`.
 - **Retries** (ADR 011): a timeout, rate limit, 5xx or dropped connection is retried on the same

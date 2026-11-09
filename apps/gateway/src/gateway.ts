@@ -247,6 +247,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       enabled: config.PEAK_EWMA_ENABLED,
       decayMs: config.PEAK_EWMA_DECAY_MS,
       defaultMs: config.PEAK_EWMA_DEFAULT_MS,
+      failurePenalty: config.PEAK_EWMA_FAILURE_PENALTY,
+      decayToDefault: config.PEAK_EWMA_DECAY_TO_DEFAULT,
     },
     clock,
   );

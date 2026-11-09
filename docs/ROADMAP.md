@@ -872,8 +872,9 @@ not serve (rate limited, server error, connection, invalid response, auth, not f
 as before) records a penalty sample of the deployment's `timeoutMs`; rejected requests (400s),
 cancelled tries and deadline cuts record nothing. With no new samples, an estimate (the default one
 included) moves toward `PEAK_EWMA_DEFAULT_MS` at the same rate instead of toward zero:
-`E' = D + (E - D) x exp(-elapsed / decay)`. One setting, `PEAK_EWMA_PENALIZE_FAILURES` (true; false
-restores M14's rules). Unit tests with a seeded random: a deployment that always answers 429 at once
+`E' = D + (E - D) x exp(-elapsed / decay)`. Two settings, `PEAK_EWMA_FAILURE_PENALTY` and
+`PEAK_EWMA_DECAY_TO_DEFAULT` (both true; both false restore M14's rules), since decaying toward the
+default also ends M14's re-trying of idle deployments faster than the default. Unit tests with a seeded random: a deployment that always answers 429 at once
 is first in the plan far less often than under M14's rules (numbers in the test and the ADR note); it
 gets traffic again once it recovers; a fast, healthy deployment still wins most picks. Dated note in
 ADR 030.

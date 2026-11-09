@@ -10,6 +10,16 @@ export interface PeakEwmaSettings {
   decayMs: number;
   /** The estimate of a deployment with no sample yet, in ms (PEAK_EWMA_DEFAULT_MS; tower, 1 s). */
   defaultMs: number;
+  /**
+   * A failed try that shows the deployment could not serve records its `timeoutMs` as a penalty
+   * sample (PEAK_EWMA_FAILURE_PENALTY, M15). Off: failures other than a full timeout record nothing.
+   */
+  failurePenalty: boolean;
+  /**
+   * Without new samples, estimates (the default one included) move toward `defaultMs` instead of
+   * toward zero (PEAK_EWMA_DECAY_TO_DEFAULT, M15). Off: tower's decay toward zero.
+   */
+  decayToDefault: boolean;
 }
 
 interface Estimate {
@@ -31,9 +41,10 @@ export interface Score {
  * Peak-sensitive moving averages of each deployment's latency on this instance, and its tries in
  * flight, for the `peak_ewma` policy (ADR 030). The update follows tower's `PeakEwma`: a sample
  * above the estimate replaces it at once; a lower one moves it toward the sample by
- * `1 - exp(-elapsed / decay)`; and reading an estimate for a score first decays it toward zero
- * for the time since its last update, so a deployment that was slow gets tried again later (its
- * next sample sets it back if it still is). Streamed and non-streamed latencies are kept apart.
+ * `1 - exp(-elapsed / decay)`; and reading an estimate for a score first decays it for the time
+ * since its last update: toward `defaultMs` (M15's rule; ADR 030 note of 2026-11-09), or toward zero
+ * as tower does. A failed try can record its timeout as a penalty sample, so a deployment that
+ * fails fast does not look fast. Streamed and non-streamed latencies are kept apart.
  */
 export class PeakEwma {
   readonly settings: PeakEwmaSettings;
@@ -68,6 +79,17 @@ export class PeakEwma {
     return this.#inFlight.get(deployment) ?? 0;
   }
 
+  /**
+   * Records a failed try that shows the deployment could not serve (rate limited, server error,
+   * connection, invalid response, auth, not found): its `timeoutMs` as a sample, when
+   * `failurePenalty` is on. Returns whether it recorded one.
+   */
+  penalize(deployment: string, mode: LatencyMode, timeoutMs: number): boolean {
+    if (!this.settings.failurePenalty) return false;
+    this.record(deployment, mode, timeoutMs);
+    return true;
+  }
+
   /** Records a latency sample (tower's `RttEstimate::update`). */
   record(deployment: string, mode: LatencyMode, ms: number): void {
     const key = keyOf(deployment, mode);
@@ -83,9 +105,10 @@ export class PeakEwma {
   }
 
   /**
-   * The deployment's score for a request in `mode`, decaying the estimate it reads toward zero
-   * first (tower's `PeakEwma::load`): the mode's own estimate, else the other mode's, else the
-   * default, which also decays from the first time the deployment was scored.
+   * The deployment's score for a request in `mode`, decaying the estimate it reads first (tower's
+   * `PeakEwma::load`, toward zero or toward the default): the mode's own estimate, else the other
+   * mode's, else the default, which also decays from the first time the deployment was scored
+   * (toward itself, so it stays put, when `decayToDefault` is on).
    */
   score(deployment: string, mode: LatencyMode): Score {
     const now = this.#clock.now();
@@ -104,7 +127,7 @@ export class PeakEwma {
         this.#defaults.set(deployment, estimate);
       }
     }
-    estimate.ms *= Math.exp(-Math.max(0, now - estimate.at) / this.settings.decayMs);
+    estimate.ms = this.#decayed(estimate, now);
     estimate.at = now;
     const inFlight = this.inFlight(deployment);
     return { score: estimate.ms * (inFlight + 1), estimateMs: estimate.ms, inFlight, source };
@@ -115,9 +138,15 @@ export class PeakEwma {
     const now = this.#clock.now();
     return [...this.#estimates].map(([key, e]) => {
       const [deployment, mode] = splitKey(key);
-      const ms = e.ms * Math.exp(-Math.max(0, now - e.at) / this.settings.decayMs);
-      return { deployment, mode, ms };
+      return { deployment, mode, ms: this.#decayed(e, now) };
     });
+  }
+
+  /** `e` as it reads at `now`: moved toward its target by `1 - exp(-elapsed / decay)`. */
+  #decayed(e: Estimate, now: number): number {
+    const w = Math.exp(-Math.max(0, now - e.at) / this.settings.decayMs);
+    const target = this.settings.decayToDefault ? this.settings.defaultMs : 0;
+    return target + (e.ms - target) * w;
   }
 }
 

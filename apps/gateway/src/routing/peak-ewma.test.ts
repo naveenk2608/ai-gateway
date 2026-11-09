@@ -57,7 +57,16 @@ function route(ids: string[], lastResort: string[] = []): Route {
   };
 }
 
-const SETTINGS: PeakEwmaSettings = { enabled: true, decayMs: 10_000, defaultMs: 1_000 };
+/** M14's rules (tower's decay toward zero, no failure penalty): the tests written for them. */
+const SETTINGS: PeakEwmaSettings = {
+  enabled: true,
+  decayMs: 10_000,
+  defaultMs: 1_000,
+  failurePenalty: false,
+  decayToDefault: false,
+};
+/** M15's rules, the defaults (ADR 030 note of 2026-11-09). */
+const M15: PeakEwmaSettings = { ...SETTINGS, failurePenalty: true, decayToDefault: true };
 
 function context(tracker: PeakEwma, random: () => number, stream = false): PlanContext {
   const { logger } = captureLogger();
@@ -335,5 +344,150 @@ describe('runRouted with peak_ewma', () => {
     await expect(s.run()).rejects.toMatchObject({ kind: 'timeout' });
     expect(s.tracker.inFlight('a')).toBe(0);
     expect(s.tracker.estimates()).toEqual([]);
+  });
+});
+
+describe('PeakEwma with M15 rules (ADR 030 note of 2026-11-09)', () => {
+  it('decays an estimate toward the default from above and below, and keeps the default put', () => {
+    const t = handClock();
+    const tracker = new PeakEwma(M15, t.clock);
+    tracker.record('slow', 'plain', 5_000);
+    tracker.record('fast', 'plain', 200);
+    expect(tracker.score('new', 'plain').estimateMs).toBe(1_000);
+    t.advance(10_000);
+    const w = Math.exp(-1);
+    expect(tracker.score('slow', 'plain').estimateMs).toBeCloseTo(1_000 + 4_000 * w, 6);
+    expect(tracker.score('fast', 'plain').estimateMs).toBeCloseTo(1_000 - 800 * w, 6);
+    expect(tracker.score('new', 'plain').estimateMs).toBe(1_000);
+  });
+
+  it('records a penalty sample only when the failure penalty is on', () => {
+    const t = handClock();
+    const on = new PeakEwma(M15, t.clock);
+    expect(on.penalize('a', 'stream', 60_000)).toBe(true);
+    expect(on.estimates()).toEqual([{ deployment: 'a', mode: 'stream', ms: 60_000 }]);
+    const off = new PeakEwma({ ...M15, failurePenalty: false }, t.clock);
+    expect(off.penalize('a', 'stream', 60_000)).toBe(false);
+    expect(off.estimates()).toEqual([]);
+  });
+});
+
+describe('runRouted with M15 rules', () => {
+  const IDS = ['fast', 'mid', 'slow', 'bad'];
+  type Behaviour = Record<string, { ms: number; error?: ProviderError['kind'] }>;
+
+  /**
+   * Sends requests one a second through runRouted (four tries at most, one per deployment), each
+   * deployment answering as `behaviour` says; returns how often each was tried first. The breakers
+   * never open here, so only the scores decide the order.
+   */
+  function harness(settings: PeakEwmaSettings, seed: number) {
+    const { logger } = captureLogger();
+    const t = handClock();
+    const tracker = new PeakEwma(settings, t.clock);
+    const deps = {
+      breakers: new BreakerBoard(
+        IDS,
+        { failureThreshold: 1_000_000, openMs: 60_000 },
+        t.clock,
+        () => {},
+      ),
+      latency: new LatencyTracker(),
+      peakEwma: tracker,
+      prices: PriceBook.of([], t.clock, logger),
+      random: seeded(seed),
+      retry: { maxAttempts: 4, perDeployment: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    };
+    const run = async (behaviour: Behaviour, count: number) => {
+      const first: Record<string, number> = Object.fromEntries(IDS.map((id) => [id, 0]));
+      for (let n = 0; n < count; n++) {
+        let tries = 0;
+        const trace = new RequestTrace(
+          {
+            requestId: '0192f000-0000-7000-8000-000000000001',
+            projectId: '0192f000-0000-7000-8000-000000000002',
+            apiKeyId: null,
+            model: 'm',
+            stream: false,
+            messages: [{ role: 'user', content: 'hi' }],
+          },
+          t.clock,
+        );
+        await runRouted(
+          deps,
+          {
+            route: route(IDS),
+            trace,
+            clock: t.clock,
+            clientSignal: new AbortController().signal,
+            log: logger,
+            stream: false,
+            maxTokens: 100,
+          },
+          (ctx) => {
+            const id = ctx.deployment.id;
+            if (tries++ === 0) first[id]! += 1;
+            const b = behaviour[id]!;
+            t.advance(b.ms);
+            const error = b.error ? new ProviderError(b.error, `mock ${b.error}`) : undefined;
+            ctx.onEnd?.({ error, latencyMs: b.ms, ttftMs: null, usage: null, stream: false });
+            return error ? Promise.reject(error) : Promise.resolve(id);
+          },
+        );
+        t.advance(1_000);
+      }
+      return first;
+    };
+    return { run, tracker };
+  }
+
+  const FAILING: Behaviour = {
+    fast: { ms: 300 },
+    mid: { ms: 1_500 },
+    slow: { ms: 2_500 },
+    bad: { ms: 5, error: 'rate_limited' },
+  };
+
+  it('tries a deployment that always answers 429 at once first far less often than M14 did', async () => {
+    const before = await harness(SETTINGS, 21).run(FAILING, 600);
+    const after = await harness(M15, 21).run(FAILING, 600);
+    // M14: the failure records nothing, so its estimate decays toward zero and it goes first
+    // whenever it is drawn, about half of the pairs of four deployments (this seed: 297 of 600).
+    expect(before.bad).toBeGreaterThan(250);
+    // M15: each failure records its 60 s timeout, which fades toward the 1 s default, so it goes
+    // first only once that has fallen below a drawn partner's estimate (this seed: 24 of 600).
+    expect(after.bad).toBeLessThan(before.bad! / 10);
+    expect(after.bad).toBeGreaterThan(0);
+  });
+
+  it('gives a deployment traffic again once it recovers, and the fast one still wins most picks', async () => {
+    const h = harness(M15, 22);
+    const failing = await h.run(FAILING, 600);
+    const recovered = await h.run({ ...FAILING, bad: { ms: 200 } }, 600);
+    // This seed: failing { fast 298, mid 181, slow 96, bad 25 }; recovered { fast 282, bad 221,
+    // mid 62, slow 35 }.
+    expect(failing.fast).toBeGreaterThan(Math.max(failing.mid!, failing.slow!, failing.bad!));
+    expect(failing.bad).toBeLessThan(60);
+    expect(recovered.bad).toBeGreaterThan(failing.bad! * 5);
+    expect(recovered.fast).toBeGreaterThan(Math.max(recovered.mid!, recovered.slow!));
+    expect(recovered.fast! + recovered.bad!).toBeGreaterThan(400);
+  });
+
+  it('records nothing for a rejected request or a client that left', async () => {
+    for (const error of ['bad_request', 'canceled'] as const) {
+      const h = harness(M15, 23);
+      await expect(
+        h.run(
+          {
+            fast: { ms: 5, error },
+            mid: { ms: 5, error },
+            slow: { ms: 5, error },
+            bad: { ms: 5, error },
+          },
+          1,
+        ),
+      ).rejects.toMatchObject({ kind: error });
+      expect(h.tracker.estimates()).toEqual([]);
+    }
   });
 });

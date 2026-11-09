@@ -77,3 +77,34 @@ with "power of two choices" over a peak-sensitive latency estimate weighted by o
   a tenth; traffic leaves a deployment that slows down within two requests; concurrent requests
   spread by tries in flight; an unmeasured deployment is tried without taking most traffic; tries in
   flight are released after failures, timeouts record `timeoutMs`, and deadline cuts record nothing.
+
+## Note (2026-11-09, M15): failures record a penalty, and estimates decay toward the default
+
+Under the rules above, a deployment whose every try failed fast (Mistral Small answers this
+account 429 at once) recorded no sample, so its default estimate decayed toward zero and it went
+first whenever it was drawn (PLAN-NOTES, 2026-11-08 M14 row). Two changes, each with its own
+setting, both on by default:
+
+- `PEAK_EWMA_FAILURE_PENALTY` (true): a try that failed because the deployment could not serve
+  (rate limited, server error, connection, invalid response, auth, not found) records the
+  deployment's `timeoutMs` as a sample. Timeouts keep their rule (a full timeout records
+  `timeoutMs`, a deadline cut nothing); a rejected request (400) or a cancelled try records nothing.
+  A stream that broke after its first event counts as a failure too.
+- `PEAK_EWMA_DECAY_TO_DEFAULT` (true): reading an estimate decays it toward `PEAK_EWMA_DEFAULT_MS`
+  instead of toward zero, at the same rate: `E' = D + (E - D) x exp(-elapsed / decay)`. The default
+  estimate of an unmeasured deployment therefore stays at the default. A penalty fades to the
+  default (from 60 s to within 0.5 s of 1 s takes about 48 s at a 10 s decay), never below it.
+
+Measured with `runRouted` (`routing/peak-ewma.test.ts`, seeded random, four deployments answering in
+0.3, 1.5 and 2.5 s and one answering 429 in 5 ms, 600 requests a second apart, breakers kept closed
+so only the scores decide): the failing deployment was tried first 297 times under M14's rules and
+24 times under these (seed 21). With another seed (22), it was first 25 times of 600 while failing,
+and 221 of the next 600 once it answered in 0.2 s; the 0.3 s deployment was first most often in
+both phases (298 and 282).
+
+Consequence: with decay toward the default, an idle deployment faster than the default drifts up
+toward it, so in light, sequential traffic the measured fastest deployments keep the traffic and an
+unmeasured or recovered one goes first only when paired with one scored above the default (slower,
+or busy with tries in flight), or as a fallback. Under tower's decay toward zero it would be
+re-tried every `decay x ln(ratio)`. Setting `PEAK_EWMA_DECAY_TO_DEFAULT=false` restores that
+exploration while keeping the penalty.
