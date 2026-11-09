@@ -46,6 +46,7 @@ import { BreakerBoard } from './routing/breaker.js';
 import { HealthChecker, HealthReporter } from './routing/health.js';
 import type { RoutingDeps } from './routing/routed.js';
 import { PeakEwma } from './routing/peak-ewma.js';
+import { MemoryGuard } from './cache/memory-guard.js';
 import { QuotaBoard, quotaUsedShare } from './routing/quota.js';
 import { RetryBudget } from './routing/retry-budget.js';
 import { LatencyTracker } from './routing/router.js';
@@ -284,6 +285,21 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         logger,
         ttlSeconds: config.CACHE_TTL_SECONDS,
         maxEntryBytes: config.CACHE_MAX_ENTRY_BYTES,
+        guard: new MemoryGuard(
+          {
+            enabled: config.CACHE_MEMORY_GUARD_ENABLED,
+            intervalMs: config.CACHE_MEMORY_CHECK_INTERVAL_MS,
+            maxShare: config.CACHE_MAX_MEMORY_SHARE,
+            maxBytesWhenUnlimited: config.CACHE_MAX_MEMORY_BYTES,
+          },
+          {
+            info: () => redis.info('memory'),
+            clock,
+            logger,
+            onReading: (r, cap) => metrics.cacheMemoryReading(r.usedBytes, cap),
+          },
+        ),
+        onSkip: (reason) => metrics.cacheStoreSkipped(reason),
       })
     : null;
   const coalescer = new Coalescer(config.COALESCE_ENABLED);

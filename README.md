@@ -529,6 +529,24 @@ price or weight, but answers when no provider key is set.
   or sent with `x-gateway-cache: on`, are answered from an exact-match cache keyed by project,
   model and request. Projects never share entries. Hits count toward request limits but cost
   nothing, and are recorded with `cacheHit: true`. `x-gateway-cache: off` skips the cache.
+- **Cache memory cap** (M15): before each store the cache reads `used_memory` and `maxmemory` from
+  `INFO memory` (at most every `CACHE_MEMORY_CHECK_INTERVAL_MS`, 5 s) and stores only while used
+  memory is below `CACHE_MAX_MEMORY_SHARE` (0.5) of `maxmemory`, or below `CACHE_MAX_MEMORY_BYTES`
+  (64 MiB) when `maxmemory` is 0. If INFO fails or the Redis user may not run it, nothing is stored
+  and that is logged once. Lookups keep working, and a skipped or failed store never fails the
+  request. `gateway_cache_store_skips_total{reason}` counts skipped stores (`too_large`,
+  `memory_cap`, `memory_unknown`) and `gateway_cache_redis_memory_bytes{kind="used"|"cap"}` holds
+  the last reading. `CACHE_MEMORY_GUARD_ENABLED=false` stores without the check.
+
+  **When `CACHE_ENABLED` is safe on a small Redis with `noeviction`** (such as a free hosted one):
+  limits, budgets, quotas and the usage stream share that Redis, and when it refuses writes they
+  fail closed (ADR 010), so every request would fail. The guard keeps cache entries from taking
+  more than the configured share, but entries already stored only leave when their TTL ends. It is
+  safe when the guard is on and INFO is allowed (otherwise the cache stores nothing, which is also
+  safe), the share leaves room for everything else at peak (the usage stream is capped by
+  `EVENTS_STREAM_MAXLEN`), and `CACHE_TTL_SECONDS` x the store rate x `CACHE_MAX_ENTRY_BYTES` stays
+  well below the share; lower the share or the TTL if `gateway_cache_redis_memory_bytes{kind="used"}`
+  gets near the cap. With `allkeys-lru` or another evicting policy the cache is safe at any share.
 - **Coalescing** (ADR 031, on by default): requests the cache would take (as above; embeddings
   unless `off`) that arrive while an identical one, from the same project, is upstream on the same
   instance wait for its answer instead of calling the provider again, whether the cache is on or
@@ -1015,6 +1033,8 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:8080/metrics
 | `gateway_retries_total` / `gateway_fallbacks_total` | deployment / model | Retries on the same deployment; moves to another deployment |
 | `gateway_circuit_breaker_state` / `_transitions_total` | deployment, state / to | 1 for each breaker's current state on this instance; state changes |
 | `gateway_cache_lookups_total` | result | Response-cache hits and misses |
+| `gateway_cache_store_skips_total` | reason | Cache stores skipped: `too_large`, `memory_cap` (Redis at the cache's memory cap), `memory_unknown` (INFO failed) |
+| `gateway_cache_redis_memory_bytes` | kind | Redis memory at the cache guard's last reading: `used` and `cap` |
 | `gateway_coalesced_requests_total` | endpoint | Requests answered by an identical request's upstream call on this instance |
 | `gateway_peak_ewma_estimate_seconds` | deployment, mode | Each deployment's peak EWMA latency estimate on this instance (`stream`: time to first token, `plain`: whole response) |
 | `gateway_upstream_in_flight` | deployment | Provider tries in flight on this instance |
@@ -1161,7 +1181,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Event bus | `EVENT_BUS` (`redis` or `sqs`), `SQS_QUEUE_URL`, `SQS_DLQ_URL`, `AWS_REGION`, `SQS_ENDPOINT` (LocalStack only), `EVENTS_*`, `WORKER_*` |
 | Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*`, `UNKNOWN_KEYS_PER_MINUTE_PER_IP`, `UNKNOWN_KEY_CACHE_MS` |
 | Routing | `RETRY_*` (with `RETRY_BUDGET_*`), `PEAK_EWMA_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
-| Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `COALESCE_ENABLED` |
+| Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `CACHE_MEMORY_GUARD_ENABLED`, `CACHE_MEMORY_CHECK_INTERVAL_MS`, `CACHE_MAX_MEMORY_SHARE`, `CACHE_MAX_MEMORY_BYTES`, `COALESCE_ENABLED` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
 | Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |
 | Retention and shutdown | `ROLLUP_RETENTION_*`, `SHUTDOWN_TIMEOUT_MS`, `MIGRATE_ON_START` |

@@ -94,6 +94,8 @@ export class GatewayMetrics {
   readonly #fallbacks: Counter<'model'>;
   readonly #transitions: Counter<'deployment' | 'to'>;
   readonly #cache: Counter<'result'>;
+  readonly #cacheSkips: Counter<'reason'>;
+  readonly #cacheMemory: Gauge<'kind'>;
   readonly #rejections: Counter<'reason'>;
   readonly #ttft: Histogram<'deployment'>;
   readonly #tokensPerSecond: Histogram<'deployment' | 'stream'>;
@@ -147,6 +149,18 @@ export class GatewayMetrics {
       name: 'gateway_cache_lookups_total',
       help: 'Response-cache lookups by result, hit or miss (ADR 013).',
       labelNames: ['result'],
+      registers,
+    });
+    this.#cacheSkips = new Counter({
+      name: 'gateway_cache_store_skips_total',
+      help: 'Response-cache stores skipped, by reason: too_large (over CACHE_MAX_ENTRY_BYTES), memory_cap (Redis at or above the cache memory cap) or memory_unknown (INFO memory failed).',
+      labelNames: ['reason'],
+      registers,
+    });
+    this.#cacheMemory = new Gauge({
+      name: 'gateway_cache_redis_memory_bytes',
+      help: "Redis memory at the cache memory guard's last reading: used (used_memory) and cap (the share of maxmemory, or CACHE_MAX_MEMORY_BYTES when maxmemory is 0).",
+      labelNames: ['kind'],
       registers,
     });
     this.#rejections = new Counter({
@@ -243,6 +257,15 @@ export class GatewayMetrics {
 
   cacheLookup(hit: boolean): void {
     this.#cache.inc({ result: hit ? 'hit' : 'miss' });
+  }
+
+  cacheStoreSkipped(reason: 'too_large' | 'memory_cap' | 'memory_unknown'): void {
+    this.#cacheSkips.inc({ reason });
+  }
+
+  cacheMemoryReading(usedBytes: number, capBytes: number): void {
+    this.#cacheMemory.set({ kind: 'used' }, usedBytes);
+    this.#cacheMemory.set({ kind: 'cap' }, capBytes);
   }
 
   breakerTransition(t: Transition): void {

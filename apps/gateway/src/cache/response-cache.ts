@@ -3,6 +3,7 @@ import type { Logger, Redis } from '@ai-gateway/shared/node';
 import { z } from 'zod';
 import type { ChatResult } from '../providers/types.js';
 import type { ChatCompletionMessage, ChatCompletionRequest } from '../proxy/schema.js';
+import type { MemoryGuard, SkipReason } from './memory-guard.js';
 
 /** `x-gateway-cache: on` opts a request in; `off` keeps it out even at temperature 0. */
 export const CACHE_HEADER = 'x-gateway-cache';
@@ -140,11 +141,16 @@ export interface ResponseCacheOptions {
   /** Larger responses are not stored. */
   maxEntryBytes: number;
   prefix?: string;
+  /** Stores only while Redis has room (M15); without it, every store goes ahead. */
+  guard?: MemoryGuard | undefined;
+  /** A store that was skipped, and why (the metric). */
+  onSkip?: ((reason: SkipReason | 'too_large') => void) | undefined;
 }
 
 /**
  * Exact-match responses in Redis (ADR 013). The cache is an optimisation: a Redis error is a miss,
- * never a failed request.
+ * never a failed request, and a store that is skipped (too large, or Redis near its memory cap) or
+ * fails never fails one either. Lookups do not depend on the memory guard.
  */
 export class ResponseCache {
   readonly #o: ResponseCacheOptions;
@@ -188,24 +194,39 @@ export class ResponseCache {
     }
   }
 
+  /** Stores `value` unless it is too large or Redis is near its memory cap; never throws. */
   #write(key: string, value: string): void {
-    if (Buffer.byteLength(value) > this.#o.maxEntryBytes) return;
-    this.#o.redis
-      .set(this.#prefix + key, value, 'EX', this.#o.ttlSeconds)
-      .catch((err: unknown) => this.#o.logger.warn({ err }, 'response cache write failed'));
+    if (Buffer.byteLength(value) > this.#o.maxEntryBytes) {
+      this.#o.onSkip?.('too_large');
+      return;
+    }
+    void this.#store(key, value);
+  }
+
+  /** The store itself; resolves once it is done or skipped (tests await it through `set`). */
+  async #store(key: string, value: string): Promise<void> {
+    try {
+      const verdict = (await this.#o.guard?.check()) ?? { ok: true };
+      if (!verdict.ok) {
+        this.#o.onSkip?.(verdict.reason);
+        return;
+      }
+      await this.#o.redis.set(this.#prefix + key, value, 'EX', this.#o.ttlSeconds);
+    } catch (err) {
+      this.#o.logger.warn({ err }, 'response cache write failed');
+    }
   }
 
   /** Stores a completed response; failures are logged and ignored. */
   set(key: string, result: ChatResult): void {
-    const value = JSON.stringify({
-      content: result.content,
-      ...(result.toolCalls && result.toolCalls.length > 0 ? { toolCalls: result.toolCalls } : {}),
-      finishReason: result.finishReason,
-      usage: result.usage,
-    });
-    if (Buffer.byteLength(value) > this.#o.maxEntryBytes) return;
-    this.#o.redis
-      .set(this.#prefix + key, value, 'EX', this.#o.ttlSeconds)
-      .catch((err: unknown) => this.#o.logger.warn({ err }, 'response cache write failed'));
+    this.#write(
+      key,
+      JSON.stringify({
+        content: result.content,
+        ...(result.toolCalls && result.toolCalls.length > 0 ? { toolCalls: result.toolCalls } : {}),
+        finishReason: result.finishReason,
+        usage: result.usage,
+      }),
+    );
   }
 }

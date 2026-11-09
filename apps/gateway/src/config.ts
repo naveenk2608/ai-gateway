@@ -168,6 +168,22 @@ export const gatewayConfigSchema = z
       .default(3_600),
     CACHE_MAX_ENTRY_BYTES: z.coerce.number().int().min(1_024).max(10_000_000).default(262_144),
     /**
+     * M15: the cache stores only while Redis has room. Before a store it reads `INFO memory` (at
+     * most once per CACHE_MEMORY_CHECK_INTERVAL_MS) and stores while `used_memory` is below
+     * CACHE_MAX_MEMORY_SHARE of `maxmemory`, or below CACHE_MAX_MEMORY_BYTES when `maxmemory` is 0
+     * (no limit). If INFO fails or is not allowed, nothing is stored. Lookups are unaffected.
+     * The share leaves the other half for limits, budgets, quotas and the usage stream, which fail
+     * closed when Redis refuses writes (ADR 010); 64 MiB bounds a Redis with no limit set.
+     */
+    CACHE_MEMORY_GUARD_ENABLED: flag.default(true),
+    CACHE_MEMORY_CHECK_INTERVAL_MS: z.coerce.number().int().min(100).max(600_000).default(5_000),
+    CACHE_MAX_MEMORY_SHARE: z.coerce.number().gt(0).max(1).default(0.5),
+    CACHE_MAX_MEMORY_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1_048_576)
+      .default(64 * 1_048_576),
+    /**
      * Request coalescing (ADR 031): identical requests the cache would take (chat at temperature
      * 0 or with `x-gateway-cache: on`; embeddings unless `off`) that arrive while one of them is
      * upstream wait for its answer instead of calling the provider again, on this instance. On by
