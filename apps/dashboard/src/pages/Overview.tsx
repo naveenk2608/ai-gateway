@@ -28,6 +28,7 @@ import { billedNote, listCostText } from '../ui/cost.js';
 import { KpiCard, NoTrend } from '../ui/KpiCard.js';
 import { budgetUse, Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
+import { GuardrailCounts } from './Guardrails.js';
 import { ErrorState, Loading } from '../ui/states.js';
 
 /** Rows in the recent requests card; the Requests page has the rest. */
@@ -323,6 +324,7 @@ export function Overview({ projectId, filters }: { projectId: string; filters: A
       </div>
       <div className="card-grid">
         <MonthSpend overview={overview} project={project} />
+        <GuardrailCounts projectId={projectId} filters={filters} />
         <GatewayReadiness />
       </div>
     </>

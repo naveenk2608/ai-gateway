@@ -260,6 +260,27 @@ export function emptyResponses(role: Role): Responses {
     [`/admin/projects/${PROJECT_ID}/members`]: { data: [] },
     [`/admin/projects/${PROJECT_ID}/alerts`]: { enabled: true, destinations: [], deliveries: [] },
     [`/admin/projects/${PROJECT_ID}/routes`]: { enabled: true, models: [] },
+    [`/admin/projects/${PROJECT_ID}/guardrails`]: {
+      enabled: true,
+      policy: {
+        input: { email: 'off', phone: 'off', card: 'off', aadhaar: 'off', pan: 'off' },
+        blockedTerms: { terms: [], action: 'block' },
+        maxPromptTokens: null,
+        output: {
+          schema: 'off',
+          email: 'off',
+          phone: 'off',
+          card: 'off',
+          aadhaar: 'off',
+          pan: 'off',
+        },
+      },
+    },
+    [`/admin/projects/${PROJECT_ID}/guardrails/results`]: { data: [] },
+    [`/admin/projects/${PROJECT_ID}/guardrails/summary`]: {
+      range: '24h',
+      requests: { blocked: 0, flagged: 0, masked: 0 },
+    },
     '/admin/models': { deployments: [], models: [] },
     '/admin/models/quotas': { deployments: [] } satisfies QuotaUsageResponse,
     '/admin/analytics/cost-comparison': {
@@ -405,6 +426,51 @@ export function sampleResponses(role: Role): Responses {
       ],
     },
     '/admin/models': catalog,
+    // Card numbers blocked and email addresses masked before the model.
+    [`/admin/projects/${PROJECT_ID}/guardrails`]: {
+      enabled: true,
+      policy: {
+        input: { email: 'mask', phone: 'off', card: 'block', aadhaar: 'off', pan: 'flag' },
+        blockedTerms: { terms: ['project titan'], action: 'flag' },
+        maxPromptTokens: 8000,
+        output: {
+          schema: 'retry',
+          email: 'mask',
+          phone: 'off',
+          card: 'off',
+          aadhaar: 'off',
+          pan: 'off',
+        },
+      },
+    },
+    [`/admin/projects/${PROJECT_ID}/guardrails/results`]: {
+      data: [
+        {
+          requestId: '0192f5a0-0000-7000-8000-0000000000b1',
+          createdAt: '2026-10-20T23:20:00.000Z',
+          model: 'mock-1',
+          status: 'rejected',
+          stage: 'input',
+          check: 'card',
+          findings: 1,
+          action: 'block',
+        },
+        {
+          requestId: '0192f5a0-0000-7000-8000-0000000000b2',
+          createdAt: '2026-10-20T23:10:00.000Z',
+          model: 'mock-1',
+          status: 'success',
+          stage: 'input',
+          check: 'email',
+          findings: 2,
+          action: 'mask',
+        },
+      ],
+    },
+    [`/admin/projects/${PROJECT_ID}/guardrails/summary`]: {
+      range: '24h',
+      requests: { blocked: 1, flagged: 0, masked: 1 },
+    },
     // chat-pair overridden for this project: its second deployment moved first.
     [`/admin/projects/${PROJECT_ID}/routes`]: {
       enabled: true,

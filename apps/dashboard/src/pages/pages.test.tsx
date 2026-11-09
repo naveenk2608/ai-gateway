@@ -125,7 +125,7 @@ const pages: { name: string; page: () => ReactElement; empty: RegExp; data: RegE
   },
   {
     name: 'Security',
-    page: () => <Security projectId={PROJECT_ID} filters={filters} />,
+    page: () => <Security projectId={PROJECT_ID} role="owner" filters={filters} />,
     empty: /No requests were rejected/,
     data: /rpm_limit_exceeded/,
   },
@@ -516,7 +516,7 @@ describe('Reliability page', () => {
 });
 
 describe('Security page', () => {
-  const page = () => <Security projectId={PROJECT_ID} filters={filters} />;
+  const page = () => <Security projectId={PROJECT_ID} role="owner" filters={filters} />;
   const card = (name: string) => screen.getByRole('region', { name });
 
   it('counts rejections by kind and says invalid keys are not counted', async () => {
@@ -572,6 +572,79 @@ describe('Infrastructure KPI cards', () => {
     expect(await screen.findByText('Queue length')).toBeTruthy();
     expect(screen.queryByText('Stream length')).toBeNull();
     expect(screen.getByText('not reported by SQS')).toBeTruthy();
+  });
+});
+
+describe('Guardrails on the Security and Overview pages', () => {
+  it('lists flagged and blocked requests by type and count, never values, and counts them', async () => {
+    stubApi('data');
+    show(<Security projectId={PROJECT_ID} role="owner" filters={filters} />);
+    const card = await screen.findByRole('region', { name: 'Flagged and blocked requests' });
+    // The filters list the actions too: the row is the one in the table.
+    const inTable = (text: string) =>
+      waitFor(() => {
+        const cell = within(card)
+          .getAllByText(text)
+          .find((e) => e.closest('td'));
+        if (!cell) throw new Error(`no ${text} row yet`);
+        return cell.closest('tr')!;
+      });
+    const blocked = await inTable('block');
+    expect(within(blocked).getByText('card')).toBeTruthy();
+    expect(within(blocked).getByText('before')).toBeTruthy();
+    expect(within(await inTable('mask')).getByText('email')).toBeTruthy();
+    cleanup();
+    stubApi('data');
+    show(<Overview projectId={PROJECT_ID} filters={filters} />);
+    const counts = (await screen.findByRole('heading', { name: 'Guardrails, last 24h' })).closest(
+      'section',
+    )!;
+    await waitFor(() => expect(within(counts).getAllByText('1')).toHaveLength(2));
+  });
+
+  it("saves an admin's policy changes", async () => {
+    const responses = sampleResponses('admin');
+    const sent: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(input as string, 'http://dashboard.test').pathname;
+        if (init?.method === 'PUT') {
+          sent.push(JSON.parse(init.body as string));
+          return Promise.resolve(Response.json({ enabled: true, policy: sent.at(-1) }));
+        }
+        return Promise.resolve(Response.json(responses[path] ?? {}));
+      }),
+    );
+    show(<Security projectId={PROJECT_ID} role="admin" filters={filters} />);
+    const form = await screen.findByRole('form', { name: 'Guardrails' });
+    fireEvent.change(within(form).getByLabelText('Aadhaar numbers (Verhoeff) before the model'), {
+      target: { value: 'mask' },
+    });
+    fireEvent.change(within(form).getByLabelText('Blocked words and phrases'), {
+      target: { value: 'project titan\n  \nsecret' },
+    });
+    fireEvent.change(within(form).getByLabelText('Most prompt tokens'), { target: { value: '' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Save guardrails' }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toMatchObject({
+      input: { email: 'mask', card: 'block', aadhaar: 'mask', pan: 'flag' },
+      blockedTerms: { terms: ['project titan', 'secret'], action: 'flag' },
+      maxPromptTokens: null,
+      output: { schema: 'retry', email: 'mask' },
+    });
+  });
+
+  it('shows the policy to viewers without letting them change it', async () => {
+    stubApi('data', 'viewer');
+    show(<Security projectId={PROJECT_ID} role="viewer" filters={filters} />);
+    const form = await screen.findByRole('form', { name: 'Guardrails' });
+    expect(within(form).getByText('Only admins change guardrails.')).toBeTruthy();
+    expect(within(form).queryByRole('button', { name: 'Save guardrails' })).toBeNull();
+    expect(
+      within(form).getByLabelText<HTMLSelectElement>('Payment card numbers (Luhn) before the model')
+        .disabled,
+    ).toBe(true);
   });
 });
 

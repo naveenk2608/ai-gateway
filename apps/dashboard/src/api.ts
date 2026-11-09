@@ -498,3 +498,31 @@ export interface RouteHistory {
     createdBy: string | null;
   }[];
 }
+
+/** A project's guardrails (M16, ADR 035). */
+export interface GuardrailPolicy {
+  input: Record<'email' | 'phone' | 'card' | 'aadhaar' | 'pan', 'off' | 'mask' | 'block' | 'flag'>;
+  blockedTerms: { terms: string[]; action: 'block' | 'flag' };
+  maxPromptTokens: number | null;
+  output: Record<'email' | 'phone' | 'card' | 'aadhaar' | 'pan', 'off' | 'mask' | 'flag'> & {
+    schema: 'off' | 'flag' | 'retry';
+  };
+}
+
+export interface GuardrailResults {
+  data: {
+    requestId: string;
+    createdAt: string;
+    model: string | null;
+    status: string | null;
+    stage: 'input' | 'output';
+    check: string;
+    findings: number;
+    action: 'mask' | 'block' | 'flag' | 'retry' | 'fail' | 'none';
+  }[];
+}
+
+export interface GuardrailSummary {
+  range: string;
+  requests: { blocked: number; flagged: number; masked: number };
+}

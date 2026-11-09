@@ -85,7 +85,9 @@ function Dashboard({ me }: { me: Me }) {
             <Models projectId={project.id} role={project.role} filters={filters} />
           )}
           {page === 'reliability' && <Reliability projectId={project.id} filters={filters} />}
-          {page === 'security' && <Security projectId={project.id} filters={filters} />}
+          {page === 'security' && (
+            <Security projectId={project.id} role={project.role} filters={filters} />
+          )}
           {page === 'infra' && <Infrastructure projectId={project.id} filters={filters} />}
           {page === 'playground' && (
             // A new project gets a new key: the old one is revoked as this unmounts.

@@ -1459,3 +1459,14 @@ button.small-button {
   color: var(--color-text-muted);
   font-size: var(--text-sm);
 }
+
+/* Guardrail settings on the Security page (ADR 035). */
+.guardrail-form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.guardrail-form textarea {
+  width: 100%;
+  max-width: 32rem;
+}

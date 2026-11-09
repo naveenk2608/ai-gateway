@@ -1,6 +1,12 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Ban, Gauge, KeyRound, ShieldAlert, Wallet } from 'lucide-react';
-import { analyticsPath, api, type AnalyticsFilters, type SecurityResponse } from '../api.js';
+import {
+  analyticsPath,
+  api,
+  type AnalyticsFilters,
+  type Role,
+  type SecurityResponse,
+} from '../api.js';
 import { BarSeriesChart } from '../charts/BarSeriesChart.js';
 import { Sparkline } from '../charts/Sparkline.js';
 import { TONES } from '../charts/theme.js';
@@ -9,6 +15,7 @@ import { KpiCard, NoTrend } from '../ui/KpiCard.js';
 import { QueryCard } from '../ui/QueryCard.js';
 import { ShareTable, type ShareRow } from '../ui/ShareTable.js';
 import { ErrorState } from '../ui/states.js';
+import { GuardrailResultsTable, GuardrailSettings } from './Guardrails.js';
 
 const CATEGORY_LABELS: Record<string, string> = {
   rate_limit: 'Rate limit',
@@ -84,7 +91,15 @@ function SecurityKpis({ query, range }: { query: UseQueryResult<Data>; range: st
   );
 }
 
-export function Security({ projectId, filters }: { projectId: string; filters: AnalyticsFilters }) {
+export function Security({
+  projectId,
+  role,
+  filters,
+}: {
+  projectId: string;
+  role: Role;
+  filters: AnalyticsFilters;
+}) {
   const security = useQuery({
     queryKey: ['security', projectId, filters],
     queryFn: ({ signal }) =>
@@ -175,6 +190,19 @@ export function Security({ projectId, filters }: { projectId: string; filters: A
           })),
         )}
       </div>
+      <section className="card" aria-label="Flagged and blocked requests">
+        <div className="card-header">
+          <h2>Flagged and blocked requests</h2>
+          <span className="muted small">guardrails, last {filters.range}</span>
+        </div>
+        <GuardrailResultsTable projectId={projectId} filters={filters} />
+      </section>
+      <section className="card" aria-label="Guardrail settings">
+        <div className="card-header">
+          <h2>Guardrails</h2>
+        </div>
+        <GuardrailSettings projectId={projectId} role={role} />
+      </section>
     </>
   );
 }
