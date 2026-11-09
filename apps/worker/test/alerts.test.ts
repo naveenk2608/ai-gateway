@@ -276,8 +276,10 @@ describe('DeadLetterAlerts', () => {
   it('queues at most one alert per interval for every destination that chose it', async () => {
     const projectId = await createProject(db);
     const destinationId = await destination(projectId, ['dead_letters']);
-    // A window of its own, far from the other tests' times.
-    const clock = new ManualClock(Date.UTC(2031, 0, 1, 0, 0, 0) + Math.floor(Math.random() * 1e9));
+    // A window of its own, far from the other tests' times, starting one second into an hour so
+    // the 60 s step below stays in the same interval.
+    const hours = Math.floor(Math.random() * 100_000);
+    const clock = new ManualClock(Date.UTC(2031, 0, 1) + hours * 3_600_000 + 1_000);
     const alerts = new DeadLetterAlerts({
       db,
       clock,

@@ -166,7 +166,9 @@ describe('BreakerAlerts', () => {
     const inB = await add(b, cookieB, ['breaker', 'budget']);
     const budgetOnly = await add(a, cookieA, ['budget']);
 
-    const clock = new ManualClock(Date.UTC(2032, 0, 1) + Math.floor(Math.random() * 1e9));
+    // An interval of its own, starting one second in, so the 60 s step below stays inside it.
+    const intervals = Math.floor(Math.random() * 100_000);
+    const clock = new ManualClock(Date.UTC(2032, 0, 1) + intervals * 900_000 + 1_000);
     const alerts = new BreakerAlerts({
       db: gateway.db,
       clock,
