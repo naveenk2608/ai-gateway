@@ -1,6 +1,7 @@
 import cookie from '@fastify/cookie';
 import type { FastifyInstance } from 'fastify';
 import { requireSession } from './access.js';
+import { registerAlertRoutes } from './alert-routes.js';
 import { registerAnalyticsRoutes } from './analytics-routes.js';
 import { registerApiKeyRoutes } from './api-key-routes.js';
 import { registerAuditRoutes } from './audit-routes.js';
@@ -32,6 +33,7 @@ export async function registerAdminApi(app: FastifyInstance, deps: AdminDeps): P
     registerRequestRoutes(scoped, deps);
     registerAnalyticsRoutes(scoped, deps);
     registerModelRoutes(scoped, deps);
+    registerAlertRoutes(scoped, deps);
     done();
   });
 }

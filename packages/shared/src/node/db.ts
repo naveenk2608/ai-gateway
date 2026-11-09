@@ -240,6 +240,37 @@ export interface IdempotencyKeysTable {
   expires_at: Timestamp;
 }
 
+/** A webhook alert destination (M15, migration 0014, ADR 033); URL and secret encrypted. */
+export interface AlertDestinationsTable {
+  id: string;
+  project_id: string;
+  name: string;
+  kind: 'discord' | 'slack' | 'generic';
+  url_ciphertext: Buffer;
+  url_hint: string;
+  secret_ciphertext: Buffer | null;
+  events: string[];
+  created_by: string | null;
+  created_at: CreatedAt;
+}
+
+/** The alert outbox (M15, migration 0014): one row per event and destination. */
+export interface AlertDeliveriesTable {
+  id: string;
+  destination_id: string;
+  project_id: string;
+  event_type: 'budget.threshold' | 'breaker.opened' | 'dead_letters.growing' | 'test';
+  dedupe_key: string;
+  payload: Json;
+  status: Generated<'pending' | 'delivered' | 'failed'>;
+  attempts: Generated<number>;
+  next_attempt_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  last_status: number | null;
+  last_error: string | null;
+  created_at: CreatedAt;
+  delivered_at: Timestamp | null;
+}
+
 export interface FailedEventsTable {
   id: string;
   stream: string;
@@ -300,6 +331,8 @@ export interface Database {
   provider_health_events: ProviderHealthEventsTable;
   audit_logs: AuditLogsTable;
   failed_events: FailedEventsTable;
+  alert_destinations: AlertDestinationsTable;
+  alert_deliveries: AlertDeliveriesTable;
   idempotency_keys: IdempotencyKeysTable;
   usage_rollups_minute: UsageRollupsTable;
   usage_rollups_hour: UsageRollupsTable;

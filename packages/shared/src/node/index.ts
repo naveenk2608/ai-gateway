@@ -29,3 +29,20 @@ export {
   type UsageSource,
 } from './db.js';
 export { MIGRATION_LOCK_KEY, migrateDatabase, type MigrateOptions } from './migrate.js';
+export {
+  ALERT_EVENTS,
+  ALERT_KINDS,
+  alertsKey,
+  enqueueAlert,
+  enqueueTestAlert,
+  maskUrl,
+  newSigningSecret,
+  openText,
+  sealText,
+  verifyWebhook,
+  webhookSignature,
+  type AlertEvent,
+  type AlertEventType,
+  type AlertKind,
+  type EnqueueAlert,
+} from './alerts.js';

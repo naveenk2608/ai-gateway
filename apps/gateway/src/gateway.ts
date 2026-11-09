@@ -2,6 +2,7 @@ import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { systemClock, uuidv7, type Clock, type Env } from '@ai-gateway/shared';
 import {
+  alertsKey,
   closeRedis,
   createDb,
   createPgPool,
@@ -48,6 +49,7 @@ import type { RoutingDeps } from './routing/routed.js';
 import { PeakEwma } from './routing/peak-ewma.js';
 import { MemoryGuard } from './cache/memory-guard.js';
 import { IdempotencyGate } from './proxy/idempotency.js';
+import { BreakerAlerts } from './routing/breaker-alerts.js';
 import { QuotaBoard, quotaUsedShare } from './routing/quota.js';
 import { RetryBudget } from './routing/retry-budget.js';
 import { LatencyTracker } from './routing/router.js';
@@ -217,6 +219,16 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     instanceId,
   });
   const deployments = registry.deployments();
+  // Webhook alerts (ADR 033): the key for destination URLs, and breaker-opened alerts.
+  const alertKey = alertsKey(config);
+  const breakerAlerts = new BreakerAlerts({
+    db,
+    clock,
+    logger,
+    intervalMs: config.ALERTS_BREAKER_INTERVAL_MS,
+    enabled: config.ALERTS_ENABLED,
+    provider: (id) => registry.deployment(id)?.providerName,
+  });
   const breakers = new BreakerBoard(
     deployments.map((d) => d.id),
     { failureThreshold: config.BREAKER_FAILURE_THRESHOLD, openMs: config.BREAKER_OPEN_MS },
@@ -224,6 +236,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     (t) => {
       reporter.report(t);
       metrics.breakerTransition(t);
+      if (t.to === 'open') void breakerAlerts.opened(t.deployment);
     },
   );
   const quotas = new QuotaBoard({
@@ -339,6 +352,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
         logger,
         clock,
         metricsRegistry: metrics.registry,
+        alertsKey: alertKey,
+        random: deps.random ?? Math.random,
       })
     : undefined;
 
@@ -406,6 +421,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       }),
       models: modelCatalog(deps.models, registry),
       quotas: quotaUsage,
+      alerts: { enabled: config.ALERTS_ENABLED, key: alertKey },
     }),
   );
 
@@ -418,7 +434,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     await Promise.all([sweeper.stop(), healthChecker.stop()]);
     await events.close(Math.min(2_000, config.SHUTDOWN_TIMEOUT_MS));
     if (inProcess) {
-      await inProcess.consumer.stop();
+      await Promise.all([inProcess.consumer.stop(), inProcess.alerts.stop()]);
       await inProcess.close();
     }
     sqs?.close();
@@ -471,6 +487,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       invalidation.start();
       if (inProcess) {
         await inProcess.consumer.start();
+        inProcess.alerts.start();
         logger.info('usage consumer running in the gateway process');
       }
       await app.listen({ host: config.HOST, port: config.PORT });

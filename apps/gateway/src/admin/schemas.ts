@@ -23,6 +23,8 @@ export interface AdminDeps {
   models: ModelCatalog;
   /** Each deployment's quota use and cooldown, read from Redis (ADR 025). */
   quotas?: () => Promise<QuotaUsage[]>;
+  /** Webhook alerts (ADR 033): on or off, and the key that encrypts destination URLs. */
+  alerts?: { enabled: boolean; key: Buffer | null };
 }
 
 export const roleSchema = z.enum(['owner', 'admin', 'viewer']);

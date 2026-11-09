@@ -16,6 +16,11 @@ export {
 export { SqsUsageConsumer, type SqsConsumerOptions } from './sqs-consumer.js';
 export { ingestEvents } from './ingest.js';
 export { pruneIdempotencyKeys } from './retention.js';
+export { AlertDispatcher, RETRY_DELAYS_MS, type AlertSettings } from './alerts/dispatcher.js';
+export { crossedThresholds, DeadLetterAlerts, queueBudgetAlerts } from './alerts/detect.js';
+export { renderDelivery, messageText, type AlertPayload } from './alerts/format.js';
+export { blockedReason, vetTarget, type Resolver, type Target } from './alerts/ssrf.js';
+export type { Transport } from './alerts/transport.js';
 export { watchPipeline, WorkerMetrics } from './metrics.js';
 export {
   readPipelineState,

@@ -8,6 +8,7 @@ import {
 } from '@ai-gateway/shared';
 import type { Database, Db } from '@ai-gateway/shared/node';
 import { sql, type Insertable } from 'kysely';
+import { queueBudgetAlerts } from './alerts/detect.js';
 
 interface Price {
   id: string;
@@ -86,6 +87,8 @@ export async function ingestEvents(
   events: UsageEvent[],
   /** Told how long the rollup statement took, in seconds. */
   onRollup?: (seconds: number) => void,
+  /** Queue budget threshold alerts in this transaction (ALERTS_ENABLED, ADR 033). */
+  options: { budgetAlerts?: boolean } = {},
 ): Promise<void> {
   if (events.length === 0) return;
   const prices = await loadPrices(trx, events);
@@ -223,7 +226,13 @@ export async function ingestEvents(
           .returning('request_id')
           .execute();
   const costs = new Map(usageRows.map((row) => [row.request_id, row.cost_micro_usd ?? null]));
-  await updateBudgetLedger(trx, events, costs, new Set(inserted.map((row) => row.request_id)));
+  await updateBudgetLedger(
+    trx,
+    events,
+    costs,
+    new Set(inserted.map((row) => row.request_id)),
+    options.budgetAlerts === true,
+  );
   // Per-minute, hourly and daily rollups (ADR 015), from the rows inserted above.
   if (insertedRequests.length > 0) {
     const ids = insertedRequests.map((row) => row.id);
@@ -250,6 +259,7 @@ async function updateBudgetLedger(
   events: UsageEvent[],
   costs: Map<string, number | null>,
   inserted: Set<string>,
+  budgetAlerts: boolean,
 ): Promise<void> {
   const deltas = new Map<string, PeriodDelta>();
   const periodOf = (event: UsageEvent) => budgetPeriodAt(Date.parse(event.request.startedAt));
@@ -304,8 +314,31 @@ async function updateBudgetLedger(
         updated_at: new Date(),
       })),
     )
-    .returning(['id', 'project_id', 'period_start'])
+    .returning(['id', 'project_id', 'period_start', 'spent_micro_usd', 'limit_micro_usd'])
     .execute();
+  if (budgetAlerts) {
+    // Spend before this batch is the new total less what the batch added (ADR 033).
+    const added = new Map(rows.map((d) => [`${d.projectId}|${d.period.start}`, d]));
+    await queueBudgetAlerts(
+      trx,
+      periods.flatMap((p) => {
+        const delta = added.get(`${p.project_id}|${p.period_start.getTime()}`);
+        if (!delta || delta.spent <= 0) return [];
+        const after = Number(p.spent_micro_usd);
+        return [
+          {
+            projectId: p.project_id,
+            period: delta.period.key,
+            before: after - delta.spent,
+            after,
+            limit: p.limit_micro_usd === null ? null : Number(p.limit_micro_usd),
+          },
+        ];
+      }),
+      // When the newest event of the batch happened: no wall clock in the ingest path.
+      Math.max(...events.map((e) => Date.parse(e.occurredAt))),
+    );
+  }
   const periodIds = new Map(
     periods.map((p) => [`${p.project_id}|${p.period_start.getTime()}`, p.id]),
   );

@@ -7,6 +7,7 @@ import {
   createMetricsRegistry,
   createPgPool,
   createRedis,
+  alertsKey,
   createSqsClient,
   migrateDatabase,
   sqsApi,
@@ -22,6 +23,8 @@ import { UsageConsumer, type ConsumerOptions, type EventConsumer } from './consu
 import { watchPipeline, WorkerMetrics } from './metrics.js';
 import { readPipelineState, readSqsPipelineState, type PipelineReader } from './pipeline.js';
 import { SqsUsageConsumer } from './sqs-consumer.js';
+import { DeadLetterAlerts } from './alerts/detect.js';
+import { AlertDispatcher } from './alerts/dispatcher.js';
 
 /** src/ and dist/ both sit three levels below the repository root, where db/migrations lives. */
 export const DEFAULT_MIGRATIONS_DIR = fileURLToPath(
@@ -52,6 +55,10 @@ export interface UsageConsumerDeps {
   faults?: ConsumerOptions['faults'];
   /** Where the consumer's metrics go (ADR 017). */
   metricsRegistry?: Registry;
+  /** The key for alert destinations (ADR 033); null or omitted: alerts are queued, not sent. */
+  alertsKey?: Buffer | null;
+  /** A number in [0, 1), for the alert retry jitter. */
+  random?: () => number;
 }
 
 /** The SQS calls for EVENT_BUS=sqs, with a function that releases the client's sockets. */
@@ -78,10 +85,39 @@ export function sqsQueues(settings: ConsumerSettings): { queueUrl: string; dlqUr
  */
 export function createUsageConsumer(deps: UsageConsumerDeps): {
   consumer: EventConsumer;
+  /** Sends queued webhook alerts (ADR 033); start it after the consumer. */
+  alerts: AlertDispatcher;
   close: () => Promise<void>;
 } {
   const { settings, logger } = deps;
   const clock = deps.clock ?? systemClock;
+  const alerts = new AlertDispatcher(
+    {
+      enabled: settings.ALERTS_ENABLED,
+      pollIntervalMs: settings.ALERTS_POLL_INTERVAL_MS,
+      maxAttempts: settings.ALERTS_MAX_ATTEMPTS,
+      sendTimeoutMs: settings.ALERTS_SEND_TIMEOUT_MS,
+      retentionDays: settings.ALERTS_DELIVERY_RETENTION_DAYS,
+    },
+    {
+      db: deps.db,
+      clock,
+      logger: logger.child({ component: 'alerts' }),
+      random: deps.random ?? Math.random,
+      key: deps.alertsKey ?? null,
+    },
+  );
+  const alerting = settings.ALERTS_ENABLED
+    ? {
+        budget: true,
+        deadLetters: new DeadLetterAlerts({
+          db: deps.db,
+          clock,
+          logger,
+          intervalMs: settings.ALERTS_DEAD_LETTER_INTERVAL_MS,
+        }),
+      }
+    : undefined;
   const metrics = deps.metricsRegistry ? new WorkerMetrics(deps.metricsRegistry) : undefined;
   const retention = {
     minuteHours: settings.ROLLUP_RETENTION_MINUTE_HOURS,
@@ -104,9 +140,10 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
       maxDeliveries: settings.WORKER_MAX_DELIVERIES,
       retention,
       metrics,
+      alerts: alerting,
       faults: deps.faults,
     });
-    return { consumer, close: () => Promise.resolve(own?.close()) };
+    return { consumer, alerts, close: () => Promise.resolve(own?.close()) };
   }
   if (deps.redisUrl === undefined) throw new Error('REDIS_URL is required for the Redis consumer');
   const redis = createRedis(deps.redisUrl, logger, { offlineQueue: true, role: 'usage-consumer' });
@@ -126,9 +163,10 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
     trimIntervalMs: settings.WORKER_TRIM_INTERVAL_MS,
     retention,
     metrics,
+    alerts: alerting,
     faults: deps.faults,
   });
-  return { consumer, close: () => closeRedis(redis) };
+  return { consumer, alerts, close: () => closeRedis(redis) };
 }
 
 /** The worker process: config, connections, migrations and the usage consumer. */
@@ -158,13 +196,14 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
     closeState = () => closeRedis(stateRedis);
   }
   watchPipeline(registry, readPipeline);
-  const { consumer, close } = createUsageConsumer({
+  const { consumer, alerts, close } = createUsageConsumer({
     settings: config,
     redisUrl: config.REDIS_URL,
     sqs,
     db,
     logger,
     metricsRegistry: registry,
+    alertsKey: alertsKey(config),
   });
   let metricsServer: MetricsServer | undefined;
 
@@ -180,6 +219,7 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
         });
       }
       await consumer.start();
+      alerts.start();
       metricsServer = await startMetricsServer({
         registry,
         host: config.METRICS_HOST,
@@ -194,8 +234,7 @@ export function createWorker(config: WorkerConfig, logger: Logger): Worker {
       const timedOut = new Promise<'timeout'>((resolve) => {
         timer = setTimeout(() => resolve('timeout'), config.SHUTDOWN_TIMEOUT_MS);
       });
-      const stopped = consumer
-        .stop()
+      const stopped = Promise.all([consumer.stop(), alerts.stop()])
         .catch((err: unknown) => logger.error({ err }, 'usage consumer stop failed'))
         .then(() => Promise.allSettled([pool.end(), close(), closeState(), metricsServer?.close()]))
         .then(() => 'stopped' as const);

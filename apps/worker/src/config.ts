@@ -48,6 +48,26 @@ export const consumerSettingsShape = {
   ROLLUP_RETENTION_DAY_DAYS: positiveInt.min(31).default(400),
   /** How often expired rollup rows are deleted. */
   ROLLUP_RETENTION_INTERVAL_MS: positiveInt.default(3_600_000),
+  /**
+   * Webhook alerts (M15, ADR 033): budget thresholds, breakers opening, dead letters growing. On
+   * by default; nothing is sent until a project adds a destination. ALERTS_ENCRYPTION_KEY (32
+   * bytes, base64) encrypts destination URLs; unset, a key is derived from API_KEY_PEPPER.
+   * Deliveries are retried on the Standard Webhooks schedule (5 s to 24 h) up to
+   * ALERTS_MAX_ATTEMPTS (10: the schedule's length); a breaker alerts at most once per deployment
+   * per ALERTS_BREAKER_INTERVAL_MS, dead letters at most once per
+   * ALERTS_DEAD_LETTER_INTERVAL_MS.
+   */
+  ALERTS_ENABLED: z.stringbool().default(true),
+  ALERTS_ENCRYPTION_KEY: z
+    .string()
+    .refine((v) => Buffer.from(v, 'base64').length === 32, '32 bytes, base64')
+    .optional(),
+  ALERTS_POLL_INTERVAL_MS: positiveInt.min(100).max(600_000).default(5_000),
+  ALERTS_MAX_ATTEMPTS: positiveInt.max(10).default(10),
+  ALERTS_SEND_TIMEOUT_MS: positiveInt.min(100).max(30_000).default(5_000),
+  ALERTS_BREAKER_INTERVAL_MS: positiveInt.min(1_000).default(900_000),
+  ALERTS_DEAD_LETTER_INTERVAL_MS: positiveInt.min(1_000).default(3_600_000),
+  ALERTS_DELIVERY_RETENTION_DAYS: positiveInt.max(3_650).default(30),
 };
 
 export const consumerSettingsSchema = z.object(consumerSettingsShape);
@@ -68,6 +88,11 @@ export const workerConfigSchema = z
      */
     ...metricsConfigShape,
     WORKER_METRICS_PORT: z.coerce.number().int().min(0).max(65_535).default(9465),
+    /**
+     * Only to derive the alert encryption key when ALERTS_ENCRYPTION_KEY is unset: the same value
+     * as the gateway's. Without either, alerts are queued but not sent.
+     */
+    API_KEY_PEPPER: z.string().min(32).optional(),
   })
   .superRefine((config, ctx) => {
     checkEventBusConfig(config, ctx);

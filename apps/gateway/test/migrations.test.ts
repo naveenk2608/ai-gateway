@@ -9,6 +9,8 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/gateway.js';
 import { captureLogger } from './helpers.js';
 
 const TABLES = [
+  'alert_deliveries',
+  'alert_destinations',
   'api_keys',
   'audit_logs',
   'budget_periods',
@@ -47,6 +49,7 @@ const MIGRATIONS = [
   '0011_embedding-prices',
   '0012_request-coalesced',
   '0013_idempotency-keys',
+  '0014_alerts',
 ];
 
 /** A throwaway database, so migrations run from scratch. */

@@ -103,6 +103,10 @@ services:
       SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
       # Metrics on WORKER_METRICS_PORT (9465), for Prometheus on the Compose network only.
       METRICS_HOST: 0.0.0.0
+      # Webhook alerts (ADR 033): the key that opens destination URLs, derived from the pepper
+      # unless ALERTS_ENCRYPTION_KEY is set; without either, alerts are queued but not sent.
+      API_KEY_PEPPER: ${API_KEY_PEPPER:-}
+      ALERTS_ENCRYPTION_KEY: ${ALERTS_ENCRYPTION_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

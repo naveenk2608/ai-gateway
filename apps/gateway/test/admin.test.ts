@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net';
-import { systemClock, type Clock } from '@ai-gateway/shared';
+import { systemClock, uuidv7, type Clock } from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createGateway, type Gateway } from '../src/gateway.js';
@@ -194,6 +194,25 @@ describe('project isolation', () => {
         {},
       ],
       ['GET /admin/projects/:projectId/audit-logs', `/admin/projects/${t.b}/audit-logs`],
+      ['GET /admin/projects/:projectId/alerts', `/admin/projects/${t.b}/alerts`],
+      [
+        'POST /admin/projects/:projectId/alerts/destinations',
+        `/admin/projects/${t.b}/alerts/destinations`,
+        {
+          name: 'pager',
+          kind: 'slack',
+          url: 'https://hooks.example.com/services/x',
+          events: ['budget'],
+        },
+      ],
+      [
+        'DELETE /admin/projects/:projectId/alerts/destinations/:destinationId',
+        `/admin/projects/${t.b}/alerts/destinations/${uuidv7()}`,
+      ],
+      [
+        'POST /admin/projects/:projectId/alerts/destinations/:destinationId/test',
+        `/admin/projects/${t.b}/alerts/destinations/${uuidv7()}/test`,
+      ],
     ];
 
     // The table covers every registered route that takes a project.
@@ -327,6 +346,24 @@ describe('roles', () => {
         'POST /admin/projects/:projectId/api-keys/:apiKeyId/rotate',
         `/admin/projects/${p}/api-keys/${key.id}/rotate`,
         {},
+      ],
+      [
+        'POST /admin/projects/:projectId/alerts/destinations',
+        `/admin/projects/${p}/alerts/destinations`,
+        {
+          name: 'pager',
+          kind: 'slack',
+          url: 'https://hooks.example.com/services/x',
+          events: ['budget'],
+        },
+      ],
+      [
+        'DELETE /admin/projects/:projectId/alerts/destinations/:destinationId',
+        `/admin/projects/${p}/alerts/destinations/${uuidv7()}`,
+      ],
+      [
+        'POST /admin/projects/:projectId/alerts/destinations/:destinationId/test',
+        `/admin/projects/${p}/alerts/destinations/${uuidv7()}/test`,
       ],
     ];
     // The table covers every registered route that changes a project.
@@ -485,6 +522,33 @@ describe('audit log', () => {
       'POST /admin/projects/:projectId/api-keys/:apiKeyId/revoke',
       `/admin/projects/${p}/api-keys/${k2}/revoke`,
       'api_key.revoke',
+    );
+    const destination = await api<{ destination: { id: string } }>(
+      'POST',
+      `/admin/projects/${p}/alerts/destinations`,
+      cookie,
+      {
+        name: 'pager',
+        kind: 'slack',
+        url: 'https://hooks.example.com/services/x',
+        events: ['budget'],
+      },
+    );
+    cases.push([
+      'POST /admin/projects/:projectId/alerts/destinations',
+      destination,
+      'alert_destination.create',
+    ]);
+    const d = destination.body.destination.id;
+    await run(
+      'POST /admin/projects/:projectId/alerts/destinations/:destinationId/test',
+      `/admin/projects/${p}/alerts/destinations/${d}/test`,
+      'alert_destination.test',
+    );
+    await run(
+      'DELETE /admin/projects/:projectId/alerts/destinations/:destinationId',
+      `/admin/projects/${p}/alerts/destinations/${d}`,
+      'alert_destination.delete',
     );
     // Session mutations are audited without a project.
     const second = await api('POST', '/admin/auth/login', undefined, {

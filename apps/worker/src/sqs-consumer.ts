@@ -12,6 +12,7 @@ import {
 } from './consumer.js';
 import { ingestEvents } from './ingest.js';
 import type { WorkerMetrics } from './metrics.js';
+import type { DeadLetterAlerts } from './alerts/detect.js';
 import { pruneIdempotencyKeys, pruneRollups, type RollupRetention } from './retention.js';
 
 export interface SqsConsumerOptions {
@@ -30,6 +31,11 @@ export interface SqsConsumerOptions {
   maxDeliveries: number;
   retention?: RollupRetention & { intervalMs: number };
   metrics?: WorkerMetrics;
+  /**
+   * Webhook alerts (ADR 033): queue budget alerts in the ingest transaction, and a dead-letter
+   * alert when events are dead-lettered. Omitted: no alerts.
+   */
+  alerts?: { budget: boolean; deadLetters?: DeadLetterAlerts } | undefined;
   /** Test-only fault injection, as for the Redis consumer. */
   faults?: { crash?(point: 'before-commit' | 'after-commit'): void };
 }
@@ -203,6 +209,7 @@ export class SqsUsageConsumer implements EventConsumer {
           trx,
           batch.map((r) => r.event),
           metrics && ((seconds) => metrics.rollup(seconds)),
+          { budgetAlerts: this.#o.alerts?.budget === true },
         );
         this.#o.faults?.crash?.('before-commit');
       });
@@ -278,6 +285,7 @@ export class SqsUsageConsumer implements EventConsumer {
     this.#lastErrors.delete(message.messageId);
     this.#stats.deadLettered++;
     this.#o.metrics?.deadLettered();
+    void this.#o.alerts?.deadLetters?.deadLettered();
     this.#o.logger.error(
       { messageId: message.messageId, deliveries: message.receiveCount, error },
       'usage event moved to the dead-letter queue',

@@ -9,6 +9,7 @@ import {
 import type { Db, Logger, Redis } from '@ai-gateway/shared/node';
 import { ingestEvents } from './ingest.js';
 import type { WorkerMetrics } from './metrics.js';
+import type { DeadLetterAlerts } from './alerts/detect.js';
 import { pruneIdempotencyKeys, pruneRollups, type RollupRetention } from './retention.js';
 
 export interface ConsumerOptions {
@@ -31,6 +32,11 @@ export interface ConsumerOptions {
   retention?: RollupRetention & { intervalMs: number };
   /** Records consumption, batch and retention timings (ADR 017). */
   metrics?: WorkerMetrics;
+  /**
+   * Webhook alerts (ADR 033): queue budget alerts in the ingest transaction, and a dead-letter
+   * alert when events are dead-lettered. Omitted: no alerts.
+   */
+  alerts?: { budget: boolean; deadLetters?: DeadLetterAlerts } | undefined;
   /** Test-only fault injection: throw SimulatedCrash to stop the consumer as a kill would. */
   faults?: { crash?(point: 'before-commit' | 'after-commit'): void };
 }
@@ -345,6 +351,7 @@ export class UsageConsumer implements EventConsumer {
           trx,
           batch.map((p) => p.event),
           metrics && ((seconds) => metrics.rollup(seconds)),
+          { budgetAlerts: this.#o.alerts?.budget === true },
         );
         this.#o.faults?.crash?.('before-commit');
       });
@@ -493,6 +500,7 @@ export class UsageConsumer implements EventConsumer {
     this.#lastErrors.delete(entry.id);
     this.#stats.deadLettered++;
     this.#o.metrics?.deadLettered();
+    void this.#o.alerts?.deadLetters?.deadLettered();
     this.#o.logger.error(
       { streamId: entry.id, deliveries, error },
       'usage event moved to the dead-letter stream',
