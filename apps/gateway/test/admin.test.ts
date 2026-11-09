@@ -220,6 +220,25 @@ describe('project isolation', () => {
         'POST /admin/projects/:projectId/alerts/destinations/:destinationId/test',
         `/admin/projects/${t.b}/alerts/destinations/${uuidv7()}/test`,
       ],
+      ['GET /admin/projects/:projectId/routes', `/admin/projects/${t.b}/routes`],
+      [
+        'GET /admin/projects/:projectId/routes/:model/history',
+        `/admin/projects/${t.b}/routes/mock-a/history`,
+      ],
+      [
+        'PUT /admin/projects/:projectId/routes/:model',
+        `/admin/projects/${t.b}/routes/mock-a`,
+        { policy: 'priority', targets: [{ deployment: 'quick' }] },
+      ],
+      [
+        'POST /admin/projects/:projectId/routes/:model/rollback',
+        `/admin/projects/${t.b}/routes/mock-a/rollback`,
+        { version: 1 },
+      ],
+      [
+        'POST /admin/projects/:projectId/routes/:model/reset',
+        `/admin/projects/${t.b}/routes/mock-a/reset`,
+      ],
     ];
 
     // The table covers every registered route that takes a project.
@@ -371,6 +390,20 @@ describe('roles', () => {
       [
         'POST /admin/projects/:projectId/alerts/destinations/:destinationId/test',
         `/admin/projects/${p}/alerts/destinations/${uuidv7()}/test`,
+      ],
+      [
+        'PUT /admin/projects/:projectId/routes/:model',
+        `/admin/projects/${p}/routes/mock-a`,
+        { policy: 'priority', targets: [{ deployment: 'quick' }] },
+      ],
+      [
+        'POST /admin/projects/:projectId/routes/:model/rollback',
+        `/admin/projects/${p}/routes/mock-a/rollback`,
+        { version: 1 },
+      ],
+      [
+        'POST /admin/projects/:projectId/routes/:model/reset',
+        `/admin/projects/${p}/routes/mock-a/reset`,
       ],
     ];
     // The table covers every registered route that changes a project.
@@ -556,6 +589,23 @@ describe('audit log', () => {
       'DELETE /admin/projects/:projectId/alerts/destinations/:destinationId',
       `/admin/projects/${p}/alerts/destinations/${d}`,
       'alert_destination.delete',
+    );
+    await run(
+      'PUT /admin/projects/:projectId/routes/:model',
+      `/admin/projects/${p}/routes/mock-a`,
+      'route.update',
+      { policy: 'priority', targets: [{ deployment: 'quick' }] },
+    );
+    await run(
+      'POST /admin/projects/:projectId/routes/:model/rollback',
+      `/admin/projects/${p}/routes/mock-a/rollback`,
+      'route.rollback',
+      { version: 1 },
+    );
+    await run(
+      'POST /admin/projects/:projectId/routes/:model/reset',
+      `/admin/projects/${p}/routes/mock-a/reset`,
+      'route.reset',
     );
     // Session mutations are audited without a project.
     const second = await api('POST', '/admin/auth/login', undefined, {

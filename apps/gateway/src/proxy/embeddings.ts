@@ -18,6 +18,7 @@ import { MAX_EMBEDDING_INPUTS } from '../models-config.js';
 import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { Usage } from '../providers/types.js';
+import type { RouteOverrides } from '../routing/overrides.js';
 import { runRouted, type RoutingDeps } from '../routing/routed.js';
 import { runEmbed, type AttemptContext } from './attempt.js';
 import { upstreamFailure, watchDisconnect } from './chat-completions.js';
@@ -106,6 +107,8 @@ export interface EmbeddingsRouteOptions {
   coalescer?: Coalescer | null;
   /** Idempotency-Key: a retry is answered with the first answer (ADR 032). */
   idempotency?: IdempotencyGate | null;
+  /** Per-project route overrides (ADR 034); without them, the models file's routes. */
+  routeOverrides?: RouteOverrides | null;
   metrics?: GatewayMetrics;
 }
 
@@ -135,6 +138,7 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
     cache = null,
     coalescer = null,
     idempotency = null,
+    routeOverrides = null,
     metrics,
   } = options;
   /** Hands the finished trace to the event bus, once (a second call does nothing). */
@@ -206,7 +210,10 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
           { httpStatus: 403, param: 'model' },
         );
       }
-      const route = registry.route(body.model);
+      // The models file's route, or this project's override of it (ADR 034).
+      const fileRoute = registry.route(body.model);
+      const route =
+        fileRoute && routeOverrides ? routeOverrides.apply(apiKey.projectId, fileRoute) : fileRoute;
       if (!route) {
         throw new GatewayError('model_not_found', `The model \`${body.model}\` does not exist.`, {
           httpStatus: 404,

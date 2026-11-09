@@ -14,6 +14,7 @@ import type { GatewayMetrics } from '../metrics.js';
 import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { fitRoute, needsOf } from '../routing/capabilities.js';
+import type { RouteOverrides } from '../routing/overrides.js';
 import { runRouted, type RoutingDeps } from '../routing/routed.js';
 import type {
   ChatMessage,
@@ -79,6 +80,8 @@ export interface ChatRouteOptions {
   coalescer?: Coalescer | null;
   /** Idempotency-Key: a retry is answered with the first answer (ADR 032). */
   idempotency?: IdempotencyGate | null;
+  /** Per-project route overrides (ADR 034); without them, the models file's routes. */
+  routeOverrides?: RouteOverrides | null;
   /** Records each finished request (attempts, routing, latency, tokens). */
   metrics?: GatewayMetrics;
 }
@@ -367,6 +370,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
     cache = null,
     coalescer = null,
     idempotency = null,
+    routeOverrides = null,
     metrics,
   } = options;
   app.decorateRequest('apiKey', null);
@@ -433,7 +437,10 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           { httpStatus: 403, param: 'model' },
         );
       }
-      const modelRoute = registry.route(body.model);
+      // The models file's route, or this project's override of it (ADR 034).
+      const fileRoute = registry.route(body.model);
+      const modelRoute =
+        fileRoute && routeOverrides ? routeOverrides.apply(apiKey.projectId, fileRoute) : fileRoute;
       if (!modelRoute) {
         throw new GatewayError('model_not_found', `The model \`${body.model}\` does not exist.`, {
           httpStatus: 404,

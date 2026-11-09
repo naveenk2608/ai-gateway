@@ -50,6 +50,7 @@ import { PeakEwma } from './routing/peak-ewma.js';
 import { MemoryGuard } from './cache/memory-guard.js';
 import { IdempotencyGate } from './proxy/idempotency.js';
 import { BreakerAlerts } from './routing/breaker-alerts.js';
+import { RouteOverrides } from './routing/overrides.js';
 import { QuotaBoard, quotaUsedShare } from './routing/quota.js';
 import { RetryBudget } from './routing/retry-budget.js';
 import { LatencyTracker } from './routing/router.js';
@@ -144,7 +145,16 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       onResult: (result) => metrics.unknownApiKey(result),
     }),
   });
+  // Per-project route overrides (ADR 034), reloaded through the invalidation channel.
+  const routeOverrides = new RouteOverrides(
+    { enabled: config.ROUTE_OVERRIDES_ENABLED, refreshMs: config.ROUTE_OVERRIDES_REFRESH_MS },
+    { db, logger, clock },
+  );
   const invalidation = new AuthInvalidation({
+    onRoutes: (projectId) =>
+      void (projectId === null
+        ? routeOverrides.reloadAll()
+        : routeOverrides.reloadProject(projectId)),
     verifier,
     redis,
     redisUrl: config.REDIS_URL,
@@ -380,6 +390,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       cache,
       coalescer,
       idempotency,
+      routeOverrides,
       metrics,
     });
     registerEmbeddings(instance, {
@@ -392,6 +403,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       cache,
       coalescer,
       idempotency,
+      routeOverrides,
       metrics,
     });
     registerModels(instance, { registry, verifier, clock });
@@ -422,6 +434,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       models: modelCatalog(deps.models, registry),
       quotas: quotaUsage,
       alerts: { enabled: config.ALERTS_ENABLED, key: alertKey },
+      routeOverrides,
     }),
   );
 
@@ -431,7 +444,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     // batch; whatever it leaves pending is claimed by the next worker.
     prices.stop();
     processProbe.stop();
-    await Promise.all([sweeper.stop(), healthChecker.stop()]);
+    await Promise.all([sweeper.stop(), healthChecker.stop(), routeOverrides.stop()]);
     await events.close(Math.min(2_000, config.SHUTDOWN_TIMEOUT_MS));
     if (inProcess) {
       await Promise.all([inProcess.consumer.stop(), inProcess.alerts.stop()]);
@@ -484,6 +497,8 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       await prices.start();
       sweeper.start();
       healthChecker.start();
+      // The first load runs in the background: if Postgres is down, the models file applies.
+      routeOverrides.start();
       invalidation.start();
       if (inProcess) {
         await inProcess.consumer.start();

@@ -1,3 +1,4 @@
+import type { RouteOverrides } from '../routing/overrides.js';
 import type { Clock } from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
 import { z } from 'zod';
@@ -25,6 +26,8 @@ export interface AdminDeps {
   quotas?: () => Promise<QuotaUsage[]>;
   /** Webhook alerts (ADR 033): on or off, and the key that encrypts destination URLs. */
   alerts?: { enabled: boolean; key: Buffer | null };
+  /** Per-project route overrides (ADR 034), reloaded on this instance after a change. */
+  routeOverrides?: RouteOverrides;
 }
 
 export const roleSchema = z.enum(['owner', 'admin', 'viewer']);

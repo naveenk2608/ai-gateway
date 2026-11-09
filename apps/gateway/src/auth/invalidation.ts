@@ -7,6 +7,8 @@ export const INVALIDATION_CHANNEL = 'gw:auth:invalidate';
 const messageSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('api_key'), keyId: z.string() }),
   z.object({ kind: z.literal('project'), projectId: z.string() }),
+  // A project's route overrides changed (ADR 034).
+  z.object({ kind: z.literal('routes'), projectId: z.string() }),
 ]);
 
 export type InvalidationMessage = z.output<typeof messageSchema>;
@@ -18,6 +20,11 @@ export interface AuthInvalidationOptions {
   redisUrl: string;
   logger: Logger;
   channel?: string;
+  /**
+   * Reloads route overrides (ADR 034): one project's after a `routes` message, every project's
+   * (null) after a reconnect, since messages sent while disconnected are gone.
+   */
+  onRoutes?: (projectId: string | null) => void;
 }
 
 /**
@@ -47,7 +54,10 @@ export class AuthInvalidation {
     this.#subscriber = subscriber;
     let connectedBefore = false;
     subscriber.on('ready', () => {
-      if (connectedBefore) verifier.clear();
+      if (connectedBefore) {
+        verifier.clear();
+        this.#options.onRoutes?.(null);
+      }
       connectedBefore = true;
     });
     subscriber.on('message', (channel: string, raw: string) => {
@@ -96,6 +106,8 @@ export class AuthInvalidation {
 
   #applyMessage(message: InvalidationMessage): void {
     if (message.kind === 'api_key') this.#options.verifier.invalidateKey(message.keyId);
-    else this.#options.verifier.invalidateProject(message.projectId);
+    else if (message.kind === 'project')
+      this.#options.verifier.invalidateProject(message.projectId);
+    else this.#options.onRoutes?.(message.projectId);
   }
 }

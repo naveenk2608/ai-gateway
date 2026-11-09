@@ -26,6 +26,7 @@ const TABLES = [
   'request_records',
   // A view: the per-request values the analytics rollups sum.
   'request_rollup_facts',
+  'route_overrides',
   'routing_policies',
   'usage_events',
   'usage_rollups_day',
@@ -50,6 +51,7 @@ const MIGRATIONS = [
   '0012_request-coalesced',
   '0013_idempotency-keys',
   '0014_alerts',
+  '0015_route-overrides',
 ];
 
 /** A throwaway database, so migrations run from scratch. */

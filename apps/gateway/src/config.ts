@@ -130,6 +130,14 @@ export const gatewayConfigSchema = z
      */
     PEAK_EWMA_FAILURE_PENALTY: flag.default(true),
     /**
+     * Routing edited from the dashboard (M15, ADR 034): a project admin may override a model's
+     * policy and targets for their project, using only the deployments the models file lists for
+     * it. Every instance reloads a project's overrides when one changes (the invalidation channel)
+     * and all of them every ROUTE_OVERRIDES_REFRESH_MS, in case a message was lost.
+     */
+    ROUTE_OVERRIDES_ENABLED: flag.default(true),
+    ROUTE_OVERRIDES_REFRESH_MS: z.coerce.number().int().min(500).max(3_600_000).default(30_000),
+    /**
      * M15: without new samples, estimates move toward PEAK_EWMA_DEFAULT_MS instead of toward zero
      * (a penalty fades to the default, not below it). Off: tower's decay toward zero, which also
      * re-tries idle deployments faster than the default in light, sequential traffic.

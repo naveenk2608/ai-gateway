@@ -271,6 +271,19 @@ export interface AlertDeliveriesTable {
   delivered_at: Timestamp | null;
 }
 
+/** A version of a project's route override (M15, migration 0015, ADR 034). */
+export interface RouteOverridesTable {
+  id: string;
+  project_id: string;
+  model: string;
+  version: number;
+  action: 'change' | 'rollback' | 'reset';
+  route: Json | null;
+  rolled_back_to: number | null;
+  created_by: string | null;
+  created_at: CreatedAt;
+}
+
 export interface FailedEventsTable {
   id: string;
   stream: string;
@@ -333,6 +346,7 @@ export interface Database {
   failed_events: FailedEventsTable;
   alert_destinations: AlertDestinationsTable;
   alert_deliveries: AlertDeliveriesTable;
+  route_overrides: RouteOverridesTable;
   idempotency_keys: IdempotencyKeysTable;
   usage_rollups_minute: UsageRollupsTable;
   usage_rollups_hour: UsageRollupsTable;

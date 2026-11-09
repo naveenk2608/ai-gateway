@@ -10,6 +10,7 @@ import { registerMemberRoutes } from './member-routes.js';
 import { registerModelRoutes } from './model-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { registerRequestRoutes } from './request-routes.js';
+import { registerRouteRoutes } from './route-routes.js';
 import type { AdminDeps } from './schemas.js';
 
 export type { AdminDeps } from './schemas.js';
@@ -34,6 +35,7 @@ export async function registerAdminApi(app: FastifyInstance, deps: AdminDeps): P
     registerAnalyticsRoutes(scoped, deps);
     registerModelRoutes(scoped, deps);
     registerAlertRoutes(scoped, deps);
+    registerRouteRoutes(scoped, deps);
     done();
   });
 }
