@@ -258,6 +258,7 @@ export function emptyResponses(role: Role): Responses {
     [`POST /admin/projects/${PROJECT_ID}/api-keys`]: playgroundKey,
     '/v1/models': { object: 'list', data: [] },
     [`/admin/projects/${PROJECT_ID}/members`]: { data: [] },
+    [`/admin/projects/${PROJECT_ID}/alerts`]: { enabled: true, destinations: [], deliveries: [] },
     '/admin/models': { deployments: [], models: [] },
     '/admin/models/quotas': { deployments: [] } satisfies QuotaUsageResponse,
     '/admin/analytics/cost-comparison': {
@@ -370,6 +371,34 @@ export function sampleResponses(role: Role): Responses {
       data: [{ id: 'mock-1', object: 'model', owned_by: 'gateway' }],
     },
     [`/admin/projects/${PROJECT_ID}/members`]: { data: members },
+    [`/admin/projects/${PROJECT_ID}/alerts`]: {
+      enabled: true,
+      destinations: [
+        {
+          id: '0192f000-0000-7000-8000-0000000000d1',
+          name: 'on-call',
+          kind: 'discord',
+          urlHint: 'https://discord.com/…abcd',
+          events: ['budget', 'breaker'],
+          createdAt: '2026-10-20T10:00:00.000Z',
+        },
+      ],
+      deliveries: [
+        {
+          id: '0192f000-0000-7000-8000-0000000000e1',
+          destinationId: '0192f000-0000-7000-8000-0000000000d1',
+          destinationName: 'on-call',
+          eventType: 'budget.threshold',
+          status: 'delivered',
+          attempts: 2,
+          lastStatus: 204,
+          lastError: null,
+          createdAt: '2026-10-20T23:10:00.000Z',
+          deliveredAt: '2026-10-20T23:10:06.000Z',
+          nextAttemptAt: null,
+        },
+      ],
+    },
     '/admin/models': catalog,
     // The mock with a daily quota of 1,000 requests, three quarters used; mock-error cooling down.
     '/admin/models/quotas': {

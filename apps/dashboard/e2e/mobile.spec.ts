@@ -47,7 +47,7 @@ for (const [dataset, responses] of [
       });
     }
 
-    for (const tab of ['project', 'limits', 'members', 'keys', 'routing']) {
+    for (const tab of ['project', 'limits', 'members', 'keys', 'alerts', 'routing']) {
       test(`settings tab ${tab} fits the screen`, async ({ page }) => {
         await serveApi(page, responses);
         await page.goto(`/dashboard/#settings/${tab}`);

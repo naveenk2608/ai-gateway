@@ -27,17 +27,19 @@ import { budgetUse, Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
 import { Tabs, type Tab } from '../ui/Tabs.js';
 import { Empty, ErrorState, Loading } from '../ui/states.js';
+import { Alerts } from './Alerts.js';
 import { ApiKeys } from './ApiKeys.js';
 
 const ROLES: Role[] = ['viewer', 'admin', 'owner'];
 
-type TabId = 'project' | 'limits' | 'members' | 'keys' | 'routing';
+type TabId = 'project' | 'limits' | 'members' | 'keys' | 'alerts' | 'routing';
 
 const TABS: Tab<TabId>[] = [
   { id: 'project', label: 'Project' },
   { id: 'limits', label: 'Limits and budget' },
   { id: 'members', label: 'Members' },
   { id: 'keys', label: 'API keys' },
+  { id: 'alerts', label: 'Alerts' },
   { id: 'routing', label: 'Routing' },
 ];
 
@@ -771,6 +773,8 @@ export function Settings({
           <Members projectId={projectId} role={data.role} userId={userId} />
         ) : current === 'keys' && data ? (
           <ApiKeys projectId={projectId} role={data.role} />
+        ) : current === 'alerts' && data ? (
+          <Alerts projectId={projectId} role={data.role} />
         ) : (
           <QueryCard
             title="Deployments and routing"

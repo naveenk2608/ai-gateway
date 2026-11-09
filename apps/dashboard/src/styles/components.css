@@ -455,6 +455,13 @@ fieldset label {
   flex: 1 1 10rem;
 }
 
+/* The new-destination form on Settings > Alerts (ADR 033). */
+.alert-form {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;

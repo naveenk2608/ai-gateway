@@ -430,3 +430,34 @@ export const isUnauthenticated = (err: unknown) => err instanceof ApiError && er
 
 /** Roles that may change keys and settings. */
 export const canManage = (role: Role) => role === 'owner' || role === 'admin';
+
+/** Webhook alerts (M15, ADR 033). */
+export type AlertKind = 'discord' | 'slack' | 'generic';
+export type AlertEvent = 'budget' | 'breaker' | 'dead_letters';
+
+export interface Alerts {
+  /** False when the gateway has alerts off or no encryption key. */
+  enabled: boolean;
+  destinations: {
+    id: string;
+    name: string;
+    kind: AlertKind;
+    /** Scheme, host and the last 4 characters; never the URL. */
+    urlHint: string;
+    events: AlertEvent[];
+    createdAt: string;
+  }[];
+  deliveries: {
+    id: string;
+    destinationId: string;
+    destinationName: string;
+    eventType: string;
+    status: 'pending' | 'delivered' | 'failed';
+    attempts: number;
+    lastStatus: number | null;
+    lastError: string | null;
+    createdAt: string;
+    deliveredAt: string | null;
+    nextAttemptAt: string | null;
+  }[];
+}

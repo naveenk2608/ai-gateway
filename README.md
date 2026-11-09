@@ -840,6 +840,59 @@ The Models page shows each deployment's use today against its quota, as a meter,
 cooldown (`GET /admin/models/quotas`). Prometheus has `gateway_provider_skips_total`,
 `gateway_provider_cooldowns_total` and `gateway_provider_quota_used_ratio`.
 
+## Webhook alerts
+
+Project admins add alert destinations on **Settings > Alerts**
+([ADR 033](docs/adr/033-webhook-alerts.md)): a name, a kind (Discord, Slack, or generic JSON), an
+https URL, and the events it gets:
+
+| Event | When | Goes to |
+| --- | --- | --- |
+| `budget.threshold` | The project's monthly spend crosses 50%, 80% or 100% of its budget (each once a month) | That project's destinations |
+| `breaker.opened` | A deployment's circuit breaker opens (at most once per deployment per `ALERTS_BREAKER_INTERVAL_MS`, 15 min) | Every destination that chose it |
+| `dead_letters.growing` | Usage events are moved to the dead-letter queue (at most once per `ALERTS_DEAD_LETTER_INTERVAL_MS`, 1 h) | Every destination that chose it |
+
+- Discord and Slack take the incoming-webhook URL their apps give you; the message is one line of
+  text (Discord mentions are disabled).
+- **Generic** receivers get the event as JSON (`type`, `timestamp`, `data`), signed as
+  [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks) describes. The
+  signing secret (`whsec_...`) is shown once, when the destination is created.
+- URLs are stored encrypted (AES-256-GCM) with `ALERTS_ENCRYPTION_KEY`, or, when it is unset, with a
+  key derived from `API_KEY_PEPPER`; the dashboard shows them masked. **Changing the pepper or the
+  key means entering the URLs again.**
+- Alerts are queued in Postgres and sent by the worker (or the gateway with
+  `RUN_WORKER_IN_PROCESS`), retried on the Standard Webhooks schedule (5 s, 5 min, 30 min, 2 h, ...
+  24 h, with jitter) up to `ALERTS_MAX_ATTEMPTS`, then marked failed. The tab lists the latest
+  deliveries, and **Send test** queues a test message. A standalone worker needs `API_KEY_PEPPER`
+  or `ALERTS_ENCRYPTION_KEY` to send.
+- Only https URLs are sent to, and never to private, loopback, link-local or cloud-metadata
+  addresses (checked when each alert is sent, and the connection is pinned to the checked
+  address); redirects are not followed. `ALERTS_ENABLED=false` switches alerts off.
+
+To verify a generic alert, recompute the signature over `webhook-id`, `webhook-timestamp` and the
+raw body, compare it in constant time, and reject timestamps more than 5 minutes from your clock
+(the tolerance Stripe's libraries use), which stops a captured request from being replayed later:
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+/** headers: the request's headers (lowercase names); body: the raw body as a string. */
+function verify(secret, headers, body, toleranceSeconds = 300) {
+  const id = headers['webhook-id'];
+  const timestamp = Number(headers['webhook-timestamp']);
+  if (!Number.isInteger(timestamp)) return false;
+  if (Math.abs(Date.now() / 1000 - timestamp) > toleranceSeconds) return false;
+  const key = Buffer.from(secret.replace(/^whsec_/, ''), 'base64');
+  const expected = Buffer.from(
+    'v1,' + createHmac('sha256', key).update(`${id}.${timestamp}.${body}`).digest('base64'),
+  );
+  return headers['webhook-signature'].split(' ').some((candidate) => {
+    const given = Buffer.from(candidate);
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+}
+```
+
 ## Scheduled traffic
 
 [.github/workflows/traffic.yml](.github/workflows/traffic.yml) runs
@@ -1221,6 +1274,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*`, `UNKNOWN_KEYS_PER_MINUTE_PER_IP`, `UNKNOWN_KEY_CACHE_MS` |
 | Routing | `RETRY_*` (with `RETRY_BUDGET_*`), `PEAK_EWMA_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
 | Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `CACHE_MEMORY_GUARD_ENABLED`, `CACHE_MEMORY_CHECK_INTERVAL_MS`, `CACHE_MAX_MEMORY_SHARE`, `CACHE_MAX_MEMORY_BYTES`, `COALESCE_ENABLED`, `IDEMPOTENCY_ENABLED`, `IDEMPOTENCY_KEY_TTL_HOURS`, `IDEMPOTENCY_LOCK_MS`, `IDEMPOTENCY_MAX_BODY_BYTES` |
+| Alerts | `ALERTS_ENABLED`, `ALERTS_ENCRYPTION_KEY`, `ALERTS_POLL_INTERVAL_MS`, `ALERTS_MAX_ATTEMPTS`, `ALERTS_SEND_TIMEOUT_MS`, `ALERTS_BREAKER_INTERVAL_MS`, `ALERTS_DEAD_LETTER_INTERVAL_MS`, `ALERTS_DELIVERY_RETENTION_DAYS` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
 | Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |
 | Retention and shutdown | `ROLLUP_RETENTION_*`, `SHUTDOWN_TIMEOUT_MS`, `MIGRATE_ON_START` |

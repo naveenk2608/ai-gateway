@@ -578,6 +578,7 @@ describe('Settings tabs', () => {
       'Limits and budget',
       'Members',
       'API keys',
+      'Alerts',
       'Routing',
     ]);
     expect(tabs.map((t) => t.getAttribute('href'))).toEqual([
@@ -585,6 +586,7 @@ describe('Settings tabs', () => {
       '#settings/limits',
       '#settings/members',
       '#settings/keys',
+      '#settings/alerts',
       '#settings/routing',
     ]);
     expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Project');
@@ -598,6 +600,55 @@ describe('Settings tabs', () => {
     cleanup();
     settings('nope');
     expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Project');
+  });
+
+  it('lists alert destinations masked with their deliveries, and shows a new secret once', async () => {
+    const responses = sampleResponses('admin');
+    const posted: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(input as string, 'http://dashboard.test').pathname;
+        if (init?.method === 'POST') {
+          posted.push(JSON.parse(init.body as string));
+          return Promise.resolve(
+            Response.json({ destination: {}, secret: 'whsec_shown-once' }, { status: 201 }),
+          );
+        }
+        return Promise.resolve(Response.json(responses[path] ?? {}));
+      }),
+    );
+    show(<Settings projectId={PROJECT_ID} userId="u" tab="alerts" />);
+    expect(await screen.findByText('https://discord.com/…abcd')).toBeTruthy();
+    expect(screen.getByText('delivered')).toBeTruthy();
+    expect(screen.getByText('HTTP 204')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Destination name'), { target: { value: 'hooks' } });
+    fireEvent.change(screen.getByLabelText('Destination kind'), { target: { value: 'generic' } });
+    fireEvent.change(screen.getByLabelText('Webhook URL'), {
+      target: { value: 'https://hooks.example.com/in' },
+    });
+    fireEvent.click(screen.getByLabelText('A breaker opened'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add destination' }));
+    expect(await screen.findByText('whsec_shown-once')).toBeTruthy();
+    expect(posted).toEqual([
+      {
+        name: 'hooks',
+        kind: 'generic',
+        url: 'https://hooks.example.com/in',
+        events: ['budget', 'breaker'],
+      },
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.queryByText('whsec_shown-once')).toBeNull();
+  });
+
+  it('shows alert destinations to viewers without the form or the buttons', async () => {
+    stubApi('data', 'viewer');
+    show(<Settings projectId={PROJECT_ID} userId="u" tab="alerts" />);
+    expect(await screen.findByText('https://discord.com/…abcd')).toBeTruthy();
+    expect(screen.queryByRole('form', { name: 'New alert destination' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send test' })).toBeNull();
+    expect(screen.getByText('Only admins manage alert destinations.')).toBeTruthy();
   });
 
   it('moves between tabs with the arrow keys', () => {
