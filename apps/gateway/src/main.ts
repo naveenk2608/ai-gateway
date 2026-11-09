@@ -1,6 +1,12 @@
 import { fileURLToPath } from 'node:url';
 import { ConfigError } from '@ai-gateway/shared';
-import { createLogger, loadConfigOrExit, onShutdownSignal } from '@ai-gateway/shared/node';
+import {
+  createLogger,
+  initTracing,
+  loadConfigOrExit,
+  onShutdownSignal,
+  shutdownTracing,
+} from '@ai-gateway/shared/node';
 import { gatewayConfigSchema } from './config.js';
 import { loadDashboard, type DashboardFiles } from './dashboard.js';
 import { createGateway } from './gateway.js';
@@ -24,9 +30,17 @@ try {
   process.exit(1);
 }
 
+// Off unless OTEL_EXPORTER_OTLP_ENDPOINT is set (ADR 037); the in-process worker shares it.
+if (await initTracing({ serviceName: 'ai-gateway', endpoint: config.OTEL_EXPORTER_OTLP_ENDPOINT })) {
+  logger.info('tracing on: spans go to the OTLP endpoint');
+}
 const gateway = createGateway(config, logger, { models, dashboard });
 
-onShutdownSignal(logger, async () => ((await gateway.shutdown()) === 'drained' ? 0 : 1));
+onShutdownSignal(logger, async () => {
+  const outcome = await gateway.shutdown();
+  await shutdownTracing();
+  return outcome === 'drained' ? 0 : 1;
+});
 
 try {
   await gateway.start();

@@ -6,6 +6,7 @@ export {
   type WorkerConfig,
 } from './config.js';
 export {
+  IngestTrace,
   isTransientDbError,
   SimulatedCrash,
   UsageConsumer,

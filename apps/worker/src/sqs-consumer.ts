@@ -3,7 +3,7 @@ import type { Db, Logger, SqsApi, SqsMessage } from '@ai-gateway/shared/node';
 import {
   eventIdOf,
   isTransientDbError,
-  logStored,
+  IngestTrace,
   parse,
   SimulatedCrash,
   type ConsumerStats,
@@ -202,6 +202,7 @@ export class SqsUsageConsumer implements EventConsumer {
   async #insertAndDelete(batch: (Received & { ok: true })[]): Promise<void> {
     const metrics = this.#o.metrics;
     const handles = batch.map((r) => r.message.receiptHandle);
+    const traced = new IngestTrace(batch.map((r) => r.event));
     await this.#retryWhileDbDown(handles, async () => {
       const started = performance.now();
       await this.#o.db.transaction().execute(async (trx) => {
@@ -214,6 +215,9 @@ export class SqsUsageConsumer implements EventConsumer {
         this.#o.faults?.crash?.('before-commit');
       });
       metrics?.batch((performance.now() - started) / 1000);
+    }).catch((err: unknown) => {
+      traced.failed();
+      throw err;
     });
     this.#o.faults?.crash?.('after-commit');
     const notDeleted = await this.#o.sqs.deleteBatch(this.#o.queueUrl, handles);
@@ -224,10 +228,7 @@ export class SqsUsageConsumer implements EventConsumer {
     for (const r of batch) this.#lastErrors.delete(r.message.messageId);
     this.#stats.processed += batch.length;
     metrics?.consumed(batch.length);
-    logStored(
-      this.#o.logger,
-      batch.map((r) => r.event),
-    );
+    traced.stored(this.#o.logger);
   }
 
   /**

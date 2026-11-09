@@ -1,3 +1,4 @@
+import { openSpan, tracingEnabled, type SpanHandle } from '@ai-gateway/shared/node';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import type { IncomingMessage } from 'node:http';
@@ -32,6 +33,8 @@ declare module 'fastify' {
   interface FastifyRequest {
     /** This request's span (ADR 017): continues the caller's `traceparent`, or starts a trace. */
     traceContext: TraceContext;
+    /** The exported span of a /v1 request when tracing is on (ADR 037). */
+    otelSpan: SpanHandle | null;
   }
 }
 
@@ -147,8 +150,28 @@ export function buildApp({
   });
 
   app.decorateRequest('traceContext', null as unknown as TraceContext);
+  app.decorateRequest('otelSpan', null);
   app.addHook('onRequest', async (request, reply) => {
     request.traceContext = spans.get(request.raw) ?? startSpan(undefined);
+    // With tracing on, each /v1 request is a span with the IDs above (ADR 037), recorded and so
+    // passed on as sampled.
+    if (tracingEnabled() && request.url.startsWith('/v1/')) {
+      const path = request.url.split('?')[0] ?? request.url;
+      request.otelSpan = openSpan(
+        `${request.method} ${request.routeOptions.url ?? path}`,
+        request.traceContext,
+        {
+          kind: 'server',
+          remoteParent: true,
+          attributes: {
+            'http.request.method': request.method,
+            'url.path': path,
+            'gateway.request_id': request.id,
+          },
+        },
+      );
+      request.traceContext = { ...request.traceContext, flags: '01' };
+    }
     void reply.header('x-request-id', request.id);
     void reply.header('traceparent', formatTraceparent(request.traceContext));
     // Requests on kept-alive sockets can still arrive during the drain; turn them away.
@@ -167,6 +190,10 @@ export function buildApp({
     // A stream whose headers went out before the drain began has no `Connection: close`, so close
     // its socket once it finishes rather than wait for the keep-alive timeout.
     if (closing) request.raw.socket?.destroySoon();
+    if (request.otelSpan) {
+      request.otelSpan.set({ 'http.response.status_code': reply.statusCode });
+      request.otelSpan.end(reply.statusCode >= 500 ? String(reply.statusCode) : undefined);
+    }
     metrics?.httpRequest(
       request.method,
       request.routeOptions.url,

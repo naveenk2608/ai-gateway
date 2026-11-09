@@ -1,3 +1,4 @@
+import { openSpan, type SpanHandle } from '@ai-gateway/shared/node';
 import { abortReason, childSpan, formatTraceparent, uuidv7, type Clock } from '@ai-gateway/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import { ProviderError } from '../providers/errors.js';
@@ -121,6 +122,7 @@ class Attempt {
   #usage: Usage | null = null;
   #rateLimit: RateLimitHeaders | undefined;
   #ended = false;
+  #span: SpanHandle | undefined;
   readonly #onClientAbort = () => this.#controller.abort(new ClientClosedError());
 
   constructor(ctx: AttemptContext, stream: boolean) {
@@ -132,6 +134,19 @@ class Attempt {
     const parent = ctx.trace?.traceContext;
     const span = parent ? childSpan(parent) : undefined;
     this.traceparent = span ? formatTraceparent(span) : undefined;
+    // With tracing on, the attempt is exported as a span with the same ID (ADR 037).
+    this.#span = span
+      ? openSpan('provider.attempt', span, {
+          kind: 'client',
+          attributes: {
+            'gateway.deployment': ctx.deployment.id,
+            'gateway.provider': ctx.deployment.providerName,
+            'gateway.provider_model': ctx.deployment.providerModel,
+            'gateway.attempt': this.#number,
+            'gateway.stream': stream,
+          },
+        })
+      : undefined;
     // The request's logger already has traceId and its own spanId.
     this.log = ctx.log.child({
       attemptId: this.id,
@@ -205,6 +220,12 @@ class Attempt {
     const outcome =
       error === undefined ? 'success' : error instanceof ProviderError ? error.kind : 'error';
     const ttftMs = this.#firstEventAt === undefined ? null : this.#firstEventAt - this.#startedAt;
+    const upstreamStatus = error instanceof ProviderError ? error.upstreamStatus : undefined;
+    this.#span?.set({
+      'gateway.outcome': outcome,
+      ...(upstreamStatus === undefined ? {} : { 'http.response.status_code': upstreamStatus }),
+    });
+    this.#span?.end(outcome === 'success' ? undefined : outcome);
     this.#ctx.onEnd?.({
       error,
       latencyMs: Math.max(0, now - this.#startedAt),

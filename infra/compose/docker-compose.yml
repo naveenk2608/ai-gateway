@@ -63,6 +63,8 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       # Required: set it in .env (`openssl rand -hex 32`); the gateway exits without it.
       API_KEY_PEPPER: ${API_KEY_PEPPER:-}
+      # Tracing (ADR 037): http://jaeger:4318 with `--profile tracing`; unset, it stays off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # Plain HTTP on localhost, so the session cookie cannot be HTTPS-only.
       SESSION_COOKIE_SECURE: 'false'
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
@@ -107,6 +109,7 @@ services:
       # unless ALERTS_ENCRYPTION_KEY is set; without either, alerts are queued but not sent.
       API_KEY_PEPPER: ${API_KEY_PEPPER:-}
       ALERTS_ENCRYPTION_KEY: ${ALERTS_ENCRYPTION_KEY:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -174,6 +177,17 @@ services:
     depends_on:
       - prometheus
     mem_limit: 256m
+
+  # Traces (M17, ADR 037): Jaeger's all-in-one, in memory. Start it with `--profile tracing` and
+  # set OTEL_EXPORTER_OTLP_ENDPOINT (http://jaeger:4318 for the Compose gateway and worker,
+  # http://127.0.0.1:4318 for `pnpm dev`); the UI is on http://127.0.0.1:16686.
+  jaeger:
+    profiles: [tracing]
+    image: jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17
+    ports:
+      - 127.0.0.1:${JAEGER_UI_PORT:-16686}:16686
+      - 127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318
+    mem_limit: 512m
 
 volumes:
   postgres-data:

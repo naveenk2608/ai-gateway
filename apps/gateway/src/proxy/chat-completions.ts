@@ -1,3 +1,4 @@
+import { inSpan, POSTGRES_SPAN } from '@ai-gateway/shared/node';
 import type { ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import type { Clock } from '@ai-gateway/shared';
@@ -590,14 +591,20 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           };
           let claim: Claim;
           try {
-            claim = await idempotency.claim({
-              projectId: apiKey.projectId,
-              endpoint: 'chat',
-              key: idemKey,
-              fingerprint: requestFingerprint(body),
-              requestId: request.id,
-              deadlineMs: routing.deadlineMs,
-            });
+            claim = await inSpan(
+              'db.idempotency_claim',
+              trace.traceContext,
+              () =>
+                idempotency.claim({
+                  projectId: apiKey.projectId,
+                  endpoint: 'chat',
+                  key: idemKey,
+                  fingerprint: requestFingerprint(body),
+                  requestId: request.id,
+                  deadlineMs: routing.deadlineMs,
+                }),
+              POSTGRES_SPAN,
+            );
           } catch (err) {
             request.log.warn({ err }, 'idempotency key check failed');
             throw idempotencyUnavailable();
@@ -612,11 +619,13 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
             case 'wait': {
               let stored: StoredResponse;
               try {
-                stored = await follow(claim.flight, {
-                  clock,
-                  clientSignal: disconnect.signal,
-                  deadlineAt,
-                });
+                stored = await inSpan('coalesce.wait', trace.traceContext, () =>
+                  follow(claim.flight, {
+                    clock,
+                    clientSignal: disconnect.signal,
+                    deadlineAt,
+                  }),
+                );
               } catch (err) {
                 // Past this request's own deadline it stops waiting: the first still runs.
                 if (err instanceof ProviderError && err.kind === 'timeout') throw keyInProgress(1);
@@ -667,7 +676,11 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         const key =
           reusable && (cache || coalescer?.enabled) ? cacheKey(apiKey.projectId, body) : null;
         if (cache && key) {
-          const hit = await cache.get(key);
+          const hit = await inSpan('cache.lookup', trace.traceContext, async (span) => {
+            const found = await cache.get(key);
+            span.set({ 'gateway.cache_hit': found !== null });
+            return found;
+          });
           metrics?.cacheLookup(hit !== null);
           void reply.header(CACHE_HEADER, hit ? 'hit' : 'miss');
           if (hit) {
@@ -687,11 +700,13 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           void reply.header(CACHE_HEADER, 'coalesced');
           let answer: ChatResult;
           try {
-            answer = await follow(joined.flight, {
-              clock,
-              clientSignal: disconnect.signal,
-              deadlineAt,
-            });
+            answer = await inSpan('coalesce.wait', trace.traceContext, () =>
+              follow(joined.flight, {
+                clock,
+                clientSignal: disconnect.signal,
+                deadlineAt,
+              }),
+            );
           } catch (err) {
             throw upstreamFailure(err);
           }

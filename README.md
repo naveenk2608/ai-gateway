@@ -1196,8 +1196,26 @@ configuration are labelled `other`.
 returns `traceparent` and `x-request-id`, and sends each provider attempt its own child span as
 `traceparent`. Each request log line has `requestId`, `traceId` and `spanId`, and attempt lines
 add `attemptSpanId`. The worker's `usage event stored` line has the same `traceId`, with the
-request's span as `parentSpanId`. Searching the logs for one `traceId` gives the whole path. There
-is no trace store or tracing SDK (ADR 017).
+request's span as `parentSpanId`. Searching the logs for one `traceId` gives the whole path.
+
+**Traces in Jaeger** ([ADR 037](docs/adr/037-opentelemetry-tracing.md), off unless
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set; the live demo keeps it off). With it set, the same IDs are
+exported as OpenTelemetry spans over OTLP/HTTP: one per /v1 request, a child per provider attempt
+(deployment, provider, model, outcome, upstream status), the cache lookup, waits for coalesced or
+Idempotency-Key answers, the idempotency database call, and the worker's `usage.ingest` span,
+which joins the request's trace through the usage event. Spans never hold prompt or answer text.
+
+```bash
+docker compose --profile tracing up -d jaeger
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 pnpm dev   # PowerShell: $env:OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'
+curl -s http://127.0.0.1:8080/v1/chat/completions -H "authorization: Bearer $GATEWAY_KEY" \
+  -H 'content-type: application/json' -d '{"model":"mock-1","messages":[{"role":"user","content":"hi"}]}'
+```
+
+Then open <http://127.0.0.1:16686>, pick the `ai-gateway` service and the request's trace
+(`traceparent` in the response names it): the request, its attempt and the worker's ingest are one
+trace. For the Compose stack, set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` in `.env` and
+start it with `--profile full --profile tracing`.
 
 The dashboard's Infrastructure page shows the pipeline state, dependency round trips and the
 answering gateway instance's own measurements, from the admin API. History is in Prometheus.

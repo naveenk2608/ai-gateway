@@ -1,12 +1,19 @@
 import {
+  childSpan,
   describeIssue,
-  newSpanId,
   usageEventSchema,
   uuidv7,
   type Clock,
+  type TraceContext,
   type UsageEvent,
 } from '@ai-gateway/shared';
-import type { Db, Logger, Redis } from '@ai-gateway/shared/node';
+import {
+  openSpan,
+  type Db,
+  type Logger,
+  type Redis,
+  type SpanHandle,
+} from '@ai-gateway/shared/node';
 import { ingestEvents } from './ingest.js';
 import type { WorkerMetrics } from './metrics.js';
 import type { DeadLetterAlerts } from './alerts/detect.js';
@@ -143,23 +150,59 @@ export function eventIdOf(raw: string | null): string | null {
 }
 
 /**
- * One line per stored event, in the request's trace (ADR 017): the batch insert is a child span
- * of each request that emitted an event.
+ * The batch insert as seen from each request's trace (ADR 017, ADR 037): one child span per event
+ * whose request had a trace, opened before the insert and ended after it, and one log line per
+ * stored event with that span's ID, so the worker's step joins the gateway's trace in the logs and,
+ * with tracing on, as an exported `usage.ingest` span.
  */
-export function logStored(logger: Logger, events: UsageEvent[]): void {
-  const spanId = newSpanId();
-  for (const event of events) {
-    logger.info(
-      {
-        requestId: event.request.id,
-        ...(event.trace
-          ? { traceId: event.trace.traceId, spanId, parentSpanId: event.trace.spanId }
-          : {}),
-      },
-      'usage event stored',
-    );
+export class IngestTrace {
+  readonly #items: { event: UsageEvent; span?: TraceContext; handle: SpanHandle }[];
+
+  constructor(events: UsageEvent[]) {
+    this.#items = events.map((event) => {
+      if (!event.trace) return { event, handle: UNTRACED };
+      const span = childSpan({
+        traceId: event.trace.traceId,
+        spanId: event.trace.spanId,
+        flags: '01',
+      });
+      const handle = openSpan('usage.ingest', span, {
+        kind: 'consumer',
+        remoteParent: true,
+        attributes: {
+          'gateway.request_id': event.request.id,
+          'gateway.endpoint': event.request.endpoint ?? 'chat',
+          'gateway.attempts': event.attempts.length,
+        },
+      });
+      return { event, span, handle };
+    });
+  }
+
+  /** The events are stored: ends their spans and logs one line each. */
+  stored(logger: Logger): void {
+    for (const { event, span, handle } of this.#items) {
+      handle.end();
+      logger.info(
+        {
+          requestId: event.request.id,
+          ...(span
+            ? { traceId: span.traceId, spanId: span.spanId, parentSpanId: span.parentSpanId }
+            : {}),
+        },
+        'usage event stored',
+      );
+    }
+  }
+
+  /** The insert failed: ends the spans as failed (the events are retried later). */
+  failed(): void {
+    for (const { handle } of this.#items) handle.end('ingest_failed');
   }
 }
+
+/** Events from requests without a trace (older gateways) get no span. */
+const UNTRACED: SpanHandle = { recording: false, set: () => undefined, end: () => undefined };
 
 /**
  * Consumes usage events from a Redis Stream consumer group (ADR 014):
@@ -344,6 +387,7 @@ export class UsageConsumer implements EventConsumer {
   async #insertAndAck(batch: Extract<Parsed, { ok: true }>[]): Promise<void> {
     const metrics = this.#o.metrics;
     const ids = batch.map((p) => p.entry.id);
+    const traced = new IngestTrace(batch.map((p) => p.event));
     await this.#retryWhileDbDown(ids, async () => {
       const started = performance.now();
       await this.#o.db.transaction().execute(async (trx) => {
@@ -356,16 +400,16 @@ export class UsageConsumer implements EventConsumer {
         this.#o.faults?.crash?.('before-commit');
       });
       metrics?.batch((performance.now() - started) / 1000);
+    }).catch((err: unknown) => {
+      traced.failed();
+      throw err;
     });
     this.#o.faults?.crash?.('after-commit');
     await this.#o.redis.call('XACK', this.#o.stream, this.#o.group, ...ids);
     for (const id of ids) this.#lastErrors.delete(id);
     this.#stats.processed += ids.length;
     this.#o.metrics?.consumed(ids.length);
-    logStored(
-      this.#o.logger,
-      batch.map((p) => p.event),
-    );
+    traced.stored(this.#o.logger);
   }
 
   /**

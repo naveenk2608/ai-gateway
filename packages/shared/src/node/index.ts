@@ -46,3 +46,15 @@ export {
   type AlertKind,
   type EnqueueAlert,
 } from './alerts.js';
+export {
+  initInMemoryTracing,
+  initTracing,
+  inSpan,
+  openSpan,
+  POSTGRES_SPAN,
+  shutdownTracing,
+  tracingEnabled,
+  type RecordedSpan,
+  type SpanHandle,
+  type TracingOptions,
+} from './tracing.js';

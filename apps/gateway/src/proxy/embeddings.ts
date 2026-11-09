@@ -1,3 +1,4 @@
+import { inSpan, POSTGRES_SPAN } from '@ai-gateway/shared/node';
 import { estimateTextTokens, type Clock } from '@ai-gateway/shared';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -346,14 +347,20 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
           };
           let claim: Claim;
           try {
-            claim = await idempotency.claim({
-              projectId: apiKey.projectId,
-              endpoint: 'embeddings',
-              key: idemKey,
-              fingerprint: requestFingerprint({ ...body, input }),
-              requestId: request.id,
-              deadlineMs: routing.deadlineMs,
-            });
+            claim = await inSpan(
+              'db.idempotency_claim',
+              trace.traceContext,
+              () =>
+                idempotency.claim({
+                  projectId: apiKey.projectId,
+                  endpoint: 'embeddings',
+                  key: idemKey,
+                  fingerprint: requestFingerprint({ ...body, input }),
+                  requestId: request.id,
+                  deadlineMs: routing.deadlineMs,
+                }),
+              POSTGRES_SPAN,
+            );
           } catch (err) {
             request.log.warn({ err }, 'idempotency key check failed');
             throw idempotencyUnavailable();
@@ -368,11 +375,13 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
             case 'wait': {
               let stored: StoredResponse;
               try {
-                stored = await follow(claim.flight, {
-                  clock,
-                  clientSignal: disconnect.signal,
-                  deadlineAt,
-                });
+                stored = await inSpan('coalesce.wait', trace.traceContext, () =>
+                  follow(claim.flight, {
+                    clock,
+                    clientSignal: disconnect.signal,
+                    deadlineAt,
+                  }),
+                );
               } catch (err) {
                 // Past this request's own deadline it stops waiting: the first still runs.
                 if (err instanceof ProviderError && err.kind === 'timeout') throw keyInProgress(1);
@@ -396,7 +405,11 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
             ? embeddingsCacheKey(apiKey.projectId, body.model, input, requested ?? null, encoding)
             : null;
         if (cache && key) {
-          const hit = await cache.getEmbeddings(key);
+          const hit = await inSpan('cache.lookup', trace.traceContext, async (span) => {
+            const found = await cache.getEmbeddings(key);
+            span.set({ 'gateway.cache_hit': found !== null });
+            return found;
+          });
           metrics?.cacheLookup(hit !== null);
           void reply.header(CACHE_HEADER, hit ? 'hit' : 'miss');
           if (hit && hit.data.length === input.length) {
@@ -418,11 +431,13 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
           void reply.header(CACHE_HEADER, 'coalesced');
           let shared: CachedEmbeddings;
           try {
-            shared = await follow(joined.flight, {
-              clock,
-              clientSignal: disconnect.signal,
-              deadlineAt,
-            });
+            shared = await inSpan('coalesce.wait', trace.traceContext, () =>
+              follow(joined.flight, {
+                clock,
+                clientSignal: disconnect.signal,
+                deadlineAt,
+              }),
+            );
           } catch (err) {
             throw upstreamFailure(err);
           }

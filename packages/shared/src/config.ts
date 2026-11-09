@@ -22,6 +22,12 @@ export const commonConfigShape = {
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   REDIS_URL: z.url({ protocol: /^rediss?$/ }),
   SHUTDOWN_TIMEOUT_MS: positiveIntMs.default(10_000),
+  /**
+   * OpenTelemetry tracing (M17, ADR 037): the OTLP/HTTP collector's base URL (spans go to
+   * `/v1/traces` under it, as the OTLP exporter specification defines). Unset: tracing is off and
+   * the SDK is not loaded.
+   */
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.url({ protocol: /^https?$/ }).optional(),
 };
 
 /** Prometheus metrics settings (ADR 017) for both processes; each adds its own METRICS_PORT. */
