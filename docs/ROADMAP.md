@@ -1086,6 +1086,59 @@ ADR 017 (which left it out for its memory and startup cost on the free host).
   retention…", and the related 2026-10-20 M2 partitioning row.
 - 2026-10-20 M10 "No pre-stop delay between SIGTERM and closing the listener…", on Kubernetes.
 
+### M17 plan (2026-11-10)
+
+Order A → E, small commits, CI checked after each push (a GitHub Actions outage that began
+2026-11-09 18:12 UTC is waited out and noted, not counted as a failure). Nothing is deployed to AWS
+and Terraform stays as it is. Versions, checked 2026-11-10 on each project's releases page and
+pinned exactly (with checksums where a binary is downloaded): kind v0.33.0 with its node image
+`kindest/node:v1.37.0@sha256:a1ed56cf…80ae5`, Helm v4.3.1, Prometheus v3.15.1 for `promtool`
+(3.16.0 is four days old), Jaeger 2.22.0, and the OpenTelemetry JS packages
+`@opentelemetry/api` 1.10.0, `sdk-trace` 3.1.1, `resources` 3.1.1, `exporter-trace-otlp-http`
+0.301.1 and `semantic-conventions` 1.45.0 (all Apache-2.0).
+
+**Part A — Helm chart** under `infra/helm/ai-gateway`: gateway and worker Deployments, a Service,
+the models file as a ConfigMap, Secrets referenced by name (never created with values), readiness
+(`/ready`) and liveness (`/health`) probes, an HPA on CPU, a PodDisruptionBudget, a preStop delay
+and a termination grace period longer than `SHUTDOWN_TIMEOUT_MS` plus that delay, requests and
+limits, a non-root, read-only root filesystem with dropped capabilities, and `values.schema.json`.
+CI: `helm lint`, a schema check of rendered manifests, and a job that creates a kind cluster,
+starts Postgres and Redis from test-only manifests, installs the chart with the mock provider,
+sends a chat request through the Service, waits for its usage row in Postgres, and deletes the
+cluster.
+
+**Part B — OpenTelemetry tracing**, off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set (Render keeps
+it off): a span per request with a child span per attempt (deployment, provider, outcome; never
+prompt text), and spans for the cache lookup, coalescing waits and the idempotency and usage
+database calls. The trace context already travels in usage events (ADR 017), so the worker's
+ingest span joins the request's trace. A client's W3C `traceparent` is accepted and returned (as
+today). A local Jaeger in `infra/compose` (profile `tracing`) with README steps. Tests with an
+in-memory exporter. A new ADR supersedes the "no tracing SDK" part of ADR 017.
+
+**Part C — SLOs**: availability (non-5xx share of /v1 requests) and latency (share of non-streamed
+requests under a threshold) SLOs with targets in `docs/slo.md`; Prometheus recording rules and
+multi-window, multi-burn-rate alerts as the Google SRE Workbook's "Alerting on SLOs" chapter
+describes (<https://sre.google/workbook/alerting-on-slos/>, checked 2026-11-10: page at 14.4x over
+1 h and 5 min or 6x over 6 h and 30 min; ticket at 3x over 24 h and 2 h or 1x over 3 days and
+6 h). `promtool check rules` and `promtool test rules` with unit tests run in CI.
+
+**Part D — partitions and retention.** Neon's Free plan holds 1 GB per project
+(<https://neon.com/pricing>, checked 2026-11-10), and `request_records`, `provider_attempts` and
+`usage_events` grow without limit. One migration (0017) converts them to monthly range partitions
+on the time each event carries (`started_at`, `started_at`, `occurred_at`), so a re-delivered
+event lands on the same key and `ON CONFLICT DO NOTHING` still drops it (ADR 014). It keeps the
+table names and columns, copies the existing rows, creates partitions from the oldest row's month
+to three months ahead plus a default partition (so an insert never fails), and recreates the
+rollup view. Unique keys gain the partition column; the foreign keys from attempts and usage rows
+to `request_records` cannot exist on partitioned tables and are dropped (nothing in the code
+relies on them; recorded). The previous version keeps working during a deploy: same names and
+columns, and its inserts use `ON CONFLICT DO NOTHING` without a target. Tested up and down in CI on
+a copy of the schema with sample rows. The worker creates upcoming partitions and drops ones older
+than `RAW_RETENTION_MONTHS` on a schedule (and deletes old rows from the default partition in
+batches); tests for both.
+
+**Part E — wrap-up**: README, ADRs (036 onward), PLAN-NOTES rows, ticked checks, the "M17 run" row.
+
 ## Stretch
 
 Pick one after M17:
