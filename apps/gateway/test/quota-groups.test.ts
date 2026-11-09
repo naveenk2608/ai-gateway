@@ -50,9 +50,19 @@ function members(): { chat: QuotaTarget; embed: QuotaTarget } {
   };
 }
 
+/**
+ * 10:00 UTC on the day after today. The script sets each counter's expiry with PEXPIREAT at the end
+ * of the clock's UTC day, which Redis compares with its own time, so the manual clock must not be
+ * behind the real one (a fixed past date made every counter expire at once).
+ */
+function tomorrowAt10(): number {
+  const day = 86_400_000;
+  return (Math.floor(Date.now() / day) + 1) * day + 10 * 3_600_000;
+}
+
 describe('quota groups', () => {
   it('stops every deployment of a group together when the shared allowance runs out', async () => {
-    const clock = new ManualClock(Date.UTC(2026, 10, 8, 10, 0, 0));
+    const clock = new ManualClock(tomorrowAt10());
     const quotas = board(clock);
     const { chat, embed } = members();
     // 1,000 input tokens and a 100,000-token output cap: ceil(24.545 + 7,727.3) = 7,752 neurons.
@@ -78,7 +88,7 @@ describe('quota groups', () => {
   });
 
   it('corrects a reservation to the tokens the try reported', async () => {
-    const clock = new ManualClock(Date.UTC(2026, 10, 8, 10, 0, 0));
+    const clock = new ManualClock(tomorrowAt10());
     const quotas = board(clock);
     const { chat, embed } = members();
     const first = await quotas.acquire(chat, { input: 1_000, output: 100_000 });
@@ -103,7 +113,7 @@ describe('quota groups', () => {
   });
 
   it('lets every deployment be tried when Redis does not answer', async () => {
-    const clock = new ManualClock(Date.UTC(2026, 10, 8, 10, 0, 0));
+    const clock = new ManualClock(tomorrowAt10());
     // Nothing listens on port 1; the client keeps no offline queue, so each call fails at once.
     const down = createRedis('redis://127.0.0.1:1', captureLogger().logger);
     down.on('error', () => undefined);
