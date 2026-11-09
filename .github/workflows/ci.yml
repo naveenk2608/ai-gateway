@@ -157,6 +157,64 @@ jobs:
           terraform -chdir=infra/terraform/full providers schema -json > "$RUNNER_TEMP/schema.json"
           node infra/terraform/scripts/check.mjs "$RUNNER_TEMP/schema.json"
 
+  helm:
+    name: Helm chart (lint, schema, install on kind, smoke test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      # Pinned releases, checked against the SHA-256 their projects publish (ADR 027):
+      # get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz.sha256sum and kind's kind-linux-amd64.sha256sum.
+      HELM_VERSION: v4.3.1
+      HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+      # kind v0.33.0's default node image, by digest (its release notes).
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Helm and kind
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/helm.tar.gz" "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_SHA256}  $RUNNER_TEMP/helm.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/helm.tar.gz" -C "$RUNNER_TEMP" linux-amd64/helm
+          curl -sSfL -o "$RUNNER_TEMP/kind" "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  $RUNNER_TEMP/kind" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/kind"
+          mkdir -p "$RUNNER_TEMP/bin"
+          mv "$RUNNER_TEMP/linux-amd64/helm" "$RUNNER_TEMP/kind" "$RUNNER_TEMP/bin/"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Lint, and check that values.schema.json refuses unsafe values
+        run: |
+          helm lint --strict infra/helm/ai-gateway
+          helm lint --strict infra/helm/ai-gateway -f infra/helm/ci/kind-values.yaml
+          for bad in securityContext.readOnlyRootFilesystem=false podSecurityContext.runAsNonRoot=false secretName=; do
+            if helm template x infra/helm/ai-gateway --set "$bad" >/dev/null 2>&1; then
+              echo "values.schema.json accepted $bad" >&2
+              exit 1
+            fi
+          done
+      - name: Build the gateway and worker images
+        run: |
+          docker build --target worker -t ai-gateway-worker:ci .
+          docker build --target gateway -t ai-gateway-gateway:ci .
+      - name: Create a throwaway kind cluster
+        run: |
+          kind create cluster --name ci --image "$KIND_NODE_IMAGE" --wait 120s
+          kind load docker-image --name ci ai-gateway-gateway:ci ai-gateway-worker:ci
+      - name: Install the chart and send a request through the Service
+        run: bash infra/helm/ci/smoke.sh
+      - name: Logs on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide || true
+          kubectl describe pods || true
+          kubectl logs deploy/gw-gateway --tail=200 || true
+      - name: Delete the cluster
+        if: always()
+        run: kind delete cluster --name ci || true
+
   gateway-image:
     name: Gateway image (SBOM and vulnerability scan)
     runs-on: ubuntu-24.04

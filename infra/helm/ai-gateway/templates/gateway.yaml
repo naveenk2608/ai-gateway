@@ -1,0 +1,147 @@
+{{- $name := include "ai-gateway.name" . -}}
+{{- $g := .Values.gateway -}}
+{{- /* SIGTERM comes after the preStop wait; the drain then takes up to shutdownTimeoutMs. */ -}}
+{{- $grace := add $g.preStopSeconds (div $g.shutdownTimeoutMs 1000) 10 -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-gateway
+  labels:
+    {{- include "ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  {{- if not $g.autoscaling.enabled }}
+  replicas: {{ $g.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ai-gateway.selector" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "ai-gateway.selector" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+      annotations:
+        # A changed models file rolls the pods.
+        checksum/models: {{ toJson .Values.models | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $grace }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.gateway.repository }}:{{ .Values.image.gateway.tag }}"
+          imagePullPolicy: {{ .Values.image.gateway.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $g.port }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretName }}
+          env:
+            - name: PORT
+              value: {{ $g.port | quote }}
+            - name: SHUTDOWN_TIMEOUT_MS
+              value: {{ $g.shutdownTimeoutMs | quote }}
+            - name: RUN_WORKER_IN_PROCESS
+              value: {{ ternary "false" "true" (eq (include "ai-gateway.separateWorker" .) "true") | quote }}
+            {{- include "ai-gateway.env" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "{{ $g.preStopSeconds }}"]
+          resources:
+            {{- toYaml $g.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /etc/ai-gateway
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: models
+          configMap:
+            name: {{ $name }}-models
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: {{ $g.service.type }}
+  selector:
+    {{- include "ai-gateway.selector" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+  ports:
+    - name: http
+      port: {{ $g.service.port }}
+      targetPort: http
+{{- if $g.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}-gateway
+  labels:
+    {{- include "ai-gateway.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}-gateway
+  minReplicas: {{ $g.autoscaling.minReplicas }}
+  maxReplicas: {{ $g.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $g.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- if $g.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-gateway
+  labels:
+    {{- include "ai-gateway.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ $g.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "ai-gateway.selector" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+{{- end }}

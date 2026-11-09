@@ -1,0 +1,76 @@
+{{- if eq (include "ai-gateway.separateWorker" .) "true" }}
+{{- $name := include "ai-gateway.name" . -}}
+{{- $w := .Values.worker -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-worker
+  labels:
+    {{- include "ai-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ $w.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ai-gateway.selector" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "ai-gateway.selector" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/models: {{ toJson .Values.models | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      # The consumer finishes its batch within SHUTDOWN_TIMEOUT_MS; what it leaves pending is
+      # claimed by the next worker (ADR 014).
+      terminationGracePeriodSeconds: {{ add (div $w.shutdownTimeoutMs 1000) 10 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.worker.repository }}:{{ .Values.image.worker.tag }}"
+          imagePullPolicy: {{ .Values.image.worker.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ $w.metricsPort }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretName }}
+          env:
+            - name: WORKER_METRICS_PORT
+              value: {{ $w.metricsPort | quote }}
+            - name: METRICS_HOST
+              value: 0.0.0.0
+            - name: SHUTDOWN_TIMEOUT_MS
+              value: {{ $w.shutdownTimeoutMs | quote }}
+            {{- include "ai-gateway.env" . | nindent 12 }}
+          # The worker serves only /metrics (which may need a token), so the probe connects.
+          livenessProbe:
+            tcpSocket:
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: metrics
+            periodSeconds: 10
+          resources:
+            {{- toYaml $w.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /etc/ai-gateway
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: models
+          configMap:
+            name: {{ $name }}-models
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+{{- end }}

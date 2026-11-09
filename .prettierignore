@@ -5,3 +5,5 @@ pnpm-lock.yaml
 *.md
 # Benchmark results are committed exactly as k6 and `pnpm bench` wrote them.
 bench/results/
+# Helm templates are Go templates, not plain YAML.
+infra/helm/ai-gateway/templates/

@@ -1287,6 +1287,35 @@ Then open the host's URL: it redirects to the dashboard (`/dashboard/`, built in
 the bootstrap owner logs in and the Playground chats through `/v1`. Or open `/docs`, **Authorize**
 with the key, and call `POST /v1/chat/completions`.
 
+## Deploying to Kubernetes
+
+[infra/helm/ai-gateway](infra/helm/ai-gateway) is a Helm chart
+([ADR 036](docs/adr/036-kubernetes-chart.md)), installed on a kind cluster on every push. It runs
+the gateway (Deployment, Service, CPU autoscaler, disruption budget) and, when a worker image is
+set, a separate worker; without one, the gateway runs the usage consumer in-process. Postgres and
+Redis come from your cluster, and the chart never creates secrets: make a Secret first.
+
+```bash
+kubectl create secret generic ai-gateway \
+  --from-literal=DATABASE_URL='postgres://user:password@postgres:5432/gateway' \
+  --from-literal=REDIS_URL='redis://redis:6379' \
+  --from-literal=API_KEY_PEPPER="$(openssl rand -hex 32)"
+helm install gw infra/helm/ai-gateway \
+  --set image.gateway.tag=<commit SHA> \
+  --set image.worker.repository=<your registry>/ai-gateway-worker --set image.worker.tag=<tag>
+```
+
+- The models file is the `models` value (the default serves only the mock); provider keys go in
+  the Secret under the names the file's `apiKeyEnv` gives.
+- Readiness is `/ready`, liveness `/health`. A preStop wait (`gateway.preStopSeconds`, 5 s) lets
+  the Service stop routing before SIGTERM, and the grace period covers that wait plus the drain
+  (`gateway.shutdownTimeoutMs`) plus 10 s.
+- Pods run as a non-root user with a read-only root filesystem and no capabilities;
+  `values.schema.json` refuses values that turn this off.
+- The worker image is the Dockerfile's `worker` target
+  (`docker build --target worker -t <registry>/ai-gateway-worker:<tag> .`); only the gateway
+  image is published.
+
 ## Deploying to AWS
 
 [docs/aws-deployment.md](docs/aws-deployment.md) has the architecture, what each resource does,

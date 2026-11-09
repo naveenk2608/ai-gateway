@@ -1,0 +1,24 @@
+# Chart values for the CI install on kind: images built in the job and loaded into the cluster,
+# one gateway replica (no metrics server for the HPA on kind), and the mock provider only.
+image:
+  gateway:
+    repository: ai-gateway-gateway
+    tag: ci
+    pullPolicy: Never
+  worker:
+    repository: ai-gateway-worker
+    tag: ci
+    pullPolicy: Never
+gateway:
+  replicas: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 1
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 0
+env:
+  # Plain HTTP inside the cluster.
+  SESSION_COOKIE_SECURE: 'false'

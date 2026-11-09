@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "ai-gateway chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "image",
+    "secretName",
+    "models",
+    "gateway",
+    "worker",
+    "podSecurityContext",
+    "securityContext"
+  ],
+  "definitions": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string" },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {
+          "type": "object",
+          "required": ["cpu", "memory"],
+          "properties": {
+            "cpu": { "type": ["string", "number"] },
+            "memory": { "type": "string" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "required": ["cpu", "memory"],
+          "properties": {
+            "cpu": { "type": ["string", "number"] },
+            "memory": { "type": "string" }
+          }
+        }
+      }
+    },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+  },
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gateway", "worker"],
+      "properties": {
+        "gateway": {
+          "allOf": [
+            { "$ref": "#/definitions/image" },
+            { "properties": { "repository": { "minLength": 1 }, "tag": { "minLength": 1 } } }
+          ]
+        },
+        "worker": { "$ref": "#/definitions/image" }
+      }
+    },
+    "secretName": {
+      "description": "An existing Secret with DATABASE_URL, REDIS_URL and API_KEY_PEPPER; never created by the chart.",
+      "type": "string",
+      "minLength": 1
+    },
+    "models": {
+      "description": "The models file (config/models.json's format).",
+      "type": "object",
+      "required": ["deployments", "models"],
+      "properties": {
+        "deployments": { "type": "object", "minProperties": 1 },
+        "models": { "type": "object", "minProperties": 1 }
+      }
+    },
+    "env": {
+      "description": "Extra non-secret settings as name: value.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replicas",
+        "port",
+        "shutdownTimeoutMs",
+        "preStopSeconds",
+        "resources",
+        "autoscaling",
+        "podDisruptionBudget",
+        "service"
+      ],
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 },
+        "port": { "$ref": "#/definitions/port" },
+        "shutdownTimeoutMs": { "type": "integer", "minimum": 1000 },
+        "preStopSeconds": { "type": "integer", "minimum": 0, "maximum": 120 },
+        "resources": { "$ref": "#/definitions/resources" },
+        "autoscaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "minReplicas", "maxReplicas", "targetCPUUtilizationPercentage"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minReplicas": { "type": "integer", "minimum": 1 },
+            "maxReplicas": { "type": "integer", "minimum": 1 },
+            "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        },
+        "podDisruptionBudget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "minAvailable"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minAvailable": { "type": ["integer", "string"] }
+          }
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "port"],
+          "properties": {
+            "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+            "port": { "$ref": "#/definitions/port" }
+          }
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "metricsPort", "shutdownTimeoutMs", "resources"],
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 },
+        "metricsPort": { "$ref": "#/definitions/port" },
+        "shutdownTimeoutMs": { "type": "integer", "minimum": 1000 },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "required": ["runAsNonRoot"],
+      "properties": { "runAsNonRoot": { "const": true } }
+    },
+    "securityContext": {
+      "type": "object",
+      "required": ["readOnlyRootFilesystem", "allowPrivilegeEscalation"],
+      "properties": {
+        "readOnlyRootFilesystem": { "const": true },
+        "allowPrivilegeEscalation": { "const": false }
+      }
+    }
+  }
+}

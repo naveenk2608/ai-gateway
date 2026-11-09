@@ -1,0 +1,10 @@
+apiVersion: v2
+name: ai-gateway
+description: >-
+  The AI gateway (OpenAI-compatible proxy, limits, budgets, routing and usage accounting) and its
+  usage worker. Postgres, Redis and the Secret holding their URLs and the API key pepper are
+  provided by the cluster; the chart never creates secret values.
+type: application
+version: 0.1.0
+appVersion: main
+kubeVersion: '>=1.29.0-0'

@@ -1,0 +1,89 @@
+# Values for the ai-gateway chart (M17, ADR 036). values.schema.json validates them.
+
+image:
+  gateway:
+    # The image CI publishes and signs (ADR 027). Pin a commit SHA tag in production.
+    repository: ghcr.io/naveenk2608/ai-gateway
+    tag: main
+    pullPolicy: IfNotPresent
+  worker:
+    # The Dockerfile's `worker` target; it is not published, so build and push it yourself.
+    # Leave empty to run the usage consumer inside the gateway (RUN_WORKER_IN_PROCESS).
+    repository: ''
+    tag: ''
+    pullPolicy: IfNotPresent
+
+# An existing Secret in the release's namespace, never created by this chart. Its keys become
+# environment variables: DATABASE_URL, REDIS_URL and API_KEY_PEPPER are required; provider keys
+# (GROQ_API_KEY, ...) and METRICS_TOKEN are optional.
+secretName: ai-gateway
+
+# The models file (config/models.json's format), mounted read-only and named by
+# MODELS_CONFIG_PATH. The default serves only the in-process mock.
+models:
+  deployments:
+    mock:
+      provider: mock
+      mock:
+        latencyMs: 50
+        completionTokens: 16
+  models:
+    mock-1:
+      deployment: mock
+
+# Extra non-secret settings for both processes (see .env.example), as name: "value".
+env: {}
+
+gateway:
+  replicas: 2
+  port: 8080
+  # How long the gateway drains in-flight requests on SIGTERM (SHUTDOWN_TIMEOUT_MS).
+  shutdownTimeoutMs: 10000
+  # Waited before SIGTERM, so endpoints stop routing to the pod first.
+  preStopSeconds: 5
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  service:
+    type: ClusterIP
+    port: 80
+
+worker:
+  replicas: 1
+  # The worker's metrics listener (WORKER_METRICS_PORT); its liveness probe connects to it.
+  metricsPort: 9465
+  shutdownTimeoutMs: 10000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  # The `node` user of the official Node.js images.
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
