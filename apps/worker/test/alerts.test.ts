@@ -112,6 +112,12 @@ describe('budget alerts', () => {
   });
 });
 
+/**
+ * The dispatcher tests' time: a year ago, so rows other test files queue (due at the real time)
+ * are never due for these dispatchers, and these tests send only their own.
+ */
+const LAST_YEAR = Date.now() - 365 * 24 * 3_600_000;
+
 describe('AlertDispatcher', () => {
   const settings: AlertSettings = {
     enabled: true,
@@ -125,7 +131,7 @@ describe('AlertDispatcher', () => {
   function dispatcher(
     transport: Transport,
     resolve: Resolver = publicHost,
-    clock = new ManualClock(Date.now()),
+    clock = new ManualClock(LAST_YEAR),
   ) {
     return {
       clock,
@@ -163,10 +169,17 @@ describe('AlertDispatcher', () => {
 
   it('retries a failed delivery after the first delay with jitter, then delivers it', async () => {
     const projectId = await createProject(db);
-    const destinationId = await destination(projectId, ['budget']);
+    const path = `/retry-${randomBytes(4).toString('hex')}`;
+    const destinationId = await destination(
+      projectId,
+      ['budget'],
+      `https://hooks.example.com${path}`,
+    );
     const answers = [500, 204];
     const sent: { address: string; body: string }[] = [];
     const { clock, dispatcher: d } = dispatcher((target, body) => {
+      // Other tests' queued deliveries share the table: answer them, count only this one's.
+      if (target.url.pathname !== path) return Promise.resolve({ status: 204 });
       sent.push({ address: target.address, body });
       return Promise.resolve({ status: answers.shift()! });
     });
@@ -207,14 +220,18 @@ describe('AlertDispatcher', () => {
 
   it('never sends to a refused address, and fails such a delivery at once', async () => {
     const projectId = await createProject(db);
-    const destinationId = await destination(projectId, ['budget']);
+    const host = `refused-${randomBytes(4).toString('hex')}.example.com`;
+    const destinationId = await destination(projectId, ['budget'], `https://${host}/x`);
     let calls = 0;
     const { clock, dispatcher: d } = dispatcher(
-      () => {
-        calls++;
-        return Promise.resolve({ status: 200 });
+      (target) => {
+        if (target.url.hostname === host || target.url.protocol !== 'https:') calls++;
+        return Promise.resolve({ status: 204 });
       },
-      () => Promise.resolve([{ address: '169.254.169.254', family: 4 }]),
+      (name) =>
+        Promise.resolve([
+          { address: name === host ? '169.254.169.254' : '93.184.215.14', family: 4 },
+        ]),
     );
     const id = await queued(projectId, destinationId, clock.now());
     await d.runOnce();
@@ -236,7 +253,7 @@ describe('AlertDispatcher', () => {
     const projectId = await createProject(db);
     const destinationId = await destination(projectId, ['budget']);
     const other = alertsKey({ ALERTS_ENCRYPTION_KEY: randomBytes(32).toString('base64') })!;
-    const clock = new ManualClock(Date.now());
+    const clock = new ManualClock(LAST_YEAR);
     const d = new AlertDispatcher(settings, {
       db,
       clock,

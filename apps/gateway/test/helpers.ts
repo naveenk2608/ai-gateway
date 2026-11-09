@@ -37,6 +37,9 @@ export function testConfig(overrides: Record<string, string | undefined> = {}): 
     // Every test logs in, and sends unknown keys, from 127.0.0.1, across files running at once.
     LOGIN_ATTEMPTS_PER_MINUTE_PER_IP: '100000',
     UNKNOWN_KEYS_PER_MINUTE_PER_IP: '100000',
+    // Test files share one database: an in-process worker with alerts on would claim and send
+    // another file's queued alerts. Tests of alerts turn them on (ADR 033).
+    ALERTS_ENABLED: 'false',
     ...overrides,
   });
 }

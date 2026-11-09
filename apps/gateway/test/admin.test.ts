@@ -31,7 +31,14 @@ let db: Db;
 const routes: string[] = [];
 
 function start(overrides: Record<string, string> = {}) {
-  return createGateway(testConfig(overrides), captureLogger().logger, { models, clock });
+  return createGateway(
+    testConfig({ ALERTS_ENABLED: 'true', ...overrides }),
+    captureLogger().logger,
+    {
+      models,
+      clock,
+    },
+  );
 }
 
 beforeAll(async () => {

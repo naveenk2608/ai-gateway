@@ -12,7 +12,9 @@ let url: string;
 
 beforeAll(async () => {
   // The in-process worker stays off: these tests look at what is queued, not at sending.
-  gateway = createGateway(testConfig(), captureLogger().logger, { models: noModels });
+  gateway = createGateway(testConfig({ ALERTS_ENABLED: 'true' }), captureLogger().logger, {
+    models: noModels,
+  });
   await gateway.start();
   url = `http://127.0.0.1:${(gateway.app.server.address() as AddressInfo).port}`;
 });
