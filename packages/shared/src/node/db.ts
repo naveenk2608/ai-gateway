@@ -44,6 +44,8 @@ export interface ProjectsTable {
   max_request_cost_micro_usd: number | null;
   /** From this share of the monthly budget (percent), routing goes cheapest first. */
   budget_soft_threshold_pct: Generated<number>;
+  /** The project's guardrail policy (M16, migration 0016); `{}` means no checks. */
+  guardrails: JsonWithDefault;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
@@ -284,6 +286,18 @@ export interface RouteOverridesTable {
   created_at: CreatedAt;
 }
 
+/** What one request's guardrail checks found and did (M16, migration 0016): never values. */
+export interface GuardrailResultsTable {
+  id: string;
+  request_id: string;
+  project_id: string;
+  stage: 'input' | 'output';
+  check: string;
+  findings: number;
+  action: 'mask' | 'block' | 'flag' | 'retry' | 'fail' | 'none';
+  created_at: Timestamp;
+}
+
 export interface FailedEventsTable {
   id: string;
   stream: string;
@@ -347,6 +361,7 @@ export interface Database {
   alert_destinations: AlertDestinationsTable;
   alert_deliveries: AlertDeliveriesTable;
   route_overrides: RouteOverridesTable;
+  guardrail_results: GuardrailResultsTable;
   idempotency_keys: IdempotencyKeysTable;
   usage_rollups_minute: UsageRollupsTable;
   usage_rollups_hour: UsageRollupsTable;

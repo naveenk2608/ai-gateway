@@ -1,5 +1,6 @@
 import type { Clock } from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
+import { parseGuardrailPolicy, type GuardrailPolicy } from '../guardrails/policy.js';
 import type { UsagePolicy } from '../limits/policy.js';
 import { parseApiKey, secretMatches } from './api-keys.js';
 import type { UnknownKeyGuard } from './unknown-keys.js';
@@ -13,6 +14,8 @@ export interface AuthenticatedKey {
   allowedModels: readonly string[] | null;
   /** Rate, token and concurrency limits of the key and project, and the project's budget. */
   policy: UsagePolicy;
+  /** The project's guardrails (ADR 035); absent means none. */
+  guardrails?: GuardrailPolicy | undefined;
 }
 
 /** `limited`: the client IP sent too many unknown key IDs, so this one was not looked up. */
@@ -33,6 +36,7 @@ export interface KeyRecord {
   revokedAt: number | null;
   allowedModels: readonly string[] | null;
   policy: UsagePolicy;
+  guardrails?: GuardrailPolicy | undefined;
 }
 
 export type KeyLoader = (keyId: string) => Promise<KeyRecord | null>;
@@ -103,6 +107,7 @@ export class KeyVerifier {
         projectId: record.projectId,
         allowedModels: record.allowedModels,
         policy: record.policy,
+        guardrails: record.guardrails,
       },
     };
   }
@@ -221,6 +226,7 @@ export function databaseKeyLoader(db: Db): KeyLoader {
         'projects.monthly_budget_micro_usd',
         'projects.max_request_cost_micro_usd',
         'projects.budget_soft_threshold_pct',
+        'projects.guardrails',
       ])
       .where('api_keys.key_id', '=', keyId)
       .executeTakeFirst();
@@ -233,6 +239,7 @@ export function databaseKeyLoader(db: Db): KeyLoader {
       expiresAt: row.expires_at?.getTime() ?? null,
       revokedAt: row.revoked_at?.getTime() ?? null,
       allowedModels: row.allowed_models,
+      guardrails: parseGuardrailPolicy(row.guardrails),
       policy: {
         key: { rpm: row.rpm_limit, tpm: row.tpm_limit, concurrency: row.concurrency_limit },
         project: {

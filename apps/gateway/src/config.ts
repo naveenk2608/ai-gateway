@@ -136,6 +136,11 @@ export const gatewayConfigSchema = z
      * and all of them every ROUTE_OVERRIDES_REFRESH_MS, in case a message was lost.
      */
     ROUTE_OVERRIDES_ENABLED: flag.default(true),
+    /**
+     * Guardrails (M16, ADR 035): each project's checks before and after the model. Every check is
+     * off until a project admin turns it on; false skips them for every project.
+     */
+    GUARDRAILS_ENABLED: flag.default(true),
     ROUTE_OVERRIDES_REFRESH_MS: z.coerce.number().int().min(500).max(3_600_000).default(30_000),
     /**
      * M15: without new samples, estimates move toward PEAK_EWMA_DEFAULT_MS instead of toward zero

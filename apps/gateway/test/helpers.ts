@@ -1,3 +1,4 @@
+import type { GuardrailPolicy } from '../src/guardrails/policy.js';
 import { randomBytes } from 'node:crypto';
 import { Writable } from 'node:stream';
 import {
@@ -109,6 +110,8 @@ export function inMemoryVerifier(clock: Clock = systemClock, policy: UsagePolicy
     revokedAt: null,
     allowedModels: null,
     policy,
+    /** Set by guardrail tests (ADR 035); the loader reads it on every request. */
+    guardrails: undefined as GuardrailPolicy | undefined,
   };
   const verifier = new KeyVerifier({
     load: (keyId) => Promise.resolve(keyId === key.keyId ? record : null),

@@ -47,6 +47,15 @@ import {
   type StoredResponse,
 } from './idempotency.js';
 import { estimateChatPromptTokens } from './estimate.js';
+import { checksOutput } from '../guardrails/policy.js';
+import {
+  answerMatchesFormat,
+  blockingError,
+  Findings,
+  scanAnswer,
+  scanChatInput,
+  scanStream,
+} from '../guardrails/scan.js';
 import {
   chatCompletionRequestSchema,
   chatCompletionSchema,
@@ -82,6 +91,8 @@ export interface ChatRouteOptions {
   idempotency?: IdempotencyGate | null;
   /** Per-project route overrides (ADR 034); without them, the models file's routes. */
   routeOverrides?: RouteOverrides | null;
+  /** Each project's guardrails run (GUARDRAILS_ENABLED, ADR 035). */
+  guardrailsEnabled?: boolean;
   /** Records each finished request (attempts, routing, latency, tokens). */
   metrics?: GatewayMetrics;
 }
@@ -95,6 +106,22 @@ interface ResponseMeta {
 const internalError = new GatewayError('internal_error', 'Internal server error', {
   httpStatus: 500,
 });
+
+/** A prompt above the project's cap (ADR 035): refused before any provider call. */
+export const promptTooLarge = (estimated: number, cap: number) =>
+  new GatewayError(
+    'guardrail_prompt_too_large',
+    `The prompt is about ${estimated} tokens; this project's guardrails allow at most ${cap}.`,
+    { httpStatus: 400 },
+  );
+
+/** A JSON answer that failed its schema, also on the next deployment (ADR 035). */
+const outputFailed = () =>
+  new GatewayError(
+    'guardrail_output_failed',
+    "The model's answer did not match the requested JSON format, also after a retry.",
+    { httpStatus: 502 },
+  );
 
 /** What an Idempotency-Key keeps of a chat answer (ADR 032): the response's ID and the answer. */
 const storedChatSchema = z.object({
@@ -371,6 +398,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
     coalescer = null,
     idempotency = null,
     routeOverrides = null,
+    guardrailsEnabled = false,
     metrics,
   } = options;
   app.decorateRequest('apiKey', null);
@@ -410,10 +438,11 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
       },
     },
     async (request, reply) => {
-      const body = request.body;
+      // Replaced by the masked request when this project's guardrails mask a value (ADR 035).
+      let body = request.body;
       const apiKey = request.apiKey;
       if (!apiKey) throw internalError; // The onRequest hook guarantees it.
-      const base = toBaseRequest(body);
+      let base = toBaseRequest(body);
       const trace = new RequestTrace(
         {
           requestId: request.id,
@@ -489,6 +518,24 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
       /** The request holding its Idempotency-Key, which completes it with the answer or fails it. */
       let lead: IdempotentLead | undefined;
       try {
+        // Guardrails before the model (ADR 035): after authentication and admission, and before
+        // the idempotency fingerprint, the cache key, coalescing and routing, so nothing stored
+        // or sent upstream holds a value this project masks.
+        const guard = guardrailsEnabled ? apiKey.guardrails : undefined;
+        const findings = new Findings();
+        trace.guardrails = findings;
+        if (guard) {
+          const cap = guard.maxPromptTokens;
+          if (cap !== null && trace.estimatedPromptTokens > cap) {
+            findings.add('input', 'prompt_size', 'block');
+            throw promptTooLarge(trace.estimatedPromptTokens, cap);
+          }
+          body = scanChatInput(body, guard, findings);
+          const refusal = blockingError(findings);
+          if (refusal) throw refusal;
+          base = toBaseRequest(body);
+        }
+        const outputGuard = guard && checksOutput(guard) ? guard : undefined;
         const meta: ResponseMeta = {
           id: `chatcmpl-${request.id}`,
           created: Math.floor(clock.now() / 1000),
@@ -502,6 +549,10 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           trace.setUsage(answer.usage);
           trace.addCompletionText(answer.content);
           limitHeaders();
+          return respond(answer, m);
+        };
+        /** The answer as JSON, or replayed as a stream when the client asked for one. */
+        const respond = (answer: ChatResult, m: ResponseMeta = meta) => {
           if (body.stream !== true) return toChatCompletion(m, answer);
           const write = chunkWriter(m, body.stream_options?.include_usage === true);
           const chunks = [
@@ -660,9 +711,61 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         const callSignal = flight?.signal ?? (lead ? new AbortController().signal : undefined);
         const call = callSignal ? { ...routed, clientSignal: callSignal } : routed;
 
-        if (body.stream !== true) {
+        /**
+         * Checks after the model (ADR 035): a JSON answer against its schema (flag, or retry once
+         * on the route's next deployment, then 502), then the detectors' masks.
+         */
+        const checkAnswer = async (first: ChatResult, plain: typeof call): Promise<ChatResult> => {
+          if (!outputGuard) return first;
+          let answer = first;
+          const schema = outputGuard.output.schema;
+          if (schema !== 'off' && !answerMatchesFormat(body.response_format, answer)) {
+            if (schema === 'flag') {
+              findings.add('output', 'schema', 'flag');
+            } else {
+              findings.add('output', 'schema', 'retry');
+              const tried = served?.deployment.id;
+              const rest = route.targets.filter((t) => t.deployment.id !== tried);
+              if (rest.length === 0) {
+                findings.add('output', 'schema', 'fail');
+                throw outputFailed();
+              }
+              answer = await runRouted(
+                routing,
+                { ...plain, route: { ...route, targets: rest }, unfit: undefined },
+                (ctx) => runChat(ctx, requestFor(ctx)),
+              );
+              if (!answerMatchesFormat(body.response_format, answer)) {
+                findings.add('output', 'schema', 'fail');
+                throw outputFailed();
+              }
+            }
+          }
+          return scanAnswer(answer, outputGuard, findings);
+        };
+        /** A streamed answer's schema, checked when the stream has ended: recorded only. */
+        const flagSchema = (answer: ChatResult) => {
+          if (outputGuard && outputGuard.output.schema !== 'off') {
+            if (!answerMatchesFormat(body.response_format, answer)) {
+              findings.add('output', 'schema', 'flag');
+            }
+          }
+        };
+        // A streamed request whose schema check may retry needs the whole answer before its first
+        // byte: it is called without streaming and replayed as a stream (ADR 035).
+        const wholeAnswer =
+          body.stream !== true ||
+          (outputGuard?.output.schema === 'retry' &&
+            (body.response_format?.type === 'json_schema' ||
+              body.response_format?.type === 'json_object'));
+
+        if (wholeAnswer) {
+          const plain = body.stream === true ? { ...call, stream: false } : call;
           try {
-            const result = await runRouted(routing, call, (ctx) => runChat(ctx, requestFor(ctx)));
+            const result = await checkAnswer(
+              await runRouted(routing, plain, (ctx) => runChat(ctx, requestFor(ctx))),
+              plain,
+            );
             flight?.resolve(result);
             routingHeaders(reply, served);
             limitHeaders();
@@ -680,7 +783,8 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
               trace.setError('client_closed_request');
               emit(trace, 499);
             }
-            return toChatCompletion(meta, result);
+            if (body.stream === true) trace.markFirstToken();
+            return respond(result);
           } catch (err) {
             flight?.reject(err);
             throw upstreamFailure(err);
@@ -697,6 +801,14 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           leaveFlight?.();
           throw upstreamFailure(err);
         }
+        // Answers are scanned as they stream, holding back what a match could still need, so
+        // followers, the cache and the stored answer get the masked text too (ADR 035).
+        if (outputGuard) stream = scanStream(stream, outputGuard, findings);
+        /** The whole streamed answer: its schema flagged, then cached. */
+        const answered = (result: ChatResult) => {
+          flagSchema(result);
+          store?.(result);
+        };
         // Followers get the whole answer; a leader whose client leaves is read to the end for
         // them, or for its Idempotency-Key, and its record waits for that (ADR 031, ADR 032).
         const holder = lead;
@@ -704,7 +816,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           flight || holder
             ? shareStream(stream, flight, trace, {
                 onAnswer: (result) => {
-                  store?.(result);
+                  answered(result);
                   void keep(result);
                 },
                 onFailure: (err) => void holder?.fail(err),
@@ -735,7 +847,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           else done();
         };
         const sse = Readable.from(
-          sseBody(stream, write, request.log, trace, onEnd, shared ? undefined : store),
+          sseBody(stream, write, request.log, trace, onEnd, shared ? undefined : answered),
           { objectMode: false },
         );
         streamOwnsSettlement = true;

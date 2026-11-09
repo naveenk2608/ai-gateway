@@ -391,6 +391,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       coalescer,
       idempotency,
       routeOverrides,
+      guardrailsEnabled: config.GUARDRAILS_ENABLED,
       metrics,
     });
     registerEmbeddings(instance, {
@@ -404,6 +405,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       coalescer,
       idempotency,
       routeOverrides,
+      guardrailsEnabled: config.GUARDRAILS_ENABLED,
       metrics,
     });
     registerModels(instance, { registry, verifier, clock });

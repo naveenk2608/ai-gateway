@@ -91,6 +91,21 @@ export const usageEventSchema = z.object({
    */
   replayed: z.boolean().optional(),
   /**
+   * What the request's guardrail checks found and did (M16, ADR 035): per stage, check and
+   * action, a count. Never a value. Older events have none.
+   */
+  guardrails: z
+    .array(
+      z.object({
+        stage: z.enum(['input', 'output']),
+        check: z.string().min(1).max(40),
+        count,
+        action: z.enum(['mask', 'block', 'flag', 'retry', 'fail', 'none']),
+      }),
+    )
+    .max(40)
+    .optional(),
+  /**
    * The gateway request's W3C trace and span IDs (ADR 017), so the worker's log line for this
    * event joins the same trace. Older events have none.
    */

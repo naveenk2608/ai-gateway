@@ -117,6 +117,9 @@ importers:
       '@node-rs/argon2':
         specifier: 2.2.2
         version: 2.2.2
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       fastify:
         specifier: 5.12.7
         version: 5.12.7

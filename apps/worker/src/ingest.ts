@@ -123,6 +123,30 @@ export async function ingestEvents(
     .onConflict((oc) => oc.doNothing())
     .returning('id')
     .execute();
+  // Guardrail findings (ADR 035): types, counts and actions, for requests inserted now.
+  const insertedIds = new Set(insertedRequests.map((r) => r.id));
+  const guardrails = events.flatMap((event) =>
+    insertedIds.has(event.request.id)
+      ? (event.guardrails ?? []).map((g) => ({
+          id: uuidv7(Date.parse(event.request.startedAt)),
+          request_id: event.request.id,
+          project_id: event.request.projectId,
+          stage: g.stage,
+          check: g.check,
+          findings: g.count,
+          action: g.action,
+          created_at: event.request.startedAt,
+        }))
+      : [],
+  );
+  if (guardrails.length > 0) {
+    await trx
+      .insertInto('guardrail_results')
+      .values(guardrails)
+      .onConflict((oc) => oc.constraint('guardrail_results_once').doNothing())
+      .execute();
+  }
+
   const attempts = events.flatMap((event) =>
     event.attempts.map((a) => ({
       id: a.id,

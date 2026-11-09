@@ -9,6 +9,9 @@ import {
 } from '@ai-gateway/shared';
 import { messageText, type ChatMessage, type Usage } from '../providers/types.js';
 
+/** What a guardrail check did (ADR 035). */
+type GuardrailAction = 'mask' | 'block' | 'flag' | 'retry' | 'fail' | 'none';
+
 export interface TraceStart {
   requestId: string;
   projectId: string;
@@ -60,6 +63,10 @@ export class RequestTrace {
    * no attempts of its own, and no cost, like a cache hit.
    */
   replayed = false;
+  /** What the guardrail checks found and did (ADR 035): types and counts only. */
+  guardrails: {
+    list(): { stage: 'input' | 'output'; check: string; count: number; action: GuardrailAction }[];
+  } | null = null;
   #finished = false;
   /** Set once the SSE body owns the response; the stream then finishes the trace itself. */
   streaming = false;
@@ -167,6 +174,9 @@ export class RequestTrace {
       ...(this.cacheHit ? { cacheHit: true } : {}),
       ...(this.coalesced ? { coalesced: true } : {}),
       ...(this.replayed ? { replayed: true } : {}),
+      ...((this.guardrails?.list().length ?? 0) > 0
+        ? { guardrails: this.guardrails!.list().slice(0, 40) }
+        : {}),
       ...(this.#start.traceContext
         ? {
             trace: {

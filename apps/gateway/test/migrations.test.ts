@@ -16,6 +16,7 @@ const TABLES = [
   'budget_periods',
   'budget_reservations',
   'failed_events',
+  'guardrail_results',
   'idempotency_keys',
   'model_deployments',
   'model_prices',
@@ -52,6 +53,7 @@ const MIGRATIONS = [
   '0013_idempotency-keys',
   '0014_alerts',
   '0015_route-overrides',
+  '0016_guardrails',
 ];
 
 /** A throwaway database, so migrations run from scratch. */

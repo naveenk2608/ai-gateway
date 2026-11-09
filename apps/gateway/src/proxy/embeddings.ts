@@ -21,7 +21,8 @@ import type { Usage } from '../providers/types.js';
 import type { RouteOverrides } from '../routing/overrides.js';
 import { runRouted, type RoutingDeps } from '../routing/routed.js';
 import { runEmbed, type AttemptContext } from './attempt.js';
-import { upstreamFailure, watchDisconnect } from './chat-completions.js';
+import { promptTooLarge, upstreamFailure, watchDisconnect } from './chat-completions.js';
+import { blockingError, Findings, scanEmbeddingsInput } from '../guardrails/scan.js';
 import { follow, type Coalescer } from './coalesce.js';
 import {
   answerNotStored,
@@ -109,6 +110,8 @@ export interface EmbeddingsRouteOptions {
   idempotency?: IdempotencyGate | null;
   /** Per-project route overrides (ADR 034); without them, the models file's routes. */
   routeOverrides?: RouteOverrides | null;
+  /** Each project's guardrails run (GUARDRAILS_ENABLED, ADR 035). */
+  guardrailsEnabled?: boolean;
   metrics?: GatewayMetrics;
 }
 
@@ -139,6 +142,7 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
     coalescer = null,
     idempotency = null,
     routeOverrides = null,
+    guardrailsEnabled = false,
     metrics,
   } = options;
   /** Hands the finished trace to the event bus, once (a second call does nothing). */
@@ -186,7 +190,8 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
       if (!apiKey) {
         throw new GatewayError('internal_error', 'Internal server error', { httpStatus: 500 });
       }
-      const input = typeof body.input === 'string' ? [body.input] : body.input;
+      // Replaced by the masked input when this project's guardrails mask a value (ADR 035).
+      let input = typeof body.input === 'string' ? [body.input] : body.input;
       const trace = new RequestTrace(
         {
           requestId: request.id,
@@ -287,6 +292,20 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
       /** The request holding its Idempotency-Key, which completes it with the answer or fails it. */
       let lead: IdempotentLead | undefined;
       try {
+        // Guardrails before the model (ADR 035), before the fingerprint, cache key and routing.
+        const guard = guardrailsEnabled ? apiKey.guardrails : undefined;
+        const findings = new Findings();
+        trace.guardrails = findings;
+        if (guard) {
+          const cap = guard.maxPromptTokens;
+          if (cap !== null && trace.estimatedPromptTokens > cap) {
+            findings.add('input', 'prompt_size', 'block');
+            throw promptTooLarge(trace.estimatedPromptTokens, cap);
+          }
+          input = scanEmbeddingsInput(input, guard, findings);
+          const refusal = blockingError(findings);
+          if (refusal) throw refusal;
+        }
         const encoding = body.encoding_format ?? 'float';
         const deadlineAt =
           routing.deadlineMs === undefined ? undefined : trace.startedAt + routing.deadlineMs;
@@ -331,7 +350,7 @@ export function registerEmbeddings(app: FastifyInstance, options: EmbeddingsRout
               projectId: apiKey.projectId,
               endpoint: 'embeddings',
               key: idemKey,
-              fingerprint: requestFingerprint(body),
+              fingerprint: requestFingerprint({ ...body, input }),
               requestId: request.id,
               deadlineMs: routing.deadlineMs,
             });
