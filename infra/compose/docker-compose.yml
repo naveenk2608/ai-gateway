@@ -145,11 +145,12 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      # A day of history, capped in size: enough to watch a demo or a test run.
-      - --storage.tsdb.retention.time=1d
+      # Three days of history, capped in size: the longest SLO alert window (docs/slo.md).
+      - --storage.tsdb.retention.time=3d
       - --storage.tsdb.retention.size=256MB
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/rules:/etc/prometheus/rules:ro
     ports:
       - 127.0.0.1:${PROMETHEUS_PORT:-9090}:9090
     mem_limit: 256m

@@ -118,6 +118,15 @@ jobs:
           docker run --rm --entrypoint promtool
           -v "$PWD/infra/compose/observability:/etc/prometheus:ro"
           prom/prometheus:v3.15.0 check config /etc/prometheus/prometheus.yml
+      # The SLO rules (docs/slo.md, ADR 038): valid, and their unit tests pass.
+      - run: >-
+          docker run --rm --entrypoint promtool -w /rules
+          -v "$PWD/infra/compose/observability/rules:/rules:ro"
+          prom/prometheus:v3.15.0 check rules slo.yml
+      - run: >-
+          docker run --rm --entrypoint promtool -w /rules
+          -v "$PWD/infra/compose/observability/rules:/rules:ro"
+          prom/prometheus:v3.15.0 test rules slo_test.yml
       - run: docker compose --profile full build
 
   terraform:

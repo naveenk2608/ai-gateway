@@ -1220,6 +1220,12 @@ start it with `--profile full --profile tracing`.
 The dashboard's Infrastructure page shows the pipeline state, dependency round trips and the
 answering gateway instance's own measurements, from the admin API. History is in Prometheus.
 
+**SLOs and alerts** ([docs/slo.md](docs/slo.md), [ADR 038](docs/adr/038-slo-burn-rate-alerts.md)): 99.5% of /v1 requests
+without a 5xx, and 95% of streams with a first token within 5 s, over 30 days. The Compose
+Prometheus loads recording rules and multiwindow, multi-burn-rate alerts (page and ticket, as the
+SRE Workbook describes); CI checks them with promtool check rules and their unit tests with
+promtool test rules.
+
 ## Benchmarks
 
 [docs/benchmarks.md](docs/benchmarks.md) has the gateway's added latency, time to first token and

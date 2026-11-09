@@ -1,0 +1,112 @@
+# promtool unit tests for slo.yml (M17): `promtool test rules slo_test.yml`.
+rule_files:
+  - slo.yml
+
+evaluation_interval: 1m
+
+tests:
+  # 100 requests a minute, 10% of them 5xx: past 14.4x the budget (7.2%) on both the 1 h and 5 min
+  # windows once an hour has gone by: a page (and, over a day and 2 h, a ticket too).
+  - interval: 1m
+    input_series:
+      - series: 'gateway_http_request_duration_seconds_count{method="POST",route="/v1/chat/completions",status_code="200"}'
+        values: '0+90x200'
+      - series: 'gateway_http_request_duration_seconds_count{method="POST",route="/v1/chat/completions",status_code="502"}'
+        values: '0+10x200'
+      # Not /v1: never counted.
+      - series: 'gateway_http_request_duration_seconds_count{method="GET",route="/ready",status_code="503"}'
+        values: '0+1000x200'
+    promql_expr_test:
+      - expr: round(slo:gateway_v1_errors:ratio_rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 0.1
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: GatewayAvailabilityBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              slo: availability
+            exp_annotations:
+              summary: The /v1 error budget is burning fast
+              description: >-
+                5xx answers are using the 30-day availability budget (99.5%) at 6 to 14.4 times the
+                sustainable rate or more. See docs/slo.md.
+
+  # 2% of requests fail for a day: above 3x the budget (1.5%) on the 1 d and 2 h windows, below
+  # 6x (3%): a ticket, no page.
+  - interval: 5m
+    input_series:
+      - series: 'gateway_http_request_duration_seconds_count{method="POST",route="/v1/embeddings",status_code="200"}'
+        values: '0+490x300'
+      - series: 'gateway_http_request_duration_seconds_count{method="POST",route="/v1/embeddings",status_code="503"}'
+        values: '0+10x300'
+    alert_rule_test:
+      - eval_time: 24h
+        alertname: GatewayAvailabilityBudgetBurn
+        exp_alerts: []
+      - eval_time: 24h
+        alertname: GatewayAvailabilityBudgetBurnSlow
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              slo: availability
+            exp_annotations:
+              summary: The /v1 error budget is burning
+              description: >-
+                5xx answers are using the 30-day availability budget (99.5%) faster than it lasts.
+                See docs/slo.md.
+
+  # A healthy day: 0.1% errors and every stream fast. Nothing fires.
+  - interval: 5m
+    input_series:
+      - series: 'gateway_http_request_duration_seconds_count{method="POST",route="/v1/chat/completions",status_code="200"}'
+        values: '0+999x300'
+      - series: 'gateway_http_request_duration_seconds_count{method="POST",route="/v1/chat/completions",status_code="502"}'
+        values: '0+1x300'
+      - series: 'gateway_ttft_seconds_bucket{deployment="groq",le="5"}'
+        values: '0+100x300'
+      - series: 'gateway_ttft_seconds_count{deployment="groq"}'
+        values: '0+100x300'
+    alert_rule_test:
+      - eval_time: 24h
+        alertname: GatewayAvailabilityBudgetBurn
+        exp_alerts: []
+      - eval_time: 24h
+        alertname: GatewayAvailabilityBudgetBurnSlow
+        exp_alerts: []
+      - eval_time: 24h
+        alertname: GatewayLatencyBudgetBurn
+        exp_alerts: []
+      - eval_time: 24h
+        alertname: GatewayLatencyBudgetBurnSlow
+        exp_alerts: []
+
+  # Half of all streams take more than 5 s to their first token: past 6x the latency budget (30%)
+  # on the 6 h and 30 min windows, below 14.4x (72%): a page.
+  - interval: 5m
+    input_series:
+      - series: 'gateway_ttft_seconds_bucket{deployment="gemini",le="5"}'
+        values: '0+50x100'
+      - series: 'gateway_ttft_seconds_count{deployment="gemini"}'
+        values: '0+100x100'
+    promql_expr_test:
+      - expr: round(slo:gateway_ttft_slow:ratio_rate30m, 0.001)
+        eval_time: 2h
+        exp_samples:
+          - labels: '{}'
+            value: 0.5
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: GatewayLatencyBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              slo: latency
+            exp_annotations:
+              summary: The time-to-first-token budget is burning fast
+              description: >-
+                Streams slower than 5 s to their first token are using the 30-day latency budget
+                (95%) at 6 to 14.4 times the sustainable rate or more. See docs/slo.md.

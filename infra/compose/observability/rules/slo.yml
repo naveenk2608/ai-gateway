@@ -1,0 +1,157 @@
+# Service level objectives (M17, docs/slo.md, ADR 038): recording rules for the error and slow
+# ratios over the windows the alerts need, and multiwindow, multi-burn-rate alerts as the Google
+# SRE Workbook's "Alerting on SLOs" chapter describes them (https://sre.google/workbook/alerting-on-slos/,
+# checked 2026-11-10): page at 14.4x the budget rate over 1 h and 5 min, or 6x over 6 h and 30 min;
+# ticket at 3x over 1 d and 2 h, or 1x over 3 d and 6 h.
+#
+# Availability SLO: 99.5% of /v1 requests are answered without a 5xx (budget 0.005).
+# Latency SLO: 95% of streamed chat requests get their first token within 5 s (budget 0.05).
+groups:
+  - name: slo-availability-ratios
+    rules:
+      - record: slo:gateway_v1_errors:ratio_rate5m
+        expr: |
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+",status_code=~"5.."}[5m]))
+          /
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+"}[5m]))
+      - record: slo:gateway_v1_errors:ratio_rate30m
+        expr: |
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+",status_code=~"5.."}[30m]))
+          /
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+"}[30m]))
+      - record: slo:gateway_v1_errors:ratio_rate1h
+        expr: |
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+",status_code=~"5.."}[1h]))
+          /
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+"}[1h]))
+      - record: slo:gateway_v1_errors:ratio_rate2h
+        expr: |
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+",status_code=~"5.."}[2h]))
+          /
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+"}[2h]))
+      - record: slo:gateway_v1_errors:ratio_rate6h
+        expr: |
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+",status_code=~"5.."}[6h]))
+          /
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+"}[6h]))
+      - record: slo:gateway_v1_errors:ratio_rate1d
+        expr: |
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+",status_code=~"5.."}[1d]))
+          /
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+"}[1d]))
+      - record: slo:gateway_v1_errors:ratio_rate3d
+        expr: |
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+",status_code=~"5.."}[3d]))
+          /
+          sum(rate(gateway_http_request_duration_seconds_count{route=~"/v1/.+"}[3d]))
+
+  - name: slo-latency-ratios
+    rules:
+      - record: slo:gateway_ttft_slow:ratio_rate5m
+        expr: |
+          1 - sum(rate(gateway_ttft_seconds_bucket{le="5"}[5m])) / sum(rate(gateway_ttft_seconds_count[5m]))
+      - record: slo:gateway_ttft_slow:ratio_rate30m
+        expr: |
+          1 - sum(rate(gateway_ttft_seconds_bucket{le="5"}[30m])) / sum(rate(gateway_ttft_seconds_count[30m]))
+      - record: slo:gateway_ttft_slow:ratio_rate1h
+        expr: |
+          1 - sum(rate(gateway_ttft_seconds_bucket{le="5"}[1h])) / sum(rate(gateway_ttft_seconds_count[1h]))
+      - record: slo:gateway_ttft_slow:ratio_rate2h
+        expr: |
+          1 - sum(rate(gateway_ttft_seconds_bucket{le="5"}[2h])) / sum(rate(gateway_ttft_seconds_count[2h]))
+      - record: slo:gateway_ttft_slow:ratio_rate6h
+        expr: |
+          1 - sum(rate(gateway_ttft_seconds_bucket{le="5"}[6h])) / sum(rate(gateway_ttft_seconds_count[6h]))
+      - record: slo:gateway_ttft_slow:ratio_rate1d
+        expr: |
+          1 - sum(rate(gateway_ttft_seconds_bucket{le="5"}[1d])) / sum(rate(gateway_ttft_seconds_count[1d]))
+      - record: slo:gateway_ttft_slow:ratio_rate3d
+        expr: |
+          1 - sum(rate(gateway_ttft_seconds_bucket{le="5"}[3d])) / sum(rate(gateway_ttft_seconds_count[3d]))
+
+  - name: slo-alerts
+    rules:
+      - alert: GatewayAvailabilityBudgetBurn
+        expr: |
+          (
+            slo:gateway_v1_errors:ratio_rate1h > (14.4 * 0.005)
+            and
+            slo:gateway_v1_errors:ratio_rate5m > (14.4 * 0.005)
+          )
+          or
+          (
+            slo:gateway_v1_errors:ratio_rate6h > (6 * 0.005)
+            and
+            slo:gateway_v1_errors:ratio_rate30m > (6 * 0.005)
+          )
+        labels:
+          severity: page
+          slo: availability
+        annotations:
+          summary: The /v1 error budget is burning fast
+          description: >-
+            5xx answers are using the 30-day availability budget (99.5%) at 6 to 14.4 times the
+            sustainable rate or more. See docs/slo.md.
+      - alert: GatewayAvailabilityBudgetBurnSlow
+        expr: |
+          (
+            slo:gateway_v1_errors:ratio_rate1d > (3 * 0.005)
+            and
+            slo:gateway_v1_errors:ratio_rate2h > (3 * 0.005)
+          )
+          or
+          (
+            slo:gateway_v1_errors:ratio_rate3d > 0.005
+            and
+            slo:gateway_v1_errors:ratio_rate6h > 0.005
+          )
+        labels:
+          severity: ticket
+          slo: availability
+        annotations:
+          summary: The /v1 error budget is burning
+          description: >-
+            5xx answers are using the 30-day availability budget (99.5%) faster than it lasts.
+            See docs/slo.md.
+      - alert: GatewayLatencyBudgetBurn
+        expr: |
+          (
+            slo:gateway_ttft_slow:ratio_rate1h > (14.4 * 0.05)
+            and
+            slo:gateway_ttft_slow:ratio_rate5m > (14.4 * 0.05)
+          )
+          or
+          (
+            slo:gateway_ttft_slow:ratio_rate6h > (6 * 0.05)
+            and
+            slo:gateway_ttft_slow:ratio_rate30m > (6 * 0.05)
+          )
+        labels:
+          severity: page
+          slo: latency
+        annotations:
+          summary: The time-to-first-token budget is burning fast
+          description: >-
+            Streams slower than 5 s to their first token are using the 30-day latency budget
+            (95%) at 6 to 14.4 times the sustainable rate or more. See docs/slo.md.
+      - alert: GatewayLatencyBudgetBurnSlow
+        expr: |
+          (
+            slo:gateway_ttft_slow:ratio_rate1d > (3 * 0.05)
+            and
+            slo:gateway_ttft_slow:ratio_rate2h > (3 * 0.05)
+          )
+          or
+          (
+            slo:gateway_ttft_slow:ratio_rate3d > 0.05
+            and
+            slo:gateway_ttft_slow:ratio_rate6h > 0.05
+          )
+        labels:
+          severity: ticket
+          slo: latency
+        annotations:
+          summary: The time-to-first-token budget is burning
+          description: >-
+            Streams slower than 5 s to their first token are using the 30-day latency budget
+            (95%) faster than it lasts. See docs/slo.md.
