@@ -31,7 +31,9 @@ try {
 }
 
 // Off unless OTEL_EXPORTER_OTLP_ENDPOINT is set (ADR 037); the in-process worker shares it.
-if (await initTracing({ serviceName: 'ai-gateway', endpoint: config.OTEL_EXPORTER_OTLP_ENDPOINT })) {
+if (
+  await initTracing({ serviceName: 'ai-gateway', endpoint: config.OTEL_EXPORTER_OTLP_ENDPOINT })
+) {
   logger.info('tracing on: spans go to the OTLP endpoint');
 }
 const gateway = createGateway(config, logger, { models, dashboard });
