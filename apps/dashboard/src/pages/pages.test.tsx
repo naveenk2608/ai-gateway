@@ -74,6 +74,17 @@ function stubApi(
   return fetchMock;
 }
 
+/**
+ * The comparison table's row for a model, once it has loaded. The route editor's model picker on
+ * the same page shows model names too, so the row is the one inside a table cell.
+ */
+const comparisonRow = (model: string) =>
+  waitFor(() => {
+    const cell = screen.getAllByText(model).find((e) => e.closest('td'));
+    if (!cell) throw new Error(`no table row for ${model} yet`);
+    return cell.closest('tr')!;
+  });
+
 function show(page: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={client}>{page}</QueryClientProvider>);
@@ -102,7 +113,7 @@ const pages: { name: string; page: () => ReactElement; empty: RegExp; data: RegE
   },
   {
     name: 'Models',
-    page: () => <Models projectId={PROJECT_ID} filters={filters} />,
+    page: () => <Models projectId={PROJECT_ID} role="owner" filters={filters} />,
     empty: /No requests reached a model/,
     data: /say nothing about the\s+quality/,
   },
@@ -397,7 +408,7 @@ describe('Cost page', () => {
 });
 
 describe('Models page', () => {
-  const page = () => <Models projectId={PROJECT_ID} filters={filters} />;
+  const page = () => <Models projectId={PROJECT_ID} role="owner" filters={filters} />;
 
   it('keeps the note that speed and cost say nothing about answer quality', async () => {
     stubApi('data');
@@ -412,12 +423,12 @@ describe('Models page', () => {
     expect(
       await screen.findByRole('figure', { name: 'Latency p50 and p95 per model and deployment' }),
     ).toBeTruthy();
-    const row = (await screen.findByText('mock-1')).closest('tr')!;
+    const row = await comparisonRow('mock-1');
     for (const value of ['420 ms', '2.10 s', '150 ms / 600 ms', '42.5', '7.3%', '0.02']) {
       expect(within(row).getByText(value)).toBeTruthy();
     }
     // The rejected-only row (no deployment) is not compared.
-    expect(screen.getAllByRole('row')).toHaveLength(2);
+    expect(within(row.closest('table')!).getAllByRole('row')).toHaveLength(2);
   });
 
   it('shows each deployment with its breaker state and uptime as not measured', async () => {
@@ -561,6 +572,62 @@ describe('Infrastructure KPI cards', () => {
     expect(await screen.findByText('Queue length')).toBeTruthy();
     expect(screen.queryByText('Stream length')).toBeNull();
     expect(screen.getByText('not reported by SQS')).toBeTruthy();
+  });
+});
+
+describe('Route editor on the Models page', () => {
+  it("starts from the project's override, and saves a reordered route as a new version", async () => {
+    const responses = sampleResponses('owner');
+    const sent: { method: string; path: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(input as string, 'http://dashboard.test').pathname;
+        if (init?.method && init.method !== 'GET') {
+          sent.push({
+            method: init.method,
+            path,
+            body: JSON.parse((init.body as string) ?? 'null'),
+          });
+          return Promise.resolve(Response.json({ version: 3, route: null }));
+        }
+        return Promise.resolve(Response.json(responses[path] ?? {}));
+      }),
+    );
+    show(<Models projectId={PROJECT_ID} role="admin" filters={filters} />);
+    const form = await screen.findByRole('form', { name: 'Route of chat-pair' });
+    expect(screen.getByText(/Overridden for this project \(version 2,/)).toBeTruthy();
+    expect(within(form).getByLabelText<HTMLSelectElement>('Policy').value).toBe('weighted');
+    fireEvent.click(within(form).getByRole('button', { name: 'Move groq-fast up' }));
+    fireEvent.click(within(form).getByRole('button', { name: 'Save as a new version' }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({
+      method: 'PUT',
+      path: `/admin/projects/${PROJECT_ID}/routes/chat-pair`,
+      body: {
+        policy: 'weighted',
+        targets: [
+          { deployment: 'groq-fast', weight: 1, lastResort: false },
+          { deployment: 'gemini-lite', weight: 3, lastResort: false },
+        ],
+      },
+    });
+    expect(await screen.findByText('rollback to 1', { exact: false }).catch(() => null)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to the models file' }));
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1]).toMatchObject({
+      method: 'POST',
+      path: `/admin/projects/${PROJECT_ID}/routes/chat-pair/reset`,
+    });
+  });
+
+  it('is read-only for viewers', async () => {
+    stubApi('data', 'viewer');
+    show(<Models projectId={PROJECT_ID} role="viewer" filters={filters} />);
+    const form = await screen.findByRole('form', { name: 'Route of chat-pair' });
+    expect(within(form).getByText('Only admins change routing.')).toBeTruthy();
+    expect(within(form).queryByRole('button', { name: 'Save as a new version' })).toBeNull();
+    expect(within(form).getByLabelText<HTMLSelectElement>('Policy').disabled).toBe(true);
   });
 });
 
@@ -848,8 +915,8 @@ describe('provider badges', () => {
 
   it('show the provider on the models table and on each deployment card', async () => {
     stubApi('data');
-    show(<Models projectId={PROJECT_ID} filters={filters} />);
-    const row = (await screen.findByText('mock-1')).closest('tr')!;
+    show(<Models projectId={PROJECT_ID} role="owner" filters={filters} />);
+    const row = await comparisonRow('mock-1');
     await waitFor(() => expect(badge(row, 'Mock')).toHaveLength(1));
     const hosted = await screen.findByRole('group', { name: 'hosted-small' });
     expect(badge(hosted, 'OpenAI-compatible')).toHaveLength(1);

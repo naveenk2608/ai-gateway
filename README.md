@@ -517,6 +517,18 @@ A target marked `"lastResort": true` is tried only after every other target, in 
 under any policy: the mock in `chat-fast`, `chat-cheap` and `chat-variety` never wins on latency,
 price or weight, but answers when no provider key is set.
 
+**Routing per project, from the dashboard** ([ADR 034](docs/adr/034-route-overrides.md)): a
+project admin can override a model's route for their project on the **Models** page: its policy
+and its targets' order, weights and last-resort flags, using only the deployments the models file
+lists for that model. Each save is a new version (with who and when); the history can roll back to
+any version, and **Reset to the models file** returns to the file's route. Every change is audited.
+Each gateway instance applies a change within seconds (a message on the Redis invalidation channel)
+and also reloads every `ROUTE_OVERRIDES_REFRESH_MS` (30 s) in case a message is lost; with Postgres
+down at start, the file's routes apply until the overrides load. Viewers see the editor read-only.
+`ROUTE_OVERRIDES_ENABLED=false` makes every project use the models file. The admin API:
+`GET /admin/projects/:projectId/routes`, `GET .../routes/:model/history`, `PUT .../routes/:model`,
+`POST .../routes/:model/rollback` (`{"version": n}`) and `POST .../routes/:model/reset`.
+
 - **Peak EWMA** (ADR 030): `peak_ewma` keeps, per deployment and instance, a latency estimate
   that jumps to a slower sample at once and drifts down toward faster ones over
   `PEAK_EWMA_DECAY_MS` (10 s, Finagle's default), separately for streams (time to first token) and
@@ -1272,7 +1284,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Secrets and first run | `API_KEY_PEPPER` (required), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_API_KEY` |
 | Event bus | `EVENT_BUS` (`redis` or `sqs`), `SQS_QUEUE_URL`, `SQS_DLQ_URL`, `AWS_REGION`, `SQS_ENDPOINT` (LocalStack only), `EVENTS_*`, `WORKER_*` |
 | Limits and budgets | `LIMITS_FAIL_MODE`, `LIMITS_LEASE_TTL_MS`, `BUDGET_SWEEP_INTERVAL_MS`, `LOGIN_ATTEMPTS_PER_MINUTE*`, `UNKNOWN_KEYS_PER_MINUTE_PER_IP`, `UNKNOWN_KEY_CACHE_MS` |
-| Routing | `RETRY_*` (with `RETRY_BUDGET_*`), `PEAK_EWMA_*`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
+| Routing | `RETRY_*` (with `RETRY_BUDGET_*`), `PEAK_EWMA_*`, `ROUTE_OVERRIDES_ENABLED`, `ROUTE_OVERRIDES_REFRESH_MS`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
 | Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `CACHE_MEMORY_GUARD_ENABLED`, `CACHE_MEMORY_CHECK_INTERVAL_MS`, `CACHE_MAX_MEMORY_SHARE`, `CACHE_MAX_MEMORY_BYTES`, `COALESCE_ENABLED`, `IDEMPOTENCY_ENABLED`, `IDEMPOTENCY_KEY_TTL_HOURS`, `IDEMPOTENCY_LOCK_MS`, `IDEMPOTENCY_MAX_BODY_BYTES` |
 | Alerts | `ALERTS_ENABLED`, `ALERTS_ENCRYPTION_KEY`, `ALERTS_POLL_INTERVAL_MS`, `ALERTS_MAX_ATTEMPTS`, `ALERTS_SEND_TIMEOUT_MS`, `ALERTS_BREAKER_INTERVAL_MS`, `ALERTS_DEAD_LETTER_INTERVAL_MS`, `ALERTS_DELIVERY_RETENTION_DAYS` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |

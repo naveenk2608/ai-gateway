@@ -259,6 +259,7 @@ export function emptyResponses(role: Role): Responses {
     '/v1/models': { object: 'list', data: [] },
     [`/admin/projects/${PROJECT_ID}/members`]: { data: [] },
     [`/admin/projects/${PROJECT_ID}/alerts`]: { enabled: true, destinations: [], deliveries: [] },
+    [`/admin/projects/${PROJECT_ID}/routes`]: { enabled: true, models: [] },
     '/admin/models': { deployments: [], models: [] },
     '/admin/models/quotas': { deployments: [] } satisfies QuotaUsageResponse,
     '/admin/analytics/cost-comparison': {
@@ -360,6 +361,10 @@ export function emptyResponses(role: Role): Responses {
   };
 }
 
+/** The two deployments of `chat-pair`, a route the sample project overrides (ADR 034). */
+const pairA = { deployment: 'groq-fast', weight: 1, lastResort: false };
+const pairB = { deployment: 'gemini-lite', weight: 1, lastResort: false };
+
 /** Responses by path for a project with traffic. */
 export function sampleResponses(role: Role): Responses {
   const wave = (i: number) => Math.round(4 + 3 * Math.sin(i / 6));
@@ -400,6 +405,50 @@ export function sampleResponses(role: Role): Responses {
       ],
     },
     '/admin/models': catalog,
+    // chat-pair overridden for this project: its second deployment moved first.
+    [`/admin/projects/${PROJECT_ID}/routes`]: {
+      enabled: true,
+      models: [
+        {
+          name: 'chat-pair',
+          file: { policy: 'priority', targets: [pairA, pairB] },
+          override: {
+            version: 2,
+            route: { policy: 'weighted', targets: [{ ...pairB, weight: 3 }, pairA] },
+            createdAt: '2026-10-20T22:00:00.000Z',
+          },
+        },
+        {
+          name: 'mock-1',
+          file: {
+            policy: 'priority',
+            targets: [{ deployment: 'mock', weight: 1, lastResort: false }],
+          },
+          override: null,
+        },
+      ],
+    },
+    [`/admin/projects/${PROJECT_ID}/routes/chat-pair/history`]: {
+      model: 'chat-pair',
+      versions: [
+        {
+          version: 2,
+          action: 'change',
+          route: { policy: 'weighted', targets: [{ ...pairB, weight: 3 }, pairA] },
+          rolledBackTo: null,
+          createdAt: '2026-10-20T22:00:00.000Z',
+          createdBy: 'owner@example.test',
+        },
+        {
+          version: 1,
+          action: 'change',
+          route: { policy: 'priority', targets: [pairB, pairA] },
+          rolledBackTo: null,
+          createdAt: '2026-10-20T21:00:00.000Z',
+          createdBy: 'owner@example.test',
+        },
+      ],
+    },
     // The mock with a daily quota of 1,000 requests, three quarters used; mock-error cooling down.
     '/admin/models/quotas': {
       deployments: [

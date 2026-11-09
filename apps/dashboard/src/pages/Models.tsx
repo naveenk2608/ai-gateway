@@ -8,6 +8,7 @@ import {
   type ModelsResponse,
   type QuotaUsageResponse,
   type ReliabilityResponse,
+  type Role,
 } from '../api.js';
 import { CategoryBarChart } from '../charts/CategoryBarChart.js';
 import { TONES } from '../charts/theme.js';
@@ -16,6 +17,7 @@ import { ModelLabel, ProviderBadge } from '../ui/ProviderBadge.js';
 import { familyOnHost, identifyProvider, useProviderOf } from '../ui/providers.js';
 import { Meter } from '../ui/Meter.js';
 import { QueryCard } from '../ui/QueryCard.js';
+import { RouteEditor } from './RouteEditor.js';
 
 type Row = ModelsResponse['data'][number] & { deployment: string };
 
@@ -173,7 +175,15 @@ function DeploymentModel({ deployment: d }: { deployment: ModelCatalog['deployme
   );
 }
 
-export function Models({ projectId, filters }: { projectId: string; filters: AnalyticsFilters }) {
+export function Models({
+  projectId,
+  role,
+  filters,
+}: {
+  projectId: string;
+  role: Role;
+  filters: AnalyticsFilters;
+}) {
   const models = useQuery({
     queryKey: ['models', projectId, filters],
     queryFn: ({ signal }) =>
@@ -240,6 +250,12 @@ export function Models({ projectId, filters }: { projectId: string; filters: Ana
       >
         {(data) => <ComparisonTable rows={routed(data)} />}
       </QueryCard>
+      <section className="card" aria-label="Routing for this project">
+        <div className="card-header">
+          <h2>Routing for this project</h2>
+        </div>
+        <RouteEditor projectId={projectId} role={role} />
+      </section>
       {/* Every configured deployment with its breaker state across gateway instances. */}
       <QueryCard
         title="Deployments"

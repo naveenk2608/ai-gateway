@@ -81,7 +81,9 @@ function Dashboard({ me }: { me: Me }) {
             />
           )}
           {page === 'cost' && <Cost projectId={project.id} filters={filters} />}
-          {page === 'models' && <Models projectId={project.id} filters={filters} />}
+          {page === 'models' && (
+            <Models projectId={project.id} role={project.role} filters={filters} />
+          )}
           {page === 'reliability' && <Reliability projectId={project.id} filters={filters} />}
           {page === 'security' && <Security projectId={project.id} filters={filters} />}
           {page === 'infra' && <Infrastructure projectId={project.id} filters={filters} />}

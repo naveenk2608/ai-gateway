@@ -385,7 +385,7 @@ export class ApiError extends Error {
 }
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
   /** Lets the call finish after the page is gone (revoking a key when the tab closes). */
@@ -459,5 +459,42 @@ export interface Alerts {
     createdAt: string;
     deliveredAt: string | null;
     nextAttemptAt: string | null;
+  }[];
+}
+
+/** Routing policies, as the models file names them. */
+export const ROUTING_POLICIES = [
+  'priority',
+  'weighted',
+  'lowest_latency',
+  'cost_aware',
+  'peak_ewma',
+] as const;
+
+/** A route: its policy and targets in order (ADR 034). */
+export interface RouteSpec {
+  policy: (typeof ROUTING_POLICIES)[number];
+  targets: { deployment: string; weight: number; lastResort: boolean }[];
+}
+
+export interface ProjectRoutes {
+  /** False when the gateway has route overrides off. */
+  enabled: boolean;
+  models: {
+    name: string;
+    file: RouteSpec;
+    override: { version: number; route: RouteSpec; createdAt: string } | null;
+  }[];
+}
+
+export interface RouteHistory {
+  model: string;
+  versions: {
+    version: number;
+    action: 'change' | 'rollback' | 'reset';
+    route: RouteSpec | null;
+    rolledBackTo: number | null;
+    createdAt: string;
+    createdBy: string | null;
   }[];
 }

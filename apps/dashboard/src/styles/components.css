@@ -1438,3 +1438,24 @@ button.small-button {
     grid-template-columns: 1fr;
   }
 }
+
+/* The route editor on the Models page (ADR 034). */
+.route-editor {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.route-editor input[type='number'] {
+  width: 5rem;
+}
+
+.route-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 20rem;
+  margin-bottom: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
