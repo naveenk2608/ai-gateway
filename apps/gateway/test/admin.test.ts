@@ -239,6 +239,20 @@ describe('project isolation', () => {
         'POST /admin/projects/:projectId/routes/:model/reset',
         `/admin/projects/${t.b}/routes/mock-a/reset`,
       ],
+      ['GET /admin/projects/:projectId/guardrails', `/admin/projects/${t.b}/guardrails`],
+      [
+        'PUT /admin/projects/:projectId/guardrails',
+        `/admin/projects/${t.b}/guardrails`,
+        { input: { email: 'mask' } },
+      ],
+      [
+        'GET /admin/projects/:projectId/guardrails/results',
+        `/admin/projects/${t.b}/guardrails/results`,
+      ],
+      [
+        'GET /admin/projects/:projectId/guardrails/summary',
+        `/admin/projects/${t.b}/guardrails/summary`,
+      ],
     ];
 
     // The table covers every registered route that takes a project.
@@ -404,6 +418,11 @@ describe('roles', () => {
       [
         'POST /admin/projects/:projectId/routes/:model/reset',
         `/admin/projects/${p}/routes/mock-a/reset`,
+      ],
+      [
+        'PUT /admin/projects/:projectId/guardrails',
+        `/admin/projects/${p}/guardrails`,
+        { input: { email: 'mask' } },
       ],
     ];
     // The table covers every registered route that changes a project.
@@ -606,6 +625,12 @@ describe('audit log', () => {
       'POST /admin/projects/:projectId/routes/:model/reset',
       `/admin/projects/${p}/routes/mock-a/reset`,
       'route.reset',
+    );
+    await run(
+      'PUT /admin/projects/:projectId/guardrails',
+      `/admin/projects/${p}/guardrails`,
+      'project.guardrails',
+      { input: { email: 'mask' } },
     );
     // Session mutations are audited without a project.
     const second = await api('POST', '/admin/auth/login', undefined, {

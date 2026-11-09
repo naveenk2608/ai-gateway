@@ -437,6 +437,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       quotas: quotaUsage,
       alerts: { enabled: config.ALERTS_ENABLED, key: alertKey },
       routeOverrides,
+      guardrailsEnabled: config.GUARDRAILS_ENABLED,
     }),
   );
 

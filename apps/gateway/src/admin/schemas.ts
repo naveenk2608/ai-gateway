@@ -28,6 +28,8 @@ export interface AdminDeps {
   alerts?: { enabled: boolean; key: Buffer | null };
   /** Per-project route overrides (ADR 034), reloaded on this instance after a change. */
   routeOverrides?: RouteOverrides;
+  /** GUARDRAILS_ENABLED (ADR 035). */
+  guardrailsEnabled?: boolean;
 }
 
 export const roleSchema = z.enum(['owner', 'admin', 'viewer']);
