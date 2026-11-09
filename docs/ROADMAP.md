@@ -988,6 +988,69 @@ answers that break their schema, and every action taken is recorded.
 **ADR to write.** Guardrails on streamed answers: how the after-model checks apply when part of
 the answer has already been sent.
 
+### M16 plan (2026-11-09)
+
+Order A → F, small commits, CI checked after each push, three fixes then revert. Every check is off
+until a project admin turns it on; `GUARDRAILS_ENABLED` (true) switches the feature off for every
+project. Nothing found is ever logged or stored: only types, counts and actions. Formats and their
+sources, checked 2026-11-09 (where an official page could not be read, the safest pattern is used
+and the decision is recorded in PLAN-NOTES):
+
+- Aadhaar: UIDAI, "Your Aadhaar" (<https://uidai.gov.in/en/your-aadhaar>): "a 12-digit random
+  number"; UIDAI's developer documentation (its Data and Downloads section) asks applications to
+  check that a number is 12 digits and conforms to the Verhoeff algorithm (that page itself could
+  not be fetched). Detected: 12 digits, optionally grouped 4-4-4, passing Verhoeff.
+- PAN: Income Tax Department (<https://www.incometaxindia.gov.in/w/how-pan-is-formed-and-how-it-gets-its-unique-identity->,
+  403 to the fetcher; its summary in search results): ten characters, the fourth the holder's
+  status (P individual, C company). Detected: five letters, four digits, a letter, as one word.
+- Indian mobile numbers: the Department of Telecommunications' National Numbering Plan 2003 (a
+  10-digit national significant number for cellular service; the plan's PDF refused connections)
+  with mobile series starting 6 to 9 (TRAI's 2025 numbering recommendations and secondary sources).
+  Detected: 10 digits starting 6-9, optionally after +91, 91 or 0, with one optional space or
+  hyphen. E.164 (ITU-T E.164, edition 02/2026, <https://www.itu.int/rec/T-REC-E.164>): `+` and a
+  number of at most 15 digits; detected from 8 digits on, so short codes are not matched.
+- Payment cards: ISO/IEC 7812-1 (12 to 19 digits with a Luhn check digit; iso.org answered 403).
+  Detected: 12 to 19 digits, optionally in groups split by single spaces or hyphens, passing Luhn.
+- Email: the WHATWG HTML Standard's "valid email address"
+  (<https://html.spec.whatwg.org/multipage/input.html#valid-e-mail-address>), with at least one dot
+  in the domain so that text like `a@b` is not matched.
+
+**Part A — checks before the model.** A project's policy is a new `projects.guardrails` column
+(jsonb, default `{}`, migration 0016), loaded with the API key like the allow-list and reloaded on
+the existing invalidation message. Detectors (email, phone, card, Aadhaar, PAN) each `off`, `mask`
+(a typed placeholder such as `[EMAIL]`), `block` (400 `guardrail_blocked`, naming the type, never
+the value) or `flag` (recorded only); blocked words and phrases (case-insensitive, whole words) with
+`block` or `flag`; a cap on estimated prompt tokens (400 `guardrail_prompt_too_large`). The checks
+cover every text a provider would see: message text in every role, tool results, earlier tool-call
+arguments and embeddings input; images are not read, only counted. They run after authentication
+and admission, and before the idempotency fingerprint, the cache key, coalescing and routing, so
+nothing stored holds an unmasked value. Admin API and a settings form on the Security page.
+
+**Part B — checks after the model.** For `json_schema` requests the answer is validated against the
+schema with Ajv (8.20.0, MIT, already in the lockfile through Fastify); for `json_object` it must
+parse. Per project: `off`, `flag`, or `retry` (once, on the route's next deployment, then 502
+`guardrail_output_failed`). The detectors run on answers with `flag` or `mask`. Streams: masking
+holds back the last characters a match could still need (the longest possible match), so a value
+split across chunks is still masked; a streamed request whose policy needs the whole answer (a
+schema check with `retry`) is called upstream without streaming and replayed as a stream, as cache
+hits are. ADR 035.
+
+**Part C — records.** Each check that found something, or acted, travels in the usage event and
+the worker writes it to a new table `guardrail_results` (request, stage, check, count, action;
+migration 0016). The Security page lists flagged and blocked requests with filters; the Overview
+page shows their counts.
+
+**Part D — tests and latency.** Masked values never reach the provider (asserted on the body the
+mock received) for each detector, with valid and invalid checksums; block and flag; blocked words;
+the prompt cap; a schema failure retried; a match split across two stream chunks still masked; the
+cache never stores an unmasked value. A script measures the detectors on a large prompt; its output
+goes in the ADR.
+
+**Part E — live checks** with `DEMO_BASE_URL` and `DEMO_API_KEY` if this session may use them;
+otherwise the commands, in "M16 real-provider checks".
+
+**Part F — wrap-up.** README, ADR 035, PLAN-NOTES rows, ticked checks, the "M16 run" row.
+
 ## M17 — Cloud and operations
 
 **Goal.** The gateway runs on Kubernetes from a chart CI has tested, one request can be followed
