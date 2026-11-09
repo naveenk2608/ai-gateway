@@ -849,6 +849,110 @@ a provider fails, and routing changes without a redeploy.
 - 2026-10-21 M7 "Deployments and routing policies are shown read-only in Settings…" (the editing
   part).
 
+### M15 plan (2026-11-09)
+
+Order A → G, each part pushed in small commits with CI checked after each push; a part still red
+after three fixes is reverted and recorded. Locally: formatting per file, the typecheck per package,
+lint of changed files and the affected tests (CI runs everything). Every new behaviour has a setting
+that switches it off; nothing new stores large or long-lived data in Redis. Migrations only add
+(0013 onward). Sources, checked 2026-11-09:
+
+- IETF draft "The Idempotency-Key HTTP Header Field", version -08 of 2026-10-22
+  (<https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/>): the field is an
+  RFC 9651 Item whose value MUST be a String (quoted, printable ASCII, only `\"` and `\\`
+  escaped; <https://www.rfc-editor.org/rfc/rfc9651.html#name-strings>); 409 while the first
+  request is still processed; 422 when a key is reused with a different payload; the fingerprint
+  and the expiry policy are the server's to define and publish. The draft names no replay header.
+- Stripe (<https://docs.stripe.com/error-low-level>, <https://docs.stripe.com/api/idempotent_requests>):
+  a replay carries `Idempotent-Replayed: true`; keys are kept for at least 24 hours; keys are up to
+  255 characters.
+
+**Part A — deployments that always fail.** A failed try of a kind that shows the deployment could
+not serve (rate limited, server error, connection, invalid response, auth, not found, and timeouts
+as before) records a penalty sample of the deployment's `timeoutMs`; rejected requests (400s),
+cancelled tries and deadline cuts record nothing. With no new samples, an estimate (the default one
+included) moves toward `PEAK_EWMA_DEFAULT_MS` at the same rate instead of toward zero:
+`E' = D + (E - D) x exp(-elapsed / decay)`. One setting, `PEAK_EWMA_PENALIZE_FAILURES` (true; false
+restores M14's rules). Unit tests with a seeded random: a deployment that always answers 429 at once
+is first in the plan far less often than under M14's rules (numbers in the test and the ADR note); it
+gets traffic again once it recovers; a fast, healthy deployment still wins most picks. Dated note in
+ADR 030.
+
+**Part B — a memory cap for the response cache.** Before a store, the cache reads `used_memory` and
+`maxmemory` from `INFO memory` (at most every `CACHE_MEMORY_CHECK_INTERVAL_MS`) and stores only while
+used memory is below `CACHE_MAX_MEMORY_SHARE` of `maxmemory` (default 0.5), or below
+`CACHE_MAX_MEMORY_BYTES` when `maxmemory` is 0. If INFO fails or is not allowed, nothing is stored and
+it is logged once. Lookups keep working; a skipped or failed store never fails the request.
+`CACHE_MEMORY_GUARD_ENABLED` (true) switches the check off. Metrics: a counter of skipped stores by
+reason and a gauge of the last reading. Unit tests with fake INFO replies; README: when
+`CACHE_ENABLED` is safe on a small Redis with `noeviction`.
+
+**Part C — `Idempotency-Key`.** On `POST /v1/chat/completions` and `/v1/embeddings`, after admission
+and before the cache and coalescing. Parsed as the draft's String (1 to 255 characters, Stripe's
+limit); anything else is 400 `invalid_idempotency_key`. A key belongs to (project, endpoint). The
+fingerprint is a SHA-256 of the body without `stream`, `stream_options` and `user`, with object keys
+sorted; a different fingerprint is 422 `idempotency_key_reused`. Keys live in a new table
+`idempotency_keys` (migration 0013) with a unique (project, endpoint, key): the first request inserts
+it `in_progress` with its instance and a lock time; a 2xx answer is stored as the answer itself (the
+cache entry's form, so a replay can be JSON or a stream) with its status and replay headers, up to
+`IDEMPOTENCY_MAX_BODY_BYTES`; above the cap the key is kept as completed without a body and a repeat
+gets 409 `idempotency_answer_not_stored` (never a second call); a failure deletes the key. With a key,
+a client that leaves does not cancel the upstream call: it runs within its timeouts and the request
+deadline (a stream is read to its end), then is stored and accounted for (recorded `canceled` with
+its cost, as a coalescing leader whose client left). A repeat while the first runs waits for it on
+the same instance (a coalescing `Flight`); if the first runs elsewhere, or the wait would pass the
+repeat's deadline, 409 `idempotency_key_in_progress` with `retry-after`. A lock older than
+`IDEMPOTENCY_LOCK_MS` is taken over (a crashed instance). A replay is answered like a cache hit,
+recorded at zero cost with `request_records.replayed` (migration 0013) and `Idempotent-Replayed:
+true`. Keys expire after `IDEMPOTENCY_KEY_TTL_HOURS` (24, Stripe) and the worker deletes expired rows
+in batches. `IDEMPOTENCY_ENABLED` (true) switches it off (the header is then ignored). Integration
+tests: one call and one charge for two requests; 422; two at once; a client leaving mid-stream; a
+failure releasing the key; expiry; two projects with one key. ADR 032.
+
+**Part D — webhook alerts.** Tables (migration 0014): `alert_destinations` (project, name, kind
+`discord` / `slack` / `generic`, the URL and the signing secret encrypted with AES-256-GCM, a masked
+URL hint, events) and `alert_deliveries` (the outbox: a unique dedupe key per destination, payload,
+status, attempts, next try, last error without the URL). The key is `ALERTS_ENCRYPTION_KEY` (32 bytes,
+base64), else HKDF-SHA256 from `API_KEY_PEPPER` with its own label, so the demo needs no new setting
+(changing the pepper means entering the URLs again). Events: monthly spend crossing 50, 80 and 100% of
+the budget (once per threshold per month, detected by the worker where it adds spend, in the same
+transaction); a breaker opening (detected by the gateway, at most once per deployment per
+`ALERTS_BREAKER_INTERVAL_MS`); dead letters growing (detected by the worker, at most once per
+`ALERTS_DEAD_LETTER_INTERVAL_MS`). Budget events go to that project's destinations; breaker and
+dead-letter events to every destination that chose them. The worker sends due rows (`FOR UPDATE SKIP
+LOCKED`), retrying with exponential backoff and full jitter up to `ALERTS_MAX_ATTEMPTS`, then marks
+them failed. Discord and Slack get their incoming-webhook formats from their official docs; generic
+receivers get JSON signed with HMAC-SHA256 over the timestamp and the body, following a published
+webhook-signing spec for the header names (cited in the ADR), with a per-destination secret shown
+once. SSRF: https only, the host resolved before each send and private, loopback, link-local,
+unique-local, CGNAT and metadata addresses refused, the connection pinned to the checked address, no
+redirects, a short timeout, at most a few KiB of the reply read. `ALERTS_ENABLED` (true; nothing is
+sent without a destination). Admin API (admins write, viewers read) and a Settings section with
+recent deliveries and "send test". Tests: each threshold once; a failed delivery retried then
+delivered; a signature verifies and a changed body or an old timestamp fails; the SSRF cases refused.
+ADR 033.
+
+**Part E — routing edited from the dashboard, per project.** A new table `route_overrides`
+(migration 0015): each change is a version (project, model, version, the full route or null for a
+reset, the action, who, when). A project admin may change a file route's policy and targets (order,
+weights, last resort) using only deployments that route lists; validated with the models file's rules.
+Rollback writes a new version copying an old one; reset writes a null route (the file's route).
+Every change is audited. Each instance keeps the active overrides in memory, loads them at start
+(Postgres down: the file, retried), reloads a project's when a `routes` message arrives on the
+existing invalidation channel, and reloads all every `ROUTE_OVERRIDES_REFRESH_MS` in case a message is
+lost. `ROUTE_OVERRIDES_ENABLED` (true). Admin API: read, change, roll back, reset, history (viewers
+read only); an editor with history and rollback on the Models page. The unused `routing_policies`
+table is left alone. Tests: two gateway instances sharing Redis and Postgres (a change through one is
+used by the other within seconds, and within the interval when the message is lost), rollback, reset,
+an invalid override, a viewer refused; a browser test for the editor. ADR 034.
+
+**Part F — live checks** with `DEMO_BASE_URL` and `DEMO_API_KEY`: the same chat request twice with
+one key (the second replayed, same body), then a different body with it (422), retried up to 3 times
+a minute apart, into "M15 real-provider checks"; steps for the owner to try a Discord alert and the
+routing editor.
+
+**Part G — wrap-up.** README, ADRs 032 to 034, PLAN-NOTES rows, ticked checks, the "M15 run" row.
+
 ## M16 — Guardrails
 
 **Goal.** Per-project checks keep sensitive values from reaching a provider and catch JSON
