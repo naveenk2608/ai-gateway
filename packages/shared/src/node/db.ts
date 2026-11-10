@@ -46,6 +46,8 @@ export interface ProjectsTable {
   budget_soft_threshold_pct: Generated<number>;
   /** The project's guardrail policy (M16, migration 0016); `{}` means no checks. */
   guardrails: JsonWithDefault;
+  /** The project's semantic cache settings (M18, migration 0018); `{}` means off. */
+  semantic_cache: JsonWithDefault;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
@@ -129,6 +131,18 @@ export interface RequestRecordsTable {
   replayed: Generated<boolean>;
   /** The /v1 endpoint the request came to (migration 0010); `chat` for every older row. */
   endpoint: Generated<RequestEndpoint>;
+  /** What its semantic lookup did (M18, migration 0018); null when it made none. */
+  semantic_cache: 'hit' | 'miss' | 'error' | null;
+  /** The nearest stored entry's cosine similarity, when there was one. */
+  semantic_similarity: number | null;
+  /** The lookup's embedding call: deployment, tokens and its list and billed cost. */
+  embedding_deployment: string | null;
+  embedding_tokens: number | null;
+  embedding_cost_micro_usd: number | null;
+  embedding_billed_cost_micro_usd: number | null;
+  /** On a hit: what the stored answer's tokens cost at its provider's price (list and billed). */
+  semantic_avoided_cost_micro_usd: number | null;
+  semantic_avoided_billed_cost_micro_usd: number | null;
   created_at: CreatedAt;
 }
 
@@ -298,6 +312,25 @@ export interface GuardrailResultsTable {
   created_at: Timestamp;
 }
 
+/**
+ * A semantic cache entry (M18, migration 0018): the vector of a request's last user message (as
+ * pgvector text, `[0.1,0.2,...]`), a SHA-256 of the rest of the request, and the answer. Created
+ * only where pgvector is available.
+ */
+export interface SemanticCacheEntriesTable {
+  id: string;
+  project_id: string;
+  model: string;
+  context_key: string;
+  embedding: string;
+  answer: ColumnType<unknown, string, string>;
+  provider: string | null;
+  provider_model: string | null;
+  billing: 'free_tier' | 'paid' | null;
+  created_at: Timestamp;
+  expires_at: Timestamp;
+}
+
 export interface FailedEventsTable {
   id: string;
   stream: string;
@@ -362,6 +395,7 @@ export interface Database {
   alert_deliveries: AlertDeliveriesTable;
   route_overrides: RouteOverridesTable;
   guardrail_results: GuardrailResultsTable;
+  semantic_cache_entries: SemanticCacheEntriesTable;
   idempotency_keys: IdempotencyKeysTable;
   usage_rollups_minute: UsageRollupsTable;
   usage_rollups_hour: UsageRollupsTable;

@@ -204,6 +204,17 @@ export const gatewayConfigSchema = z
      */
     COALESCE_ENABLED: flag.default(true),
     /**
+     * Semantic cache (M18, ADR 040): a request the exact cache would take, after its miss, is
+     * answered from the most similar earlier request of the same project, logical model and
+     * context, where the project opts in (each project starts off). Off by default: it stores
+     * answers in Postgres and makes an embedding call per lookup with
+     * SEMANTIC_CACHE_EMBEDDING_MODEL, an embeddings model of the models file, checked at startup.
+     * Its default, nomic-embed-text, is the free local model the default threshold was measured
+     * with. Needs pgvector (migration 0018); without it the gateway logs that it is unavailable.
+     */
+    SEMANTIC_CACHE_ENABLED: flag.default(false),
+    SEMANTIC_CACHE_EMBEDDING_MODEL: z.string().trim().min(1).max(256).default('nomic-embed-text'),
+    /**
      * Idempotency-Key on POST /v1/chat/completions and /v1/embeddings (M15, ADR 032): a retry with
      * the same key and body gets the first answer instead of a second call. On by default: it acts
      * only on requests that send the header, and keeps small rows in Postgres that expire after

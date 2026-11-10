@@ -1,6 +1,7 @@
 import type { Clock } from '@ai-gateway/shared';
 import type { Db } from '@ai-gateway/shared/node';
 import { parseGuardrailPolicy, type GuardrailPolicy } from '../guardrails/policy.js';
+import { parseSemanticPolicy, type SemanticPolicy } from '../semantic/policy.js';
 import type { UsagePolicy } from '../limits/policy.js';
 import { parseApiKey, secretMatches } from './api-keys.js';
 import type { UnknownKeyGuard } from './unknown-keys.js';
@@ -16,6 +17,8 @@ export interface AuthenticatedKey {
   policy: UsagePolicy;
   /** The project's guardrails (ADR 035); absent means none. */
   guardrails?: GuardrailPolicy | undefined;
+  /** The project's semantic cache settings (ADR 040); absent means off. */
+  semanticCache?: SemanticPolicy | undefined;
 }
 
 /** `limited`: the client IP sent too many unknown key IDs, so this one was not looked up. */
@@ -37,6 +40,7 @@ export interface KeyRecord {
   allowedModels: readonly string[] | null;
   policy: UsagePolicy;
   guardrails?: GuardrailPolicy | undefined;
+  semanticCache?: SemanticPolicy | undefined;
 }
 
 export type KeyLoader = (keyId: string) => Promise<KeyRecord | null>;
@@ -108,6 +112,7 @@ export class KeyVerifier {
         allowedModels: record.allowedModels,
         policy: record.policy,
         guardrails: record.guardrails,
+        semanticCache: record.semanticCache,
       },
     };
   }
@@ -227,6 +232,7 @@ export function databaseKeyLoader(db: Db): KeyLoader {
         'projects.max_request_cost_micro_usd',
         'projects.budget_soft_threshold_pct',
         'projects.guardrails',
+        'projects.semantic_cache',
       ])
       .where('api_keys.key_id', '=', keyId)
       .executeTakeFirst();
@@ -240,6 +246,7 @@ export function databaseKeyLoader(db: Db): KeyLoader {
       revokedAt: row.revoked_at?.getTime() ?? null,
       allowedModels: row.allowed_models,
       guardrails: parseGuardrailPolicy(row.guardrails),
+      semanticCache: parseSemanticPolicy(row.semantic_cache),
       policy: {
         key: { rpm: row.rpm_limit, tpm: row.tpm_limit, concurrency: row.concurrency_limit },
         project: {

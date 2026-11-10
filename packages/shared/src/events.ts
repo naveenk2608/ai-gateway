@@ -106,6 +106,36 @@ export const usageEventSchema = z.object({
     .max(40)
     .optional(),
   /**
+   * What the request's semantic cache lookup did (M18, ADR 040): the outcome, the nearest stored
+   * entry's cosine similarity, and the embedding call it paid for (the worker prices it). On a
+   * hit, who made the stored answer, for the cost the hit avoided; the hit also sets `cacheHit`.
+   * Never the text or the vector. Older events, and requests that made no lookup, have none.
+   */
+  semanticCache: z
+    .object({
+      outcome: z.enum(['hit', 'miss', 'error']),
+      similarity: z.number().min(-1).max(1).nullable(),
+      embedding: z
+        .object({
+          deployment: z.string().min(1),
+          provider: z.string().min(1),
+          providerModel: z.string().min(1),
+          billing: z.enum(['free_tier', 'paid']),
+          promptTokens: count,
+          usageSource: z.enum(['reported', 'estimated']),
+        })
+        .nullable(),
+      answeredBy: z
+        .object({
+          provider: z.string().min(1),
+          providerModel: z.string().min(1),
+          billing: z.enum(['free_tier', 'paid']),
+        })
+        .nullable()
+        .optional(),
+    })
+    .optional(),
+  /**
    * The gateway request's W3C trace and span IDs (ADR 017), so the worker's log line for this
    * event joins the same trace. Older events have none.
    */
@@ -118,5 +148,7 @@ export const usageEventSchema = z.object({
 });
 
 export type UsageEvent = z.output<typeof usageEventSchema>;
+/** A request's semantic cache lookup, as the usage event carries it (ADR 040). */
+export type SemanticCacheRecord = NonNullable<UsageEvent['semanticCache']>;
 export type AttemptRecord = z.output<typeof attemptRecordSchema>;
 export type UsageSourceValue = z.output<typeof usageSourceSchema>;

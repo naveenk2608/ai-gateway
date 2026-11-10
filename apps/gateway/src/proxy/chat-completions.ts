@@ -17,6 +17,8 @@ import type { ProviderRegistry } from '../providers/registry.js';
 import { fitRoute, needsOf } from '../routing/capabilities.js';
 import type { RouteOverrides } from '../routing/overrides.js';
 import { runRouted, type RoutingDeps } from '../routing/routed.js';
+import { SEMANTIC_HEADER, semanticRequested, SIMILARITY_HEADER } from '../semantic/policy.js';
+import type { AnsweredBy, SemanticCache } from '../semantic/semantic-cache.js';
 import type {
   ChatMessage,
   ChatRequest,
@@ -88,6 +90,8 @@ export interface ChatRouteOptions {
   cache?: ResponseCache | null;
   /** Identical cacheable requests in flight share one upstream call (ADR 031). */
   coalescer?: Coalescer | null;
+  /** Answers from a similar earlier request, where projects opt in (ADR 040). */
+  semanticCache?: SemanticCache | null;
   /** Idempotency-Key: a retry is answered with the first answer (ADR 032). */
   idempotency?: IdempotencyGate | null;
   /** Per-project route overrides (ADR 034); without them, the models file's routes. */
@@ -397,6 +401,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
     routing,
     cache = null,
     coalescer = null,
+    semanticCache = null,
     idempotency = null,
     routeOverrides = null,
     guardrailsEnabled = false,
@@ -726,6 +731,63 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         const callSignal = flight?.signal ?? (lead ? new AbortController().signal : undefined);
         const call = callSignal ? { ...routed, clientSignal: callSignal } : routed;
 
+        // Semantic cache (ADR 040): requests the exact cache would take, after its miss, by the
+        // flight's leader only (followers wait for its answer), where the project's mode and the
+        // request's header ask for it. Any failure leaves a normal miss.
+        const semanticHeader = request.headers[SEMANTIC_HEADER];
+        const semanticPolicy = apiKey.semanticCache;
+        const semantic =
+          semanticCache &&
+          reusable &&
+          semanticPolicy &&
+          semanticRequested(
+            semanticPolicy,
+            typeof semanticHeader === 'string' ? semanticHeader : undefined,
+          )
+            ? await inSpan('semantic_cache.lookup', trace.traceContext, async (span) => {
+                const found = await semanticCache.lookup({
+                  body,
+                  policy: semanticPolicy,
+                  call: {
+                    requestId: request.id,
+                    projectId: apiKey.projectId,
+                    apiKeyId: apiKey.apiKeyId,
+                    traceContext: trace.traceContext,
+                    clientSignal: call.clientSignal,
+                    log: request.log,
+                    deadlineAt,
+                  },
+                });
+                if (found) span.set({ 'gateway.semantic_cache': found.record.outcome });
+                return found;
+              })
+            : null;
+        if (semantic) {
+          trace.semanticCache = semantic.record;
+          metrics?.semanticLookup(semantic.record.outcome);
+          if (semantic.hit) {
+            trace.cacheHit = true;
+            void reply.header(CACHE_HEADER, 'semantic');
+            void reply.header(SIMILARITY_HEADER, (semantic.record.similarity ?? 0).toFixed(4));
+            flight?.resolve(semantic.hit);
+            leaveFlight?.();
+            await keep(semantic.hit);
+            return replay(semantic.hit);
+          }
+        }
+        /** Who made the answer: the deployment that served it, for the cost a later hit avoids. */
+        const answeredBy = (): AnsweredBy | null =>
+          served
+            ? {
+                provider: served.deployment.providerName,
+                providerModel: served.deployment.providerModel,
+                billing: served.deployment.billing,
+              }
+            : null;
+        const remember = semantic?.store
+          ? (result: ChatResult) => void semantic.store?.(result, answeredBy())
+          : undefined;
+
         /**
          * Checks after the model (ADR 035): a JSON answer against its schema (flag, or retry once
          * on the route's next deployment, then 502), then the detectors' masks.
@@ -790,6 +852,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
               trace.addCompletionText(`${toolCall.name} ${toolCall.arguments}`);
             }
             store?.(result);
+            remember?.(result);
             await keep(result);
             if ((flight || lead) && disconnect.signal.aborted) {
               // Its client left while followers or its Idempotency-Key kept the call going:
@@ -823,6 +886,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         const answered = (result: ChatResult) => {
           flagSchema(result);
           store?.(result);
+          remember?.(result);
         };
         // Followers get the whole answer; a leader whose client leaves is read to the end for
         // them, or for its Idempotency-Key, and its record waits for that (ADR 031, ADR 032).

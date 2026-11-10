@@ -86,7 +86,8 @@ export function cacheKey(projectId: string, body: ChatCompletionRequest): string
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-const entrySchema = z.object({
+/** A stored answer: the text, any tool calls, the finish reason and the usage (also ADR 040). */
+export const cachedAnswerSchema = z.object({
   content: z.string(),
   toolCalls: z
     .array(z.object({ id: z.string(), name: z.string(), arguments: z.string() }))
@@ -165,7 +166,7 @@ export class ResponseCache {
     try {
       const raw = await this.#o.redis.get(this.#prefix + key);
       if (raw === null) return null;
-      const parsed = entrySchema.safeParse(JSON.parse(raw));
+      const parsed = cachedAnswerSchema.safeParse(JSON.parse(raw));
       return parsed.success ? parsed.data : null;
     } catch (err) {
       this.#o.logger.warn({ err }, 'response cache read failed; treating as a miss');

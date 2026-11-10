@@ -30,6 +30,8 @@ export interface AdminDeps {
   routeOverrides?: RouteOverrides;
   /** GUARDRAILS_ENABLED (ADR 035). */
   guardrailsEnabled?: boolean;
+  /** SEMANTIC_CACHE_ENABLED, its embeddings model, and whether pgvector's table exists (ADR 040). */
+  semanticCache?: { enabled: boolean; embeddingModel: string; available: () => Promise<boolean> };
 }
 
 export const roleSchema = z.enum(['owner', 'admin', 'viewer']);

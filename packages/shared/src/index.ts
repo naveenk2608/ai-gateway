@@ -20,6 +20,7 @@ export {
   usageEventSchema,
   usageSourceSchema,
   type AttemptRecord,
+  type SemanticCacheRecord,
   type UsageEvent,
   type UsageSourceValue,
 } from './events.js';

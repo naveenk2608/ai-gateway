@@ -51,6 +51,7 @@ import { MemoryGuard } from './cache/memory-guard.js';
 import { IdempotencyGate } from './proxy/idempotency.js';
 import { BreakerAlerts } from './routing/breaker-alerts.js';
 import { RouteOverrides } from './routing/overrides.js';
+import { routedEmbedder, SemanticCache } from './semantic/semantic-cache.js';
 import { QuotaBoard, quotaUsedShare } from './routing/quota.js';
 import { RetryBudget } from './routing/retry-budget.js';
 import { LatencyTracker } from './routing/router.js';
@@ -120,6 +121,17 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
     env: deps.env ?? process.env,
     ollamaBaseUrl: config.OLLAMA_BASE_URL,
   });
+  // The semantic cache's embeddings model must be one of the models file (ADR 040).
+  const embeddingRoute = config.SEMANTIC_CACHE_ENABLED
+    ? registry.route(config.SEMANTIC_CACHE_EMBEDDING_MODEL)
+    : undefined;
+  if (config.SEMANTIC_CACHE_ENABLED && embeddingRoute?.type !== 'embeddings') {
+    void Promise.allSettled([registry.close(), pool.end(), closeRedis(redis)]);
+    throw new Error(
+      `SEMANTIC_CACHE_EMBEDDING_MODEL: \`${config.SEMANTIC_CACHE_EMBEDDING_MODEL}\` is not an ` +
+        'embeddings model of the models file',
+    );
+  }
   // One registry per process (ADR 017); tests build several gateways, each with its own.
   const metrics = new GatewayMetrics(createMetricsRegistry(), {
     deployments: registry.deployments().map((d) => ({
@@ -329,6 +341,15 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       })
     : null;
   const coalescer = new Coalescer(config.COALESCE_ENABLED);
+  const semanticCache = embeddingRoute
+    ? new SemanticCache({
+        db,
+        logger,
+        clock,
+        embeddingModel: config.SEMANTIC_CACHE_EMBEDDING_MODEL,
+        embed: routedEmbedder(embeddingRoute, routing, clock),
+      })
+    : null;
   const idempotency = new IdempotencyGate(
     {
       enabled: config.IDEMPOTENCY_ENABLED,
@@ -389,6 +410,7 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       routing,
       cache,
       coalescer,
+      semanticCache,
       idempotency,
       routeOverrides,
       guardrailsEnabled: config.GUARDRAILS_ENABLED,
@@ -438,6 +460,11 @@ export function createGateway(config: GatewayConfig, logger: Logger, deps: Gatew
       alerts: { enabled: config.ALERTS_ENABLED, key: alertKey },
       routeOverrides,
       guardrailsEnabled: config.GUARDRAILS_ENABLED,
+      semanticCache: {
+        enabled: semanticCache !== null,
+        embeddingModel: config.SEMANTIC_CACHE_EMBEDDING_MODEL,
+        available: () => semanticCache?.available() ?? Promise.resolve(false),
+      },
     }),
   );
 

@@ -253,6 +253,12 @@ describe('project isolation', () => {
         'GET /admin/projects/:projectId/guardrails/summary',
         `/admin/projects/${t.b}/guardrails/summary`,
       ],
+      ['GET /admin/projects/:projectId/semantic-cache', `/admin/projects/${t.b}/semantic-cache`],
+      [
+        'PUT /admin/projects/:projectId/semantic-cache',
+        `/admin/projects/${t.b}/semantic-cache`,
+        { mode: 'header' },
+      ],
     ];
 
     // The table covers every registered route that takes a project.
@@ -423,6 +429,11 @@ describe('roles', () => {
         'PUT /admin/projects/:projectId/guardrails',
         `/admin/projects/${p}/guardrails`,
         { input: { email: 'mask' } },
+      ],
+      [
+        'PUT /admin/projects/:projectId/semantic-cache',
+        `/admin/projects/${p}/semantic-cache`,
+        { mode: 'header' },
       ],
     ];
     // The table covers every registered route that changes a project.
@@ -631,6 +642,12 @@ describe('audit log', () => {
       `/admin/projects/${p}/guardrails`,
       'project.guardrails',
       { input: { email: 'mask' } },
+    );
+    await run(
+      'PUT /admin/projects/:projectId/semantic-cache',
+      `/admin/projects/${p}/semantic-cache`,
+      'project.semantic_cache',
+      { mode: 'header' },
     );
     // Session mutations are audited without a project.
     const second = await api('POST', '/admin/auth/login', undefined, {

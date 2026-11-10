@@ -12,7 +12,10 @@ name: ai-gateway
 
 services:
   postgres:
-    image: postgres:16.15-alpine3.24
+    # pgvector's image (Postgres 16 with pgvector 0.8.6, PostgreSQL License) for the semantic cache
+    # (ADR 040). It is Debian-based: text sorts differently from the Alpine image used before M18,
+    # so its data lives in a new volume; the old `postgres-data` volume is left untouched.
+    image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
     environment:
       POSTGRES_USER: gateway
       POSTGRES_DB: gateway
@@ -20,7 +23,7 @@ services:
     ports:
       - 127.0.0.1:${POSTGRES_PORT:-5432}:5432
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-vector-data:/var/lib/postgresql/data
     healthcheck:
       test: [CMD-SHELL, pg_isready -U gateway -d gateway]
       interval: 5s
@@ -191,4 +194,4 @@ services:
     mem_limit: 512m
 
 volumes:
-  postgres-data:
+  postgres-vector-data:

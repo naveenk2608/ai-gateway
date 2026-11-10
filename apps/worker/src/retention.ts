@@ -59,3 +59,28 @@ export async function pruneIdempotencyKeys(
     if (n < batchSize) return deleted;
   }
 }
+
+/**
+ * Deletes expired semantic cache entries (ADR 040) in batches; returns how many. Expiry is set by
+ * the gateway from each project's TTL, and lookups already skip expired rows, so this only frees
+ * the space. Does nothing where pgvector was missing and migration 0018 created no table.
+ */
+export async function pruneSemanticCache(db: Db, now: number, batchSize = 1_000): Promise<number> {
+  const { rows } = await sql<{ ok: boolean }>`
+    SELECT to_regclass('semantic_cache_entries') IS NOT NULL AS ok`.execute(db);
+  if (rows[0]?.ok !== true) return 0;
+  let deleted = 0;
+  for (;;) {
+    const result = await sql`
+      DELETE FROM semantic_cache_entries
+       WHERE id IN (
+         SELECT id FROM semantic_cache_entries
+          WHERE expires_at <= ${new Date(now)}
+          ORDER BY expires_at
+          LIMIT ${batchSize}
+       )`.execute(db);
+    const n = Number(result.numAffectedRows ?? 0n);
+    deleted += n;
+    if (n < batchSize) return deleted;
+  }
+}

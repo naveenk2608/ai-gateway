@@ -16,7 +16,7 @@ export {
 } from './consumer.js';
 export { SqsUsageConsumer, type SqsConsumerOptions } from './sqs-consumer.js';
 export { ingestEvents } from './ingest.js';
-export { pruneIdempotencyKeys } from './retention.js';
+export { pruneIdempotencyKeys, pruneSemanticCache } from './retention.js';
 export {
   maintainPartitions,
   monthStart,

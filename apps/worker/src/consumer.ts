@@ -18,7 +18,12 @@ import { ingestEvents } from './ingest.js';
 import type { WorkerMetrics } from './metrics.js';
 import type { DeadLetterAlerts } from './alerts/detect.js';
 import { maintainPartitions, type PartitionSettings } from './partitions.js';
-import { pruneIdempotencyKeys, pruneRollups, type RollupRetention } from './retention.js';
+import {
+  pruneIdempotencyKeys,
+  pruneRollups,
+  pruneSemanticCache,
+  type RollupRetention,
+} from './retention.js';
 
 export interface ConsumerOptions {
   /** A dedicated connection: XREADGROUP BLOCK holds it. */
@@ -574,6 +579,13 @@ export class UsageConsumer implements EventConsumer {
       if (keys > 0) this.#o.logger.info({ deleted: keys }, 'expired idempotency keys deleted');
     } catch (err) {
       this.#o.logger.warn({ err }, 'idempotency key retention failed');
+    }
+    try {
+      const entries = await pruneSemanticCache(this.#o.db, now);
+      if (entries > 0)
+        this.#o.logger.info({ deleted: entries }, 'expired semantic cache entries deleted');
+    } catch (err) {
+      this.#o.logger.warn({ err }, 'semantic cache retention failed');
     }
     if (this.#o.partitions) {
       try {

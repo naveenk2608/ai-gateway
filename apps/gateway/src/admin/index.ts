@@ -6,6 +6,7 @@ import { registerAnalyticsRoutes } from './analytics-routes.js';
 import { registerApiKeyRoutes } from './api-key-routes.js';
 import { registerAuditRoutes } from './audit-routes.js';
 import { registerGuardrailRoutes } from './guardrail-routes.js';
+import { registerSemanticRoutes } from './semantic-routes.js';
 import { registerAccountRoutes, registerLoginRoute } from './auth-routes.js';
 import { registerMemberRoutes } from './member-routes.js';
 import { registerModelRoutes } from './model-routes.js';
@@ -38,6 +39,7 @@ export async function registerAdminApi(app: FastifyInstance, deps: AdminDeps): P
     registerAlertRoutes(scoped, deps);
     registerRouteRoutes(scoped, deps);
     registerGuardrailRoutes(scoped, deps);
+    registerSemanticRoutes(scoped, deps);
     done();
   });
 }

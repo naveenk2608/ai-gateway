@@ -4,6 +4,7 @@ import {
   uuidv7,
   type AttemptRecord,
   type Clock,
+  type SemanticCacheRecord,
   type TraceContext,
   type UsageEvent,
 } from '@ai-gateway/shared';
@@ -63,6 +64,8 @@ export class RequestTrace {
    * no attempts of its own, and no cost, like a cache hit.
    */
   replayed = false;
+  /** What its semantic cache lookup did and cost (ADR 040); null when it made none. */
+  semanticCache: SemanticCacheRecord | null = null;
   /** What the guardrail checks found and did (ADR 035): types and counts only. */
   guardrails: {
     list(): { stage: 'input' | 'output'; check: string; count: number; action: GuardrailAction }[];
@@ -174,6 +177,7 @@ export class RequestTrace {
       ...(this.cacheHit ? { cacheHit: true } : {}),
       ...(this.coalesced ? { coalesced: true } : {}),
       ...(this.replayed ? { replayed: true } : {}),
+      ...(this.semanticCache ? { semanticCache: this.semanticCache } : {}),
       ...((this.guardrails?.list().length ?? 0) > 0
         ? { guardrails: this.guardrails!.list().slice(0, 40) }
         : {}),

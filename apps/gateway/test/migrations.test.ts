@@ -29,6 +29,8 @@ const TABLES = [
   'request_rollup_facts',
   'route_overrides',
   'routing_policies',
+  // Created by 0018 where pgvector is available, as in CI and Compose.
+  'semantic_cache_entries',
   'usage_events',
   'usage_rollups_day',
   'usage_rollups_hour',
@@ -55,6 +57,7 @@ const MIGRATIONS = [
   '0015_route-overrides',
   '0016_guardrails',
   '0017_partition-raw-tables',
+  '0018_semantic-cache',
 ];
 
 /** A throwaway database, so migrations run from scratch. */

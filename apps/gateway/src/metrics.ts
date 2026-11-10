@@ -94,6 +94,7 @@ export class GatewayMetrics {
   readonly #fallbacks: Counter<'model'>;
   readonly #transitions: Counter<'deployment' | 'to'>;
   readonly #cache: Counter<'result'>;
+  readonly #semantic: Counter<'outcome'>;
   readonly #cacheSkips: Counter<'reason'>;
   readonly #cacheMemory: Gauge<'kind'>;
   readonly #rejections: Counter<'reason'>;
@@ -149,6 +150,12 @@ export class GatewayMetrics {
       name: 'gateway_cache_lookups_total',
       help: 'Response-cache lookups by result, hit or miss (ADR 013).',
       labelNames: ['result'],
+      registers,
+    });
+    this.#semantic = new Counter({
+      name: 'gateway_semantic_cache_lookups_total',
+      help: 'Semantic cache lookups by outcome (ADR 040): hit, miss, or error (the embedding call or the query failed, so the request went on as a miss).',
+      labelNames: ['outcome'],
       registers,
     });
     this.#cacheSkips = new Counter({
@@ -257,6 +264,10 @@ export class GatewayMetrics {
 
   cacheLookup(hit: boolean): void {
     this.#cache.inc({ result: hit ? 'hit' : 'miss' });
+  }
+
+  semanticLookup(outcome: 'hit' | 'miss' | 'error'): void {
+    this.#semantic.inc({ outcome });
   }
 
   cacheStoreSkipped(reason: 'too_large' | 'memory_cap' | 'memory_unknown'): void {
