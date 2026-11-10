@@ -45,6 +45,9 @@ export function isolatedSettings(overrides: Partial<ConsumerSettings> = {}): Con
     EVENTS_CONSUMER_GROUP: `test-group-${tag}`,
     WORKER_BLOCK_MS: 100,
     WORKER_CLAIM_IDLE_MS: 200,
+    // Test files share one database: no worker drops partitions or old rows under another test.
+    RAW_PARTITIONS_ENABLED: false,
+    ALERTS_ENABLED: false,
     ...overrides,
   };
 }

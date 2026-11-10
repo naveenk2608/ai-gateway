@@ -1226,6 +1226,12 @@ Prometheus loads recording rules and multiwindow, multi-burn-rate alerts (page a
 SRE Workbook describes); CI checks them with promtool check rules and their unit tests with
 promtool test rules.
 
+**Raw-row retention** ([ADR 039](docs/adr/039-monthly-partitions.md)): `request_records`,
+`provider_attempts` and `usage_events` are partitioned by month (on each event's own time, so a
+re-delivered event is still stored once). The worker keeps the current month and the next three
+created and drops months older than `RAW_RETENTION_MONTHS` (6) before the current one; rollups keep
+the analytics far longer. `RAW_RETENTION_MONTHS=0` keeps everything.
+
 ## Benchmarks
 
 [docs/benchmarks.md](docs/benchmarks.md) has the gateway's added latency, time to first token and
@@ -1375,7 +1381,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Alerts | `ALERTS_ENABLED`, `ALERTS_ENCRYPTION_KEY`, `ALERTS_POLL_INTERVAL_MS`, `ALERTS_MAX_ATTEMPTS`, `ALERTS_SEND_TIMEOUT_MS`, `ALERTS_BREAKER_INTERVAL_MS`, `ALERTS_DEAD_LETTER_INTERVAL_MS`, `ALERTS_DELIVERY_RETENTION_DAYS` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
 | Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |
-| Retention and shutdown | `ROLLUP_RETENTION_*`, `SHUTDOWN_TIMEOUT_MS`, `MIGRATE_ON_START` |
+| Retention and shutdown | `ROLLUP_RETENTION_*`, `RAW_PARTITIONS_ENABLED`, `RAW_PARTITIONS_AHEAD_MONTHS`, `RAW_RETENTION_MONTHS`, `SHUTDOWN_TIMEOUT_MS`, `MIGRATE_ON_START` |
 
 ## Repository layout
 

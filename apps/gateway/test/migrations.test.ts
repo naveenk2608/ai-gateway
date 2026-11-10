@@ -54,6 +54,7 @@ const MIGRATIONS = [
   '0014_alerts',
   '0015_route-overrides',
   '0016_guardrails',
+  '0017_partition-raw-tables',
 ];
 
 /** A throwaway database, so migrations run from scratch. */
@@ -97,9 +98,13 @@ describe('database migrations', () => {
     expect([...first, ...second]).toEqual(MIGRATIONS);
 
     await withClient(freshUrl, async (c) => {
+      // Partitions of the raw tables (migration 0017) are children, not tables of their own.
       const tables = await c.query<{ table_name: string }>(
-        `SELECT table_name FROM information_schema.tables
-          WHERE table_schema = 'public' AND table_name <> 'pgmigrations' ORDER BY table_name`,
+        `SELECT t.table_name FROM information_schema.tables t
+           JOIN pg_class c ON c.relname = t.table_name
+           JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.table_schema
+          WHERE t.table_schema = 'public' AND t.table_name <> 'pgmigrations' AND NOT c.relispartition
+          ORDER BY t.table_name`,
       );
       expect(tables.rows.map((r) => r.table_name)).toEqual(TABLES);
       const applied = await c.query('SELECT name FROM pgmigrations');

@@ -125,6 +125,11 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
     dayDays: settings.ROLLUP_RETENTION_DAY_DAYS,
     intervalMs: settings.ROLLUP_RETENTION_INTERVAL_MS,
   };
+  const partitions = {
+    enabled: settings.RAW_PARTITIONS_ENABLED,
+    aheadMonths: settings.RAW_PARTITIONS_AHEAD_MONTHS,
+    retentionMonths: settings.RAW_RETENTION_MONTHS,
+  };
   if (settings.EVENT_BUS === 'sqs') {
     const own = deps.sqs ? undefined : sqsFromSettings(settings);
     const consumer = new SqsUsageConsumer({
@@ -139,6 +144,7 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
       visibilitySeconds: Math.ceil(settings.WORKER_CLAIM_IDLE_MS / 1000),
       maxDeliveries: settings.WORKER_MAX_DELIVERIES,
       retention,
+      partitions,
       metrics,
       alerts: alerting,
       faults: deps.faults,
@@ -162,6 +168,7 @@ export function createUsageConsumer(deps: UsageConsumerDeps): {
     maxDeliveries: settings.WORKER_MAX_DELIVERIES,
     trimIntervalMs: settings.WORKER_TRIM_INTERVAL_MS,
     retention,
+    partitions,
     metrics,
     alerts: alerting,
     faults: deps.faults,

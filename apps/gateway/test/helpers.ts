@@ -41,6 +41,8 @@ export function testConfig(overrides: Record<string, string | undefined> = {}): 
     // Test files share one database: an in-process worker with alerts on would claim and send
     // another file's queued alerts. Tests of alerts turn them on (ADR 033).
     ALERTS_ENABLED: 'false',
+    // Nor may a worker drop partitions or old rows another test file inserted (ADR 039).
+    RAW_PARTITIONS_ENABLED: 'false',
     ...overrides,
   });
 }

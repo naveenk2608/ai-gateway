@@ -40,6 +40,7 @@ describe('worker against real dependencies', () => {
       SHUTDOWN_TIMEOUT_MS: '2000',
       MIGRATE_ON_START: 'false',
       WORKER_METRICS_PORT: '0',
+      RAW_PARTITIONS_ENABLED: 'false',
     });
     const worker = createWorker(config, captureLogger().logger);
     // The consumer cannot create its group without Redis, so start never resolves; stop anyway.

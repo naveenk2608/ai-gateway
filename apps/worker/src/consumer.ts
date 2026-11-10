@@ -17,6 +17,7 @@ import {
 import { ingestEvents } from './ingest.js';
 import type { WorkerMetrics } from './metrics.js';
 import type { DeadLetterAlerts } from './alerts/detect.js';
+import { maintainPartitions, type PartitionSettings } from './partitions.js';
 import { pruneIdempotencyKeys, pruneRollups, type RollupRetention } from './retention.js';
 
 export interface ConsumerOptions {
@@ -37,6 +38,11 @@ export interface ConsumerOptions {
   trimIntervalMs: number;
   /** Rollup retention (ADR 015), applied every `intervalMs`; omitted, rollups are kept forever. */
   retention?: RollupRetention & { intervalMs: number };
+  /**
+   * Monthly partitions of the raw request tables (ADR 039), kept on the retention schedule:
+   * months ahead created, months past RAW_RETENTION_MONTHS dropped. Omitted: left alone.
+   */
+  partitions?: PartitionSettings | undefined;
   /** Records consumption, batch and retention timings (ADR 017). */
   metrics?: WorkerMetrics;
   /**
@@ -568,6 +574,16 @@ export class UsageConsumer implements EventConsumer {
       if (keys > 0) this.#o.logger.info({ deleted: keys }, 'expired idempotency keys deleted');
     } catch (err) {
       this.#o.logger.warn({ err }, 'idempotency key retention failed');
+    }
+    if (this.#o.partitions) {
+      try {
+        const done = await maintainPartitions(this.#o.db, now, this.#o.partitions);
+        if (done.created + done.dropped + done.defaultDeleted > 0) {
+          this.#o.logger.info(done, 'raw table partitions maintained');
+        }
+      } catch (err) {
+        this.#o.logger.warn({ err }, 'raw table partition maintenance failed');
+      }
     }
   }
 

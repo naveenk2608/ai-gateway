@@ -68,6 +68,16 @@ export const consumerSettingsShape = {
   ALERTS_BREAKER_INTERVAL_MS: positiveInt.min(1_000).default(900_000),
   ALERTS_DEAD_LETTER_INTERVAL_MS: positiveInt.min(1_000).default(3_600_000),
   ALERTS_DELIVERY_RETENTION_DAYS: positiveInt.max(3_650).default(30),
+  /**
+   * Monthly partitions of request_records, provider_attempts and usage_events (M17, ADR 039),
+   * kept on the rollup retention schedule (ROLLUP_RETENTION_INTERVAL_MS): the current month and
+   * RAW_PARTITIONS_AHEAD_MONTHS more always exist, and months older than RAW_RETENTION_MONTHS
+   * before the current one are dropped (0 keeps every month). Neon's free plan holds 1 GB per
+   * project; rollups keep the analytics for longer (ADR 015).
+   */
+  RAW_PARTITIONS_ENABLED: z.stringbool().default(true),
+  RAW_PARTITIONS_AHEAD_MONTHS: z.coerce.number().int().min(1).max(24).default(3),
+  RAW_RETENTION_MONTHS: z.coerce.number().int().min(0).max(120).default(6),
 };
 
 export const consumerSettingsSchema = z.object(consumerSettingsShape);

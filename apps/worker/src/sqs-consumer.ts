@@ -13,6 +13,7 @@ import {
 import { ingestEvents } from './ingest.js';
 import type { WorkerMetrics } from './metrics.js';
 import type { DeadLetterAlerts } from './alerts/detect.js';
+import { maintainPartitions, type PartitionSettings } from './partitions.js';
 import { pruneIdempotencyKeys, pruneRollups, type RollupRetention } from './retention.js';
 
 export interface SqsConsumerOptions {
@@ -30,6 +31,11 @@ export interface SqsConsumerOptions {
   visibilitySeconds: number;
   maxDeliveries: number;
   retention?: RollupRetention & { intervalMs: number };
+  /**
+   * Monthly partitions of the raw request tables (ADR 039), kept on the retention schedule:
+   * months ahead created, months past RAW_RETENTION_MONTHS dropped. Omitted: left alone.
+   */
+  partitions?: PartitionSettings | undefined;
   metrics?: WorkerMetrics;
   /**
    * Webhook alerts (ADR 033): queue budget alerts in the ingest transaction, and a dead-letter
@@ -309,6 +315,16 @@ export class SqsUsageConsumer implements EventConsumer {
       if (keys > 0) this.#o.logger.info({ deleted: keys }, 'expired idempotency keys deleted');
     } catch (err) {
       this.#o.logger.warn({ err }, 'idempotency key retention failed');
+    }
+    if (this.#o.partitions) {
+      try {
+        const done = await maintainPartitions(this.#o.db, now, this.#o.partitions);
+        if (done.created + done.dropped + done.defaultDeleted > 0) {
+          this.#o.logger.info(done, 'raw table partitions maintained');
+        }
+      } catch (err) {
+        this.#o.logger.warn({ err }, 'raw table partition maintenance failed');
+      }
     }
   }
 }
