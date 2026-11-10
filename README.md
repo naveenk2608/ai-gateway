@@ -10,7 +10,7 @@ circuit breakers, an exact-match cache, and a record of every request with its c
 runs locally with no paid API and no cloud account: a deterministic mock provider stands in for
 real models, and Ollama works too.
 
-**Status: milestones M0-M17 are built.** The MVP (M0-M5), the analytics API (M6), the full
+**Status: milestones M0-M18 are built.** The MVP (M0-M5), the analytics API (M6), the full
 dashboard (M7), observability (M8), benchmarks (M9), the AWS deployment code (M10: Terraform
 tested with a mocked provider, [never applied](docs/aws-deployment.md)), real free providers with
 honest costs (M11, see [docs/providers.md](docs/providers.md)), and fixes and supply-chain safety
@@ -20,9 +20,10 @@ two choices over peak EWMA latency, a retry budget per deployment, coalescing of
 in flight, and quota groups for free allowances shared by several deployments), and control and
 safety (M15: `Idempotency-Key` replays, signed webhook alerts, routing overrides per project from
 the dashboard, a memory cap for the cache, and failure penalties in peak EWMA), and guardrails
-(M16: personal data masked or blocked before the model, JSON answers checked after it), and cloud
+(M16: personal data masked or blocked before the model, JSON answers checked after it), cloud
 and operations (M17: a Helm chart tested on kind, OpenTelemetry tracing, SLO burn-rate alerts, and
-monthly partitions with retention). What comes next is
+monthly partitions with retention), and a semantic cache (M18: opt-in per project, in Postgres
+with pgvector, with its false-hit rate measured on labelled pairs). What comes next is
 in [docs/ROADMAP.md](docs/ROADMAP.md).
 Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trade-offs in
 [docs/trade-offs.md](docs/trade-offs.md).
@@ -36,6 +37,9 @@ Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trad
   jittered backoff (never after the first streamed byte) and a retry budget per deployment;
   circuit breakers with health checks. Each attempt is stored with the reason it was made.
 - Identical cacheable requests in flight share one upstream call (coalescing), cache on or off.
+- An opt-in semantic cache: a request can be answered from a similar earlier one of the same
+  project, model and context, above a threshold measured on labelled pairs to answer no near miss;
+  every lookup's embedding call is priced, and the Cost page shows the net saving.
 - Usage accounting through a Redis Stream (or SQS on AWS) into Postgres, exactly once in effect,
   with a dead-letter path; costs from versioned prices.
 - Real free-tier providers, each enabled by its key: Groq, Gemini, Mistral, NVIDIA NIM,
@@ -117,10 +121,15 @@ pnpm install
 cp .env.example .env
 # Set API_KEY_PEPPER in .env to a random secret of 32+ characters:
 openssl rand -hex 32
-docker compose up -d   # Postgres 16 and Redis 7, on 127.0.0.1 only
+docker compose up -d   # Postgres 16 with pgvector and Redis 7, on 127.0.0.1 only
 pnpm db:seed           # migrations, a demo project, an admin and an API key (printed once)
 pnpm dev               # gateway on :8080, worker, dashboard on :5173/dashboard/
 ```
+
+Since M18, Compose's Postgres is pgvector's image (Debian-based), with its data in a new volume,
+`postgres-vector-data`, because text sorts differently from the Alpine image used before; the old
+`ai-gateway_postgres-data` volume is left untouched (`docker volume rm ai-gateway_postgres-data`
+when you no longer need it), and `pnpm db:seed` sets up the new one.
 
 On Windows, run `pnpm` from PowerShell (pnpm scripts can fail from Git Bash). Without `openssl`,
 generate the pepper with a cryptographic random source:
@@ -1200,6 +1209,7 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:8080/metrics
 | `gateway_cache_store_skips_total` | reason | Cache stores skipped: `too_large`, `memory_cap` (Redis at the cache's memory cap), `memory_unknown` (INFO failed) |
 | `gateway_cache_redis_memory_bytes` | kind | Redis memory at the cache guard's last reading: `used` and `cap` |
 | `gateway_coalesced_requests_total` | endpoint | Requests answered by an identical request's upstream call on this instance |
+| `gateway_semantic_cache_lookups_total` | outcome | Semantic cache lookups: `hit`, `miss`, or `error` (the embedding call or the query failed; the request went on as a miss) |
 | `gateway_peak_ewma_estimate_seconds` | deployment, mode | Each deployment's peak EWMA latency estimate on this instance (`stream`: time to first token, `plain`: whole response) |
 | `gateway_upstream_in_flight` | deployment | Provider tries in flight on this instance |
 | `gateway_retry_budget_skips_total` | deployment | Retries not made because the deployment's retry budget was used up |
@@ -1406,6 +1416,7 @@ an explanation. `pnpm dev` loads `.env`; never commit it.
 | Routing | `RETRY_*` (with `RETRY_BUDGET_*`), `PEAK_EWMA_*`, `ROUTE_OVERRIDES_ENABLED`, `ROUTE_OVERRIDES_REFRESH_MS`, `BREAKER_*`, `HEALTH_CHECK_*`, `PROVIDER_COOLDOWN_MS`, `MODELS_CONFIG_PATH`, provider keys (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OLLAMA_BASE_URL`) |
 | Cache and coalescing | `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_ENTRY_BYTES`, `CACHE_MEMORY_GUARD_ENABLED`, `CACHE_MEMORY_CHECK_INTERVAL_MS`, `CACHE_MAX_MEMORY_SHARE`, `CACHE_MAX_MEMORY_BYTES`, `COALESCE_ENABLED`, `IDEMPOTENCY_ENABLED`, `IDEMPOTENCY_KEY_TTL_HOURS`, `IDEMPOTENCY_LOCK_MS`, `IDEMPOTENCY_MAX_BODY_BYTES` |
 | Guardrails | `GUARDRAILS_ENABLED` (the checks themselves are set per project on the Security page) |
+| Semantic cache | `SEMANTIC_CACHE_ENABLED`, `SEMANTIC_CACHE_EMBEDDING_MODEL` (mode, threshold, TTL and row cap are set per project on the Settings page) |
 | Alerts | `ALERTS_ENABLED`, `ALERTS_ENCRYPTION_KEY`, `ALERTS_POLL_INTERVAL_MS`, `ALERTS_MAX_ATTEMPTS`, `ALERTS_SEND_TIMEOUT_MS`, `ALERTS_BREAKER_INTERVAL_MS`, `ALERTS_DEAD_LETTER_INTERVAL_MS`, `ALERTS_DELIVERY_RETENTION_DAYS` |
 | Behind a proxy, browsers | `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `ALLOWED_ORIGINS`, `DASHBOARD_DIR` |
 | Observability | `LOG_LEVEL`, `METRICS_TOKEN`, `METRICS_PORT`, `METRICS_HOST`, `WORKER_METRICS_PORT` |
@@ -1442,7 +1453,10 @@ docs/providers.md        every provider's model IDs, prices and free limits, wit
 - Budgets can be overspent by at most the requests in flight times the most one can cost; in
   `open` fail mode they are not enforced while Redis is down.
 - Circuit breakers are per instance, so instances can briefly disagree about a deployment.
-- The cache is exact-match only and off by default; sampled requests are cached only on request.
+- The exact cache is off by default; sampled requests are cached only on request. The semantic
+  cache is off by default and opt-in per project; its default threshold answers no near miss of
+  the labelled set but few paraphrases, the set is small (80 pairs, written by hand), and the
+  measurement holds for `nomic-embed-text` only. Every lookup adds an embedding call's latency.
 - Latency estimates, tries in flight, retry budgets and coalescing are per instance: N instances
   keep N budgets, and identical requests landing on different instances each make a call. A
   streamed request that is coalesced gets no token until the whole answer is ready.

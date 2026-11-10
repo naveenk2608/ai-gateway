@@ -1166,8 +1166,13 @@ been measured and published rather than guessed.
 
 **Acceptance**
 
-- [ ] The false-hit rate for the default threshold is measured and published.
-- [ ] Semantic hits never cross projects or models.
+- [x] The false-hit rate for the default threshold is measured and published
+      (`bench/semantic/results.md`, written by `pnpm bench:semantic` from the committed vectors and
+      checked by `bench/semantic.test.ts`; the README states the default's rates, also checked
+      by that test).
+- [x] Semantic hits never cross projects or models (`test/semantic-cache.test.ts` against
+      Postgres with pgvector: another project, another logical model, another output cap, seed or
+      system prompt all miss; the query filters on project, model and context key).
 
 ### M18 plan (2026-11-10)
 

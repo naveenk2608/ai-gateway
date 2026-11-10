@@ -41,3 +41,7 @@ answer that the caller expects to vary.
   recorded with no attempts and zero cost; sampled requests are cached only when opted in.
 - With the cache on, completions of cacheable requests stay in Redis for the TTL; prompts appear
   only as part of a SHA-256 key.
+
+Note (2026-11-10, M18): the semantic cache this ADR left as future work exists now, opt-in per
+project and with its false-hit rate measured; see ADR 040. The exact cache is unchanged and is
+looked up first.
