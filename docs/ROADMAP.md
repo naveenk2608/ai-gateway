@@ -1071,9 +1071,17 @@ stop growing without bound.
 
 **Acceptance**
 
-- [ ] CI installs the chart on kind and passes a smoke test.
-- [ ] A trace shows gateway, provider and worker.
-- [ ] Old partitions are dropped on schedule.
+- [x] CI installs the chart on kind and passes a smoke test (job "Helm chart": a kind cluster,
+      the chart installed with the mock provider, a chat request through the Service and its usage
+      row in Postgres; green on every push since `c484572`).
+- [x] A trace shows gateway, provider and worker (`src/tracing.test.ts` with an in-memory exporter:
+      the request span, its `provider.attempt` child and the worker's `usage.ingest` span share the
+      caller's trace; Jaeger in Compose for a real view).
+- [x] Old partitions are dropped on schedule (`test/partitions.test.ts`: the worker's maintenance
+      drops months older than `RAW_RETENTION_MONTHS` and creates months ahead; it runs on the
+      hourly retention schedule).
+- [x] promtool's rule tests pass (`promtool test rules` in CI, unit tests in
+      `infra/compose/observability/rules/slo_test.yml`).
 
 **ADR to write.** Tracing with the OpenTelemetry SDK, superseding the "no tracing SDK" part of
 ADR 017 (which left it out for its memory and startup cost on the free host).
