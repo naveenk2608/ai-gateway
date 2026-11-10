@@ -20,11 +20,14 @@ import { captureLogger, sseData, testConfig } from './helpers.js';
  * is a unit vector, and its similarity to Q is its first number.
  */
 const Q = 'What is the capital of France?';
+/** Its embedding call is slow, so identical requests arrive while the first is still embedding. */
+const BURST = 'Which river runs through Paris?';
 const VECTORS: Record<string, number[]> = {
   [Q]: [1, 0, 0],
   'Tell me the capital city of France.': [0.96, 0.28, 0],
   'Which city is the capital of France?': [0.85, Math.sqrt(1 - 0.85 ** 2), 0],
   'Name a large ocean.': [0, 0, 1],
+  [BURST]: [0, 1, 0],
 };
 const PARAPHRASE = 'Tell me the capital city of France.';
 const LOOSER = 'Which city is the capital of France?';
@@ -38,8 +41,9 @@ let gateway: Gateway;
 let url: string;
 
 beforeAll(async () => {
-  upstream = await startFakeUpstream((req, res) => {
+  upstream = await startFakeUpstream(async (req, res) => {
     const { input } = JSON.parse(req.body) as { input: string[] };
+    if (input[0] === BURST) await new Promise((resolve) => setTimeout(resolve, 300));
     const vector = VECTORS[input[0] ?? ''];
     if (!vector) {
       sendJson(res, 500, { error: { message: 'no vector for this text' } });
@@ -271,6 +275,27 @@ describe('semantic cache through the gateway', () => {
     before = embedCalls();
     await chat(all.key, Q, { temperature: 0.7 });
     expect(embedCalls() - before).toBe(0);
+  });
+
+  it('identical requests in flight make one embedding call and one upstream call', async () => {
+    const a = await project({ mode: 'all', threshold: 0.9 });
+    const embedsBefore = embedCalls();
+    const before = calls('answer');
+    const answers = await Promise.all(Array.from({ length: 5 }, () => chat(a.key, BURST)));
+    expect(answers.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
+    // The first leads (a lookup, then the call); the others wait for its answer (ADR 031).
+    expect(answers.filter((r) => r.cache === 'coalesced')).toHaveLength(4);
+    expect(embedCalls() - embedsBefore).toBe(1);
+    expect(calls('answer') - before).toBe(1);
+    expect(await entries(a.id, 1)).toBe(1);
+  });
+
+  it('a streamed miss is stored too, and answers a later paraphrase', async () => {
+    const a = await project({ mode: 'all', threshold: 0.9 });
+    const streamed = await chat(a.key, Q, { stream: true });
+    expect(streamed.cache).toBeNull();
+    await entries(a.id, 1);
+    expect((await chat(a.key, PARAPHRASE)).cache).toBe('semantic');
   });
 
   it('an embedding failure falls back to a normal request', async () => {
