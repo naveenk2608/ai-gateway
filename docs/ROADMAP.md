@@ -1147,11 +1147,101 @@ batches); tests for both.
 
 **Part E — wrap-up**: README, ADRs (036 onward), PLAN-NOTES rows, ticked checks, the "M17 run" row.
 
+## M18 — Semantic cache
+
+**Goal.** Requests that ask the same thing in other words can be answered from an earlier answer,
+only where a project opts in, never across projects or models, and with a false-hit rate that has
+been measured and published rather than guessed.
+
+**Scope**
+
+- Opt-in per project and per request; only requests the exact cache would accept, after an
+  exact-cache miss; vectors in Postgres with pgvector, never in Redis.
+- The nearest stored request by cosine similarity within the same project, logical model and
+  every field except the text, above a per-project threshold; a TTL and a row cap per project.
+- Accounting: hits recorded like cache hits with their similarity; every lookup pays for its
+  embedding call; the dashboard shows both.
+- A labelled set of prompt pairs with committed vectors, and a script and CI test that report hit
+  and false-hit rates per threshold; the default threshold chosen from them.
+
+**Acceptance**
+
+- [ ] The false-hit rate for the default threshold is measured and published.
+- [ ] Semantic hits never cross projects or models.
+
+### M18 plan (2026-11-10)
+
+Read first: ADR 013 (exact cache), ADR 029 (embeddings) and ADR 031 (coalescing). Neon's pgvector
+page (<https://neon.com/docs/extensions/pgvector>, checked 2026-11-10): pgvector 0.8.0 on
+Postgres 16 and 17, available on every plan including Free, enabled with
+`CREATE EXTENSION vector`; `<=>` is cosine distance; HNSW and IVFFlat indexes take at most 2,000
+dimensions for `vector`. Order A → F, small commits, CI checked after each push.
+
+**Part A — opt-in, embedding call and storage.**
+
+- Migration 0018 creates the `vector` extension when the server offers it and the role may (Neon
+  does), and `semantic_cache_entries` (project, logical model, context key, vector, the answer,
+  who made it, created and expiry times) only when the type exists, so a Postgres without
+  pgvector still migrates and the feature reports itself unavailable instead of failing a deploy.
+  It also adds `projects.semantic_cache` (`{}`: off) and nullable columns on `request_records` for
+  the outcome, similarity and embedding call. CI, Compose and the kind job move from
+  `postgres:16.15-alpine3.24` to `pgvector/pgvector:0.8.6-pg16` pinned by digest (0.8.7 was
+  published 10 days ago); pgvector uses the PostgreSQL License, as Postgres does.
+- Switches: `SEMANTIC_CACHE_ENABLED` (false, so Render keeps it off: it stores answers in Postgres
+  and makes an embedding call per lookup) and `SEMANTIC_CACHE_EMBEDDING_MODEL` (an embeddings
+  model from the models file, checked at startup; default `nomic-embed-text`, the free local one
+  whose vectors Part D measures). Per project: `mode` `off` (default), `header` (only requests
+  with `x-gateway-semantic-cache: on`) or `all` (every eligible request unless it sends `off`),
+  the threshold, the TTL and the row cap, through the admin API and a dashboard form.
+- Eligible requests: those the exact cache would accept (ADR 013), after an exact-cache miss (or
+  with the exact cache off), and after coalescing has chosen a leader, so followers wait for its
+  answer and a burst makes one embedding call. The last message must be a user message with text
+  only, and requests with `tools` are left out. The embedded text is that last user message
+  (after guardrail masks); everything else (earlier messages, system prompt, roles, names, every
+  parameter, the logical model and the embedding model) goes into a SHA-256 context key that must
+  match exactly.
+- The embedding call goes through the embeddings model's route (breakers, quotas, the request's
+  remaining deadline) with one try; any failure lets the request continue as a normal miss.
+
+**Part B — lookup, threshold, TTL and cap.** The nearest unexpired entry with the same project and
+context key by cosine distance; `1 - distance` at or above the project's threshold is a hit,
+answered as an exact hit is (JSON, or replayed as a stream) with `x-gateway-cache: semantic`. On a
+miss, the complete answer is stored with the vector already computed and the TTL, and the
+project's oldest rows beyond its cap are deleted; the worker deletes expired rows on its retention
+schedule. No vector index: sizes differ per embedding model (Gemini's 3,072 is above the 2,000
+limit) and the cap bounds the scan.
+
+**Part C — accounting.** The usage event gains `semanticCache`: the outcome (`hit`, `miss`,
+`error`), the similarity, the embedding call (deployment, provider, model, billing, tokens) and, on
+a hit, who made the stored answer. A hit is recorded like a cache hit (`cache_hit`, a zero-cost
+usage row with the cached token counts) plus its similarity. The worker prices the embedding call
+(the price in effect at the request, ADR 016; billed per ADR 024), stores it on the request record,
+adds it to the project's budget spend, and for a hit stores what the stored answer's tokens cost at
+its provider's price (the cost avoided). An admin summary and a dashboard panel show hits, misses,
+errors, the embedding cost of hits and misses, the cost avoided and the net of the two.
+
+**Part D — measured false hits.** `bench/semantic/pairs.json`: labelled pairs I write myself,
+paraphrases that should match and near misses that must not (kilometres to miles and miles to
+kilometres). This session has no provider keys and does not read `.env`, so the vectors are
+computed once with `nomic-embed-text` v1.5, the model of the `ollama-nomic-embed-text`
+deployment (Apache-2.0), run locally through transformers.js 4.3.1 in a scratch directory (not a
+repository dependency), and committed with the model, build and date. `bench/semantic.ts`
+(`pnpm bench:semantic`) prints the hit and false-hit rate per threshold; a CI test recomputes
+them from the committed vectors and checks the published table. The default threshold is chosen
+from the results, and the owner gets the command to recompute the vectors through the gateway
+with another embeddings model.
+
+**Part E — tests.** Unit tests for eligibility, the context key and the policy; against Postgres
+with pgvector: no hit across projects, models or parameters, the threshold respected, TTL and the
+cap, an embedding failure falling back to a normal request, and the accounting.
+
+**Part F — wrap-up**: README, ADR 040, PLAN-NOTES rows, ticked checks, the "M18 run" row.
+
 ## Stretch
 
 Pick one after M17:
 
-- A semantic cache with a measured false-hit rate, using M13's embeddings.
+- A semantic cache with a measured false-hit rate, using M13's embeddings (picked: M18 above).
 - Experiments: a feedback endpoint and A/B splits between models, with quality compared per
   model.
 
