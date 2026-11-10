@@ -136,9 +136,7 @@ describe('monthly partitions for the raw tables (migration 0017)', () => {
     });
 
     // Up.
-    expect(
-      await migrateDatabase({ databaseUrl: url, dir: through, logger }),
-    ).toContain(MIGRATION);
+    expect(await migrateDatabase({ databaseUrl: url, dir: through, logger })).toContain(MIGRATION);
     await withClient(url, async (c) => {
       expect(await partitioned(c)).toEqual([
         'provider_attempts',
@@ -247,9 +245,7 @@ describe('monthly partitions for the raw tables (migration 0017)', () => {
       expect(facts.rows[0]!.n).toBe(2);
     });
     // And up again, as a later deploy would.
-    expect(
-      await migrateDatabase({ databaseUrl: url, dir: through, logger }),
-    ).toEqual([MIGRATION]);
+    expect(await migrateDatabase({ databaseUrl: url, dir: through, logger })).toEqual([MIGRATION]);
     await withClient(url, async (c) => {
       expect(await counts(c)).toEqual([2, 2, 2]);
     });
