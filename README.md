@@ -69,12 +69,18 @@ runs on several machines at once, which is where most of the engineering here go
 flowchart LR
   C[Client apps / SDKs] --> LB[Load balancer, optional]
   LB --> G[Gateway instances]
-  G --> R[(Redis: limits, budgets, cache, health)]
-  G --> P[Providers: mock, Ollama, OpenAI-compatible]
+  G --> R[(Redis: limits, budgets, quotas, exact cache, breaker state)]
+  G --> P[Providers: mock, Ollama, OpenAI-compatible free tiers]
+  G --> PG[(PostgreSQL: keys, projects, idempotency keys, route overrides, semantic cache with pgvector)]
   G -- usage events --> S[[Redis Stream, or SQS on AWS]]
-  S --> W[Worker] --> PG[(PostgreSQL)]
+  S --> W[Worker] --> PG
   W -- after 5 failed deliveries --> DLQ[[Dead letters]]
+  W -- signed alerts from a Postgres outbox --> WH[Webhooks: Slack, Discord, any URL]
   D[Dashboard, served by the gateway] --> A[Admin API in the gateway] --> PG
+  G -. metrics .-> M[Prometheus and Grafana]
+  G -. spans, when OTLP is set .-> J[Jaeger]
+  W -. metrics .-> M
+  W -. spans, when OTLP is set .-> J
 ```
 
 ### How a request flows
@@ -93,8 +99,19 @@ sequenceDiagram
   G->>G: verify the key (cached HMAC lookup), validate the body
   G->>R: one Lua script: RPM, TPM, concurrency, budget reservation
   R-->>G: admitted (or 429 with retry-after)
-  opt cache on and request cacheable
+  opt project guardrails on
+    G->>G: mask or block personal data, blocked words, prompt cap
+  end
+  opt Idempotency-Key sent
+    G->>DB: claim the key, or replay its stored answer
+  end
+  opt request cacheable (temperature 0 or x-gateway-cache: on)
     G->>R: look up the exact-match key
+    G->>G: join an identical request in flight, or lead it
+    opt project opted in to the semantic cache
+      G->>P: embed the last user message
+      G->>DB: nearest stored request of this project, model and context
+    end
   end
   G->>P: attempt 1 (policy order, breaker state, timeout)
   P--xG: retryable failure before the first byte
@@ -108,8 +125,29 @@ sequenceDiagram
   W-)B: acknowledge after the commit
 ```
 
-The client's response never waits on Postgres: the request path touches Redis and the provider
-only, and the worker writes the record afterwards.
+The client's response never waits on the request's record: the worker writes it afterwards. The
+request path reads Postgres only for the optional features that keep their state there (an
+`Idempotency-Key`, the semantic cache), never Redis for anything large or long-lived.
+
+### Features and the decisions behind them
+
+Each feature's design, the alternatives it rejected and how it is tested are in its ADR in
+[docs/adr/](docs/adr/).
+
+| Area | Features | ADRs |
+| --- | --- | --- |
+| Structure | Gateway and worker processes from one codebase; Fastify with Zod schemas and generated OpenAPI; Kysely and plain-SQL migrations | [001](docs/adr/001-modular-monolith.md), [002](docs/adr/002-fastify-zod-openapi.md), [003](docs/adr/003-kysely-and-sql-migrations.md) |
+| API | OpenAI-compatible chat (streamed or not), tools, JSON output and images; embeddings; `Idempotency-Key`; CORS for `/v1` and the Playground | [028](docs/adr/028-capabilities-and-capability-aware-routing.md), [029](docs/adr/029-embeddings.md), [032](docs/adr/032-idempotency-key.md), [021](docs/adr/021-playground-and-v1-cors.md) |
+| Access | `gw_` API keys stored as peppered HMACs; admin users with argon2id passwords, sessions and per-project roles | [006](docs/adr/006-api-keys.md), [007](docs/adr/007-admin-auth.md) |
+| Limits and money | Rate, token and concurrency limits in Redis Lua; budgets that reserve the worst case; fail closed when Redis is down; versioned prices; list and billed cost; free-tier quotas and 429 cooldowns | [008](docs/adr/008-rate-limits-in-redis-lua.md), [009](docs/adr/009-budget-reservations.md), [010](docs/adr/010-redis-outage-fail-closed.md), [016](docs/adr/016-versioned-pricing.md), [024](docs/adr/024-list-cost-and-billed-cost.md), [025](docs/adr/025-free-tier-quotas-and-cooldowns.md) |
+| Routing and resilience | An abort per attempt; bounded retries with jitter and fallback; circuit breakers with health checks (chat checks where needed); capability-aware routing; peak EWMA with power of two choices; per-project route overrides | [004](docs/adr/004-undici-abort-per-attempt.md), [011](docs/adr/011-retries-and-fallback.md), [012](docs/adr/012-circuit-breakers.md), [026](docs/adr/026-chat-health-checks.md), [028](docs/adr/028-capabilities-and-capability-aware-routing.md), [030](docs/adr/030-peak-ewma-routing.md), [034](docs/adr/034-route-overrides.md) |
+| Saving calls | Exact-match cache per project; coalescing of identical requests in flight; an opt-in semantic cache with a measured false-hit rate | [013](docs/adr/013-exact-response-cache.md), [031](docs/adr/031-request-coalescing.md), [040](docs/adr/040-semantic-cache.md) |
+| Safety | Guardrails before and after the model, on streamed answers too | [035](docs/adr/035-guardrails.md) |
+| Accounting and analytics | An event bus (Redis Streams, or SQS) with idempotent inserts; rollups with latency histograms; monthly partitions with retention | [005](docs/adr/005-event-bus.md), [023](docs/adr/023-sqs-event-bus.md), [014](docs/adr/014-effectively-once-accounting.md), [015](docs/adr/015-analytics-rollups.md), [039](docs/adr/039-monthly-partitions.md) |
+| Operations | Prometheus metrics and trace IDs; OpenTelemetry tracing; SLOs with burn-rate alerts; webhook alerts through a Postgres outbox | [017](docs/adr/017-observability.md), [037](docs/adr/037-opentelemetry-tracing.md), [038](docs/adr/038-slo-burn-rate-alerts.md), [033](docs/adr/033-webhook-alerts.md) |
+| Dashboard | React, Vite and TypeScript; a small design system | [018](docs/adr/018-frontend-stack.md), [020](docs/adr/020-dashboard-design-system.md) |
+| Delivery | A scanned, signed image with pinned actions; a Helm chart tested on kind; AWS Terraform tested without an account | [027](docs/adr/027-supply-chain.md), [036](docs/adr/036-kubernetes-chart.md), [022](docs/adr/022-aws-deployment-layout.md) |
+| Measurement | k6 benchmarks against an HTTP mock with a generated report | [019](docs/adr/019-benchmark-method.md) |
 
 ## Run it locally
 
@@ -1307,6 +1345,11 @@ report comes from such a run.
 | `spread.js` | `peak_ewma` between two mocks, one twice as slow, with the faster one slowed down half way (through the mock's `POST /settings`): which deployment served each request, before and after |
 | `coalesce.js` | Rounds of 50 identical temperature-0 requests sent at once to one instance: calls that reached the mock (its own counter) against requests answered `coalesced` |
 
+Two measurements run without Docker or a gateway: `pnpm bench:guardrails` times the guardrail
+checks on a large prompt, and `pnpm bench:semantic` gives the semantic cache's hit and false-hit
+rates per threshold from labelled pairs and committed vectors
+([bench/semantic/results.md](bench/semantic/results.md), checked in CI).
+
 ## Container image
 
 Every push to `main` that passes CI publishes the gateway image to the GitHub Container
@@ -1463,12 +1506,13 @@ docs/providers.md        every provider's model IDs, prices and free limits, wit
 - No response-quality evaluation: routing weighs latency, cost and failures only.
 - Model capabilities (tools, JSON output, images) are set only where a provider's docs state
   them, so some deployments that could serve a request are skipped; an embeddings model never
-  falls back to another model, so it fails while its one deployment is down. The gateway never
-  checks a JSON answer against its schema; it relies on the provider.
+  falls back to another model, so it fails while its one deployment is down. Unless a project's
+  guardrails check it (ADR 035), a JSON answer is trusted to match its schema.
 - Redis Cluster is not supported (one Redis primary is).
 - Analytics percentiles are approximate (histogram buckets), and days are UTC days.
-- Metrics are per process: Prometheus must scrape every gateway instance. Traces exist only as
-  IDs in the logs; there is no trace store.
+- Metrics are per process: Prometheus must scrape every gateway instance. Spans are exported only
+  when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (Jaeger in Compose); otherwise traces are IDs in the
+  logs, as on the demo.
 - The AWS Terraform has never been applied: its tests use a mocked provider, so the instances'
   boot scripts and the acceptance checks on a real account (apply, the smoke and two-instance
   limits tests, destroy with nothing billing) are still to do.
@@ -1482,10 +1526,12 @@ docs/providers.md        every provider's model IDs, prices and free limits, wit
 - Run the AWS setups on a real account and close the acceptance checks in
   [docs/aws-deployment.md](docs/aws-deployment.md).
 - A transactional outbox for usage events, so a long event-bus outage loses nothing.
-- A semantic cache, measured against a false-hit rate before it is trusted.
+- The semantic cache's false-hit rate measured with the hosted embeddings models too (one command
+  each, `bench/semantic/embed.ts`), and a larger labelled set; and whether anything beyond
+  surface variants can be matched safely (for example by comparing numbers and entities as well).
 - Cost-aware routing evaluated against a labelled prompt set (response quality, not only speed
-  and price).
-- Retention or partitioning for the raw request tables; only rollups expire today.
-- SSE keep-alive comments while waiting for a slow first token, and a pre-stop delay before the
-  listener closes, for proxies stricter than the ALB setup here.
+  and price), and experiments: a feedback endpoint and A/B splits between models.
+- Coalescing across instances (one call per identical request on any instance), through Redis.
+- SSE keep-alive comments while waiting for a slow first token, and a pre-stop delay outside
+  Kubernetes (the Helm chart has one), for proxies stricter than the ALB setup here.
 - Graviton (arm64) instances and a pre-built image registry for faster boots on AWS.
