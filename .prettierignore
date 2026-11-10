@@ -5,5 +5,7 @@ pnpm-lock.yaml
 *.md
 # Benchmark results are committed exactly as k6 and `pnpm bench` wrote them.
 bench/results/
+# Vectors computed once for the semantic cache's false-hit measurement, kept as written.
+bench/semantic/vectors.json
 # Helm templates are Go templates, not plain YAML.
 infra/helm/ai-gateway/templates/

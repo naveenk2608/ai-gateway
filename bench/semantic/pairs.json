@@ -1,0 +1,175 @@
+{
+  "about": "Labelled prompt pairs for the semantic cache's false-hit measurement (M18, ADR 040), written by hand. Each group has an anchor (the stored request); `surface`: the same question with other casing, spacing, punctuation or spelling, which the exact cache misses; `match`: paraphrases that ask the same thing; both should be answered from the anchor. `distinct`: near misses that look alike but need another answer, and must not be.",
+  "groups": [
+    {
+      "anchor": "Convert 10 kilometres to miles.",
+      "surface": ["convert 10 kilometres to miles"],
+      "match": ["How many miles is 10 km?", "What is 10 kilometers in miles?"],
+      "distinct": ["Convert 10 miles to kilometres.", "Convert 100 kilometres to miles."]
+    },
+    {
+      "anchor": "What is the capital of France?",
+      "surface": ["what is the capital of france"],
+      "match": ["Which city is the capital of France?", "Tell me France's capital city."],
+      "distinct": ["What is the capital of Germany?", "What is the largest city in France?"]
+    },
+    {
+      "anchor": "Translate 'good morning' into French.",
+      "match": ["How do you say 'good morning' in French?"],
+      "distinct": ["Translate 'good morning' into Spanish.", "Translate 'good night' into French."]
+    },
+    {
+      "anchor": "Convert 25 degrees Celsius to Fahrenheit.",
+      "match": ["What is 25 °C in Fahrenheit?"],
+      "distinct": ["Convert 25 degrees Fahrenheit to Celsius."]
+    },
+    {
+      "anchor": "Write a Python function that reverses a string.",
+      "match": ["Give me a Python function to reverse a string."],
+      "distinct": [
+        "Write a JavaScript function that reverses a string.",
+        "Write a Python function that reverses a list."
+      ]
+    },
+    {
+      "anchor": "Is 97 a prime number?",
+      "surface": ["Is 97 a prime number ?"],
+      "match": ["Is the number 97 prime?"],
+      "distinct": ["Is 91 a prime number?"]
+    },
+    {
+      "anchor": "Summarise the plot of Romeo and Juliet in two sentences.",
+      "match": ["Give a two-sentence summary of the plot of Romeo and Juliet."],
+      "distinct": [
+        "Summarise the plot of Hamlet in two sentences.",
+        "Summarise the plot of Romeo and Juliet in two paragraphs."
+      ]
+    },
+    {
+      "anchor": "What time zone is Mumbai in?",
+      "surface": ["What timezone is Mumbai in?"],
+      "match": ["Which time zone does Mumbai use?"],
+      "distinct": ["What time zone is Tokyo in?"]
+    },
+    {
+      "anchor": "How do I undo the last git commit but keep my changes?",
+      "match": ["How can I revert my most recent git commit without losing the changes?"],
+      "distinct": ["How do I undo the last git commit and discard my changes?"]
+    },
+    {
+      "anchor": "Explain what a SQL inner join does.",
+      "surface": ["Explain what an SQL inner join does."],
+      "match": ["What does an inner join do in SQL?"],
+      "distinct": ["Explain what a SQL left join does."]
+    },
+    {
+      "anchor": "What is 15% of 200?",
+      "match": ["Calculate fifteen percent of 200."],
+      "distinct": ["What is 200% of 15?", "What is 15% of 300?"]
+    },
+    {
+      "anchor": "List three benefits of regular exercise.",
+      "surface": ["List 3 benefits of regular exercise."],
+      "match": ["Name three advantages of exercising regularly."],
+      "distinct": ["List three risks of too much exercise."]
+    },
+    {
+      "anchor": "Who wrote Pride and Prejudice?",
+      "surface": ["Who wrote 'Pride and Prejudice'?"],
+      "match": ["Who is the author of Pride and Prejudice?"],
+      "distinct": ["Who wrote Sense and Sensibility?"]
+    },
+    {
+      "anchor": "Sort these numbers in ascending order: 5, 2, 9, 1.",
+      "match": ["Put 5, 2, 9, 1 in increasing order."],
+      "distinct": ["Sort these numbers in descending order: 5, 2, 9, 1."]
+    },
+    {
+      "anchor": "Alice owes Bob 50 dollars. Write a reminder message to Alice.",
+      "match": ["Write a message reminding Alice that she owes Bob 50 dollars."],
+      "distinct": ["Bob owes Alice 50 dollars. Write a reminder message to Bob."]
+    },
+    {
+      "anchor": "What is the boiling point of water at sea level in Celsius?",
+      "match": ["At sea level, at what temperature in Celsius does water boil?"],
+      "distinct": ["What is the freezing point of water at sea level in Celsius?"]
+    },
+    {
+      "anchor": "Give me a recipe for vegetarian lasagna.",
+      "match": ["How do I make a vegetarian lasagna?"],
+      "distinct": ["Give me a recipe for beef lasagna."]
+    },
+    {
+      "anchor": "How many days are there in a leap year?",
+      "surface": ["  How many days are there in a leap year?  "],
+      "match": ["How many days does a leap year have?"],
+      "distinct": ["How many days are there in a common year?"]
+    },
+    {
+      "anchor": "Convert this JSON to YAML: {\"name\": \"gateway\", \"port\": 8080}",
+      "match": ["Turn this JSON into YAML: {\"name\": \"gateway\", \"port\": 8080}"],
+      "distinct": ["Convert this YAML to JSON: name: gateway, port: 8080"]
+    },
+    {
+      "anchor": "What are the side effects of ibuprofen?",
+      "match": ["Which side effects can ibuprofen cause?"],
+      "distinct": ["What are the side effects of paracetamol?"]
+    },
+    {
+      "anchor": "Is it safe to eat raw eggs?",
+      "match": ["Can I safely eat eggs raw?"],
+      "distinct": ["Is it safe to eat raw chicken?"]
+    },
+    {
+      "anchor": "Write a haiku about autumn.",
+      "surface": ["Write a haiku about autumn!"],
+      "match": ["Compose a haiku on the theme of autumn."],
+      "distinct": ["Write a haiku about spring.", "Write a limerick about autumn."]
+    },
+    {
+      "anchor": "What was the weather like in Delhi yesterday?",
+      "match": ["How was yesterday's weather in Delhi?"],
+      "distinct": ["What will the weather be like in Delhi tomorrow?"]
+    },
+    {
+      "anchor": "How do I convert a string to an integer in Java?",
+      "match": ["In Java, how can I turn a string into an int?"],
+      "distinct": ["How do I convert an integer to a string in Java?"]
+    },
+    {
+      "anchor": "Which is bigger, a kilobyte or a megabyte?",
+      "match": ["Is a megabyte larger than a kilobyte?"],
+      "distinct": ["Which is bigger, a megabyte or a gigabyte?"]
+    },
+    {
+      "anchor": "Recommend a book for learning statistics as a beginner.",
+      "match": ["What is a good beginner's book on statistics?"],
+      "distinct": ["Recommend a book for learning statistics at an advanced level."]
+    },
+    {
+      "anchor": "What does HTTP status code 404 mean?",
+      "surface": ["what does http status code 404 mean"],
+      "match": ["Explain the meaning of an HTTP 404 status code."],
+      "distinct": ["What does HTTP status code 403 mean?"]
+    },
+    {
+      "anchor": "How long should I boil an egg for a soft yolk?",
+      "match": ["For a runny yolk, how many minutes do I boil an egg?"],
+      "distinct": ["How long should I boil an egg for a hard yolk?"]
+    },
+    {
+      "anchor": "Add 345 and 678.",
+      "match": ["What is 345 plus 678?"],
+      "distinct": ["Subtract 345 from 678.", "Add 345 and 687."]
+    },
+    {
+      "anchor": "My flight leaves at 6 pm. When should I get to the airport for a domestic flight?",
+      "match": [
+        "For a domestic flight departing at 6 pm, what time should I arrive at the airport?"
+      ],
+      "distinct": [
+        "My flight leaves at 6 pm. When should I get to the airport for an international flight?"
+      ]
+    }
+  ]
+}

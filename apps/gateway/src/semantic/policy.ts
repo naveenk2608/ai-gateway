@@ -12,11 +12,13 @@ export const SIMILARITY_HEADER = 'x-gateway-semantic-similarity';
 export const SEMANTIC_MODES = ['off', 'header', 'all'] as const;
 
 /**
- * The cosine similarity a hit needs when a project sets none. Chosen in M18 Part D from the
- * labelled pairs in `bench/semantic` (vectors from nomic-embed-text v1.5); see ADR 040 and
- * `pnpm bench:semantic` for the hit and false-hit rates at each threshold.
+ * The cosine similarity a hit needs when a project sets none: the lowest threshold measured at
+ * which no near miss of the labelled set in `bench/semantic` is answered (vectors from
+ * nomic-embed-text v1.5, M18 Part D). Lower ones answer requests that only look alike, such as
+ * miles to kilometres for kilometres to miles. `pnpm bench:semantic` and
+ * `bench/semantic/results.md` give the hit and false-hit rates at each threshold; ADR 040.
  */
-export const DEFAULT_SEMANTIC_THRESHOLD = 0.95;
+export const DEFAULT_SEMANTIC_THRESHOLD = 0.995;
 
 /**
  * A project's semantic cache settings (M18, ADR 040), stored in `projects.semantic_cache`. Off

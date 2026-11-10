@@ -639,6 +639,33 @@ down at start, the file's routes apply until the overrides load. Viewers see the
   there) and recorded like a cache hit, at zero cost, with `coalesced: true`. If the first request
   fails, the others get the same error; the call is cancelled only when nobody waits for it any
   more. `COALESCE_ENABLED=false` switches it off. Coalescing does not span instances.
+- **Semantic cache** ([ADR 040](docs/adr/040-semantic-cache.md), off unless
+  `SEMANTIC_CACHE_ENABLED=true` and a project opts in): a request the exact cache would take, whose
+  last message is text from the user and which sends no tools, is answered after an exact-cache
+  miss from the most similar earlier request of the same project, logical model and context (the
+  system prompt, earlier messages and every parameter must match exactly; only the last message
+  is compared, by cosine similarity of its embedding). A project's mode is `off` (default),
+  `header` (only requests sending `x-gateway-semantic-cache: on`) or `all` (every eligible request
+  unless it sends `off`), with a threshold, a TTL (1 h) and a row cap (1,000), set on the
+  dashboard's Settings page or `PUT /admin/projects/{id}/semantic-cache`. A hit is answered with
+  `x-gateway-cache: semantic` and `x-gateway-semantic-similarity`, and recorded like a cache hit
+  with its similarity. Every lookup, hit or miss, makes one embedding call with
+  `SEMANTIC_CACHE_EMBEDDING_MODEL` (default `nomic-embed-text`, the free local one), which is priced
+  and counted in the budget; the Cost page shows it next to the cost the hits avoided, so the net
+  saving can be negative. An embedding failure is a normal miss. Vectors and answers live in
+  Postgres with pgvector (Neon has it on every plan); prompts are never stored, but an embedding
+  reveals roughly what the text said, which is one reason it is opt-in.
+
+  **Measured false hits.** Embeddings place requests that only look alike very close together:
+  with `nomic-embed-text`, "Convert 10 kilometres to miles." and "Convert 10 miles to kilometres."
+  are closer than every paraphrase in the labelled set. The hand-labelled pairs in `bench/semantic/`, with vectors
+  computed once and committed, give the hit and false-hit rate at each threshold in
+  [bench/semantic/results.md](bench/semantic/results.md) (`pnpm bench:semantic`; a CI test
+  recomputes it). The default is the lowest threshold measured that answers none of the near misses:
+  At the default threshold of 0.995, the false-hit rate on the labelled set is 0% (0 of 38 near misses answered) and the hit rate is 11.9% (5/10 (50%) surface variants, 0/32 (0%) paraphrases).
+  Lower thresholds answer more paraphrases and also some near misses, so the default mostly
+  catches the same question with other casing, spacing or punctuation. A threshold measured for one
+  embedding model does not carry over to another.
 
 The default file has these models (each hosted one needs its provider's key; without it the
 deployment is disabled and the model answers 404):

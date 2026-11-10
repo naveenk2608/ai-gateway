@@ -1,0 +1,403 @@
+{
+  "model": "nomic-ai/nomic-embed-text-v1.5",
+  "revision": "e9b6763023c676ca8431644204f50c2b100d9aab",
+  "runtime": "transformers.js 4.3.1 (onnxruntime-node), dtype fp32, mean pooling, normalized, no task prefix",
+  "matchesDeployment": "ollama-nomic-embed-text (nomic-embed-text, 768 dimensions)",
+  "computedAt": "2026-11-10",
+  "pairs": {
+    "surface": 10,
+    "paraphrase": 32,
+    "nearMiss": 38
+  },
+  "rows": [
+    {
+      "threshold": 0.8,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 32,
+        "of": 32
+      },
+      "hitRate": 1,
+      "nearMiss": {
+        "answered": 32,
+        "of": 38
+      },
+      "falseHitRate": 0.842105
+    },
+    {
+      "threshold": 0.81,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 32,
+        "of": 32
+      },
+      "hitRate": 1,
+      "nearMiss": {
+        "answered": 31,
+        "of": 38
+      },
+      "falseHitRate": 0.815789
+    },
+    {
+      "threshold": 0.82,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 32,
+        "of": 32
+      },
+      "hitRate": 1,
+      "nearMiss": {
+        "answered": 30,
+        "of": 38
+      },
+      "falseHitRate": 0.789474
+    },
+    {
+      "threshold": 0.83,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 32,
+        "of": 32
+      },
+      "hitRate": 1,
+      "nearMiss": {
+        "answered": 29,
+        "of": 38
+      },
+      "falseHitRate": 0.763158
+    },
+    {
+      "threshold": 0.84,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 32,
+        "of": 32
+      },
+      "hitRate": 1,
+      "nearMiss": {
+        "answered": 28,
+        "of": 38
+      },
+      "falseHitRate": 0.736842
+    },
+    {
+      "threshold": 0.85,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 32,
+        "of": 32
+      },
+      "hitRate": 1,
+      "nearMiss": {
+        "answered": 26,
+        "of": 38
+      },
+      "falseHitRate": 0.684211
+    },
+    {
+      "threshold": 0.86,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 32,
+        "of": 32
+      },
+      "hitRate": 1,
+      "nearMiss": {
+        "answered": 25,
+        "of": 38
+      },
+      "falseHitRate": 0.657895
+    },
+    {
+      "threshold": 0.87,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 32,
+        "of": 32
+      },
+      "hitRate": 1,
+      "nearMiss": {
+        "answered": 21,
+        "of": 38
+      },
+      "falseHitRate": 0.552632
+    },
+    {
+      "threshold": 0.88,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 30,
+        "of": 32
+      },
+      "hitRate": 0.952381,
+      "nearMiss": {
+        "answered": 19,
+        "of": 38
+      },
+      "falseHitRate": 0.5
+    },
+    {
+      "threshold": 0.89,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 28,
+        "of": 32
+      },
+      "hitRate": 0.904762,
+      "nearMiss": {
+        "answered": 16,
+        "of": 38
+      },
+      "falseHitRate": 0.421053
+    },
+    {
+      "threshold": 0.9,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 28,
+        "of": 32
+      },
+      "hitRate": 0.904762,
+      "nearMiss": {
+        "answered": 13,
+        "of": 38
+      },
+      "falseHitRate": 0.342105
+    },
+    {
+      "threshold": 0.91,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 25,
+        "of": 32
+      },
+      "hitRate": 0.833333,
+      "nearMiss": {
+        "answered": 11,
+        "of": 38
+      },
+      "falseHitRate": 0.289474
+    },
+    {
+      "threshold": 0.92,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 24,
+        "of": 32
+      },
+      "hitRate": 0.809524,
+      "nearMiss": {
+        "answered": 11,
+        "of": 38
+      },
+      "falseHitRate": 0.289474
+    },
+    {
+      "threshold": 0.93,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 21,
+        "of": 32
+      },
+      "hitRate": 0.738095,
+      "nearMiss": {
+        "answered": 11,
+        "of": 38
+      },
+      "falseHitRate": 0.289474
+    },
+    {
+      "threshold": 0.94,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 17,
+        "of": 32
+      },
+      "hitRate": 0.642857,
+      "nearMiss": {
+        "answered": 9,
+        "of": 38
+      },
+      "falseHitRate": 0.236842
+    },
+    {
+      "threshold": 0.95,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 15,
+        "of": 32
+      },
+      "hitRate": 0.595238,
+      "nearMiss": {
+        "answered": 9,
+        "of": 38
+      },
+      "falseHitRate": 0.236842
+    },
+    {
+      "threshold": 0.96,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 12,
+        "of": 32
+      },
+      "hitRate": 0.52381,
+      "nearMiss": {
+        "answered": 8,
+        "of": 38
+      },
+      "falseHitRate": 0.210526
+    },
+    {
+      "threshold": 0.97,
+      "surface": {
+        "answered": 10,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 6,
+        "of": 32
+      },
+      "hitRate": 0.380952,
+      "nearMiss": {
+        "answered": 7,
+        "of": 38
+      },
+      "falseHitRate": 0.184211
+    },
+    {
+      "threshold": 0.98,
+      "surface": {
+        "answered": 9,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 3,
+        "of": 32
+      },
+      "hitRate": 0.285714,
+      "nearMiss": {
+        "answered": 4,
+        "of": 38
+      },
+      "falseHitRate": 0.105263
+    },
+    {
+      "threshold": 0.99,
+      "surface": {
+        "answered": 6,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 1,
+        "of": 32
+      },
+      "hitRate": 0.166667,
+      "nearMiss": {
+        "answered": 3,
+        "of": 38
+      },
+      "falseHitRate": 0.078947
+    },
+    {
+      "threshold": 0.995,
+      "surface": {
+        "answered": 5,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 0,
+        "of": 32
+      },
+      "hitRate": 0.119048,
+      "nearMiss": {
+        "answered": 0,
+        "of": 38
+      },
+      "falseHitRate": 0
+    },
+    {
+      "threshold": 0.999,
+      "surface": {
+        "answered": 3,
+        "of": 10
+      },
+      "paraphrase": {
+        "answered": 0,
+        "of": 32
+      },
+      "hitRate": 0.071429,
+      "nearMiss": {
+        "answered": 0,
+        "of": 38
+      },
+      "falseHitRate": 0
+    }
+  ],
+  "defaultThreshold": 0.995,
+  "ranges": {
+    "surface": {
+      "min": 0.9731,
+      "max": 1
+    },
+    "paraphrase": {
+      "min": 0.8704,
+      "max": 0.9902
+    },
+    "near_miss": {
+      "min": 0.7326,
+      "max": 0.9949
+    }
+  }
+}
