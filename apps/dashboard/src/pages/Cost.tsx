@@ -25,6 +25,7 @@ import { familyOnHost, identifyProvider } from '../ui/providers.js';
 import { listCostText } from '../ui/cost.js';
 import { ShareTable, type ShareRow } from '../ui/ShareTable.js';
 import { ErrorState } from '../ui/states.js';
+import { SemanticCacheSummary } from './SemanticCache.js';
 
 const ALERT_TEXT: Record<NonNullable<BudgetStatus['alert']>, string> = {
   ok: 'within budget',
@@ -428,6 +429,7 @@ export function Cost({ projectId, filters }: { projectId: string; filters: Analy
       >
         {(data) => <Comparison data={data} />}
       </QueryCard>
+      <SemanticCacheSummary projectId={projectId} range={filters.range} />
       <QueryCard
         title="Budgets this month (UTC)"
         what="budgets"

@@ -526,3 +526,34 @@ export interface GuardrailSummary {
   range: string;
   requests: { blocked: number; flagged: number; masked: number };
 }
+
+/** A project's semantic cache settings (M18, ADR 040). */
+export interface SemanticPolicy {
+  mode: 'off' | 'header' | 'all';
+  /** Null: the gateway's measured default. */
+  threshold: number | null;
+  ttlSeconds: number;
+  maxEntries: number;
+}
+
+export interface SemanticSettings {
+  enabled: boolean;
+  available: boolean;
+  embeddingModel: string;
+  defaultThreshold: number;
+  policy: SemanticPolicy;
+}
+
+interface Money {
+  listMicroUsd: number;
+  billedMicroUsd: number;
+}
+
+export interface SemanticSummary {
+  range: string;
+  lookups: { hit: number; miss: number; error: number };
+  hitSimilarity: number | null;
+  embedding: Money & { tokens: number; unpriced: number };
+  avoided: Money & { unpriced: number };
+  net: Money;
+}

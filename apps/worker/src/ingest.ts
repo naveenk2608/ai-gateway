@@ -29,18 +29,27 @@ function finalAttempt(event: UsageEvent) {
 
 const pairKey = (provider: string, model: string) => `${provider}\u0000${model}`;
 
-/** Every price version for the models in the batch, up to the latest request time. */
+/**
+ * Every price version for the models in the batch, up to the latest request time: the answering
+ * attempts', and a semantic lookup's embedding model and a hit's original answering model (ADR 040).
+ */
 async function loadPrices(trx: Db, events: UsageEvent[]): Promise<Map<string, Price[]>> {
   const pairs = new Map<string, [string, string]>();
   let latest = 0;
+  const add = (event: UsageEvent, provider: string, model: string) => {
+    pairs.set(pairKey(provider, model), [provider, model]);
+    latest = Math.max(latest, Date.parse(event.request.startedAt));
+  };
   for (const event of events) {
     const attempt = finalAttempt(event);
-    if (!attempt || !event.usage) continue;
-    pairs.set(pairKey(attempt.provider, attempt.providerModel), [
-      attempt.provider,
-      attempt.providerModel,
-    ]);
-    latest = Math.max(latest, Date.parse(event.request.startedAt));
+    if (attempt && event.usage) add(event, attempt.provider, attempt.providerModel);
+    const semantic = event.semanticCache;
+    if (semantic?.embedding) {
+      add(event, semantic.embedding.provider, semantic.embedding.providerModel);
+    }
+    if (semantic?.answeredBy && event.usage) {
+      add(event, semantic.answeredBy.provider, semantic.answeredBy.providerModel);
+    }
   }
   const byPair = new Map<string, Price[]>();
   if (pairs.size === 0) return byPair;
@@ -75,6 +84,52 @@ async function loadPrices(trx: Db, events: UsageEvent[]): Promise<Map<string, Pr
 }
 
 /**
+ * A request's semantic lookup (ADR 040) as request record columns: the outcome and similarity,
+ * the embedding call's tokens and cost, and for a hit what its stored answer's tokens cost at the
+ * answering model's price (the cost it avoided). Prices are those in effect when the request
+ * started (ADR 016); a free tier bills nothing (ADR 024). Null where there was no lookup or price.
+ */
+function semanticColumns(event: UsageEvent, prices: Map<string, Price[]>) {
+  const semantic = event.semanticCache;
+  if (!semantic) return { embeddingCost: 0 };
+  const at = Date.parse(event.request.startedAt);
+  const priceOf = (provider: string, model: string) =>
+    priceAt(prices.get(pairKey(provider, model)) ?? [], at);
+  const embedding = semantic.embedding;
+  const embeddingPrice = embedding && priceOf(embedding.provider, embedding.providerModel);
+  const embeddingCost =
+    embedding && embeddingPrice ? costMicroUsd(embedding.promptTokens, 0, embeddingPrice) : null;
+  const answeredBy = semantic.outcome === 'hit' ? (semantic.answeredBy ?? null) : null;
+  const usage = event.usage;
+  const answerPrice = answeredBy && usage && priceOf(answeredBy.provider, answeredBy.providerModel);
+  const avoided =
+    usage && answerPrice
+      ? costMicroUsd(usage.promptTokens, usage.completionTokens, answerPrice)
+      : null;
+  return {
+    embeddingCost: embeddingCost ?? 0,
+    columns: {
+      semantic_cache: semantic.outcome,
+      semantic_similarity: semantic.similarity,
+      embedding_deployment: embedding?.deployment ?? null,
+      embedding_tokens: embedding?.promptTokens ?? null,
+      embedding_cost_micro_usd: embeddingCost,
+      embedding_billed_cost_micro_usd: embedding
+        ? embedding.billing === 'free_tier'
+          ? 0
+          : embeddingCost
+        : null,
+      semantic_avoided_cost_micro_usd: avoided,
+      semantic_avoided_billed_cost_micro_usd: answeredBy
+        ? answeredBy.billing === 'free_tier'
+          ? 0
+          : avoided
+        : null,
+    },
+  };
+}
+
+/**
  * Writes a batch of events: one request record, its attempts and (if any provider was called) one
  * usage row each. Every insert is ON CONFLICT DO NOTHING, so re-delivered events change nothing
  * (ADR 014). Cost uses the price version in effect when the request started (ADR 016), and is
@@ -92,13 +147,14 @@ export async function ingestEvents(
 ): Promise<void> {
   if (events.length === 0) return;
   const prices = await loadPrices(trx, events);
+  const semantic = new Map(events.map((event) => [event, semanticColumns(event, prices)]));
 
   // RETURNING lists only the requests inserted now: a re-delivered event adds nothing to the
   // rollups below.
   const insertedRequests = await trx
     .insertInto('request_records')
     .values(
-      events.map(({ request: r, attempts, ...event }) => ({
+      events.map(({ request: r, attempts, ...event }, i) => ({
         id: r.id,
         project_id: r.projectId,
         api_key_id: r.apiKeyId,
@@ -118,6 +174,7 @@ export async function ingestEvents(
         replayed: event.replayed === true,
         // Events from gateways before M13 have no endpoint: they were all chat requests.
         endpoint: r.endpoint ?? 'chat',
+        ...semantic.get(events[i]!)?.columns,
       })),
     )
     .onConflict((oc) => oc.doNothing())
@@ -250,12 +307,20 @@ export async function ingestEvents(
           .returning('request_id')
           .execute();
   const costs = new Map(usageRows.map((row) => [row.request_id, row.cost_micro_usd ?? null]));
+  // A semantic lookup's embedding call is spend too (ADR 040), counted once with its request.
+  const embeddingCosts = new Map(
+    events.flatMap((event) => {
+      const cost = semantic.get(event)?.embeddingCost ?? 0;
+      return cost > 0 && insertedIds.has(event.request.id) ? [[event.request.id, cost]] : [];
+    }),
+  );
   await updateBudgetLedger(
     trx,
     events,
     costs,
     new Set(inserted.map((row) => row.request_id)),
     options.budgetAlerts === true,
+    embeddingCosts,
   );
   // Per-minute, hourly and daily rollups (ADR 015), from the rows inserted above.
   if (insertedRequests.length > 0) {
@@ -284,6 +349,8 @@ async function updateBudgetLedger(
   costs: Map<string, number | null>,
   inserted: Set<string>,
   budgetAlerts: boolean,
+  /** Embedding calls of semantic lookups, by request, for requests inserted now (ADR 040). */
+  embeddingCosts: Map<string, number> = new Map(),
 ): Promise<void> {
   const deltas = new Map<string, PeriodDelta>();
   const periodOf = (event: UsageEvent) => budgetPeriodAt(Date.parse(event.request.startedAt));
@@ -303,7 +370,9 @@ async function updateBudgetLedger(
   // One event per request: the same event can arrive more than once in a batch.
   const unique = [...new Map(events.map((e) => [e.request.id, e])).values()];
   for (const event of unique) {
-    const cost = inserted.has(event.request.id) ? (costs.get(event.request.id) ?? 0) : 0;
+    const cost =
+      (inserted.has(event.request.id) ? (costs.get(event.request.id) ?? 0) : 0) +
+      (embeddingCosts.get(event.request.id) ?? 0);
     if (cost > 0 || event.budget) touch(event, cost);
   }
   if (deltas.size === 0) return;
@@ -367,6 +436,12 @@ async function updateBudgetLedger(
     periods.map((p) => [`${p.project_id}|${p.period_start.getTime()}`, p.id]),
   );
 
+  /** What the request cost: its call and any embedding call; null when neither had a price. */
+  const actualCost = (id: string) => {
+    const call = costs.get(id) ?? null;
+    const embedding = embeddingCosts.get(id);
+    return embedding === undefined ? call : (call ?? 0) + embedding;
+  };
   const reservations = unique.flatMap((event) => {
     if (!event.budget) return [];
     const periodId = periodIds.get(`${event.request.projectId}|${periodOf(event).start}`);
@@ -378,7 +453,7 @@ async function updateBudgetLedger(
         project_id: event.request.projectId,
         request_id: event.request.id,
         reserved_micro_usd: event.budget.reservedMicroUsd,
-        actual_micro_usd: costs.get(event.request.id) ?? null,
+        actual_micro_usd: actualCost(event.request.id),
         status: 'reconciled' as const,
         created_at: event.request.startedAt,
         settled_at: event.request.completedAt,

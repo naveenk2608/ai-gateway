@@ -349,6 +349,22 @@ describe('Cost page', () => {
     expect(within(card('Projected this month')).getByText(/from 12 days of data/)).toBeTruthy();
   });
 
+  it('shows the semantic cache: hits, every embedding call and the net saving', async () => {
+    stubApi('data');
+    show(page());
+    const table = await screen.findByRole('table', { name: 'Semantic cache summary' });
+    expect(
+      within(table).getByText('2 hits · 7 misses · 1 errors · mean hit similarity 0.997'),
+    ).toBeTruthy();
+    const row = (name: string) => within(table).getByRole('row', { name: new RegExp(name) });
+    expect(row('Embedding calls').textContent).toMatch(/400 tokens/);
+    expect(row('Net saving').textContent).toMatch(/list/);
+    cleanup();
+    stubApi('empty');
+    show(page());
+    expect(await screen.findByText(/No semantic cache lookups in the last/)).toBeTruthy();
+  });
+
   it('says the projection needs more data instead of showing a number', async () => {
     stubApi('empty');
     show(page());
@@ -719,6 +735,7 @@ describe('Settings tabs', () => {
       'Members',
       'API keys',
       'Alerts',
+      'Semantic cache',
       'Routing',
     ]);
     expect(tabs.map((t) => t.getAttribute('href'))).toEqual([
@@ -727,11 +744,48 @@ describe('Settings tabs', () => {
       '#settings/members',
       '#settings/keys',
       '#settings/alerts',
+      '#settings/semantic',
       '#settings/routing',
     ]);
     expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Project');
     expect((await screen.findAllByText(/Project ID/)).length).toBeGreaterThan(0);
     expect(screen.getByRole('tabpanel', { name: 'Project' })).toBeTruthy();
+  });
+
+  it('shows the semantic cache settings, editable by admins and read-only for viewers', async () => {
+    const puts: unknown[] = [];
+    const responses = sampleResponses('admin');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(input as string, 'http://dashboard.test').pathname;
+        if (init?.method === 'PUT') puts.push(JSON.parse(init.body as string));
+        return Promise.resolve(Response.json(responses[path] ?? {}));
+      }),
+    );
+    show(<Settings projectId={PROJECT_ID} userId="u" tab="semantic" />);
+    const form = await screen.findByRole('form', { name: 'Semantic cache' });
+    expect(within(form).getByText('Embeddings model: nomic-embed-text.')).toBeTruthy();
+    fireEvent.change(within(form).getByLabelText('Semantic cache mode'), {
+      target: { value: 'header' },
+    });
+    fireEvent.change(within(form).getByLabelText('Similarity threshold'), {
+      target: { value: '0.99' },
+    });
+    fireEvent.click(within(form).getByRole('button', { name: 'Save semantic cache' }));
+    await waitFor(() =>
+      expect(puts).toEqual([
+        { mode: 'header', threshold: 0.99, ttlSeconds: 3600, maxEntries: 1000 },
+      ]),
+    );
+
+    cleanup();
+    settings('semantic', 'viewer');
+    const readOnly = await screen.findByRole('form', { name: 'Semantic cache' });
+    expect(within(readOnly).getByText('Only admins change the semantic cache.')).toBeTruthy();
+    expect(within(readOnly).getByLabelText<HTMLSelectElement>('Semantic cache mode').disabled).toBe(
+      true,
+    );
   });
 
   it('opens the tab in the URL and falls back to the first for an unknown one', () => {

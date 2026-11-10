@@ -1,5 +1,7 @@
+import { ANALYTICS_RANGES, rangeWindow } from '@ai-gateway/shared';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   DEFAULT_SEMANTIC_THRESHOLD,
@@ -24,9 +26,27 @@ const settingsResponse = z.object({
   policy: semanticPolicySchema,
 });
 
+const money = z.object({ listMicroUsd: z.number(), billedMicroUsd: z.number() });
+
+export const semanticSummarySchema = z.object({
+  range: z.enum(ANALYTICS_RANGES),
+  /** Requests that made a lookup, by outcome (error: the embedding call or the query failed). */
+  lookups: z.object({ hit: z.number(), miss: z.number(), error: z.number() }),
+  /** The mean cosine similarity of the hits; null without hits. */
+  hitSimilarity: z.number().nullable(),
+  /** Every lookup's embedding call, hits and misses alike; `unpriced`: calls with no list price. */
+  embedding: money.extend({ tokens: z.number(), unpriced: z.number() }),
+  /** What the hits' stored answers cost at their models' prices; `unpriced`: hits with none. */
+  avoided: money.extend({ unpriced: z.number() }),
+  /** Avoided minus embedding cost: negative when the lookups cost more than the hits saved. */
+  net: money,
+});
+export type SemanticSummaryResponse = z.output<typeof semanticSummarySchema>;
+
 /**
  * The semantic cache's per-project settings (M18, ADR 040): read by viewers, set by admins
- * (audited, and applied on every instance through the key cache's invalidation).
+ * (audited, and applied on every instance through the key cache's invalidation); and its summary,
+ * which counts the embedding calls of hits and misses against the cost the hits avoided.
  */
 export function registerSemanticRoutes(app: FastifyInstance, deps: AdminDeps): void {
   const { db, clock } = deps;
@@ -101,6 +121,73 @@ export function registerSemanticRoutes(app: FastifyInstance, deps: AdminDeps): v
       // Cached keys carry the settings: every instance reads them again.
       await deps.invalidation.publish({ kind: 'project', projectId });
       return { ...(await status()), policy };
+    },
+  );
+
+  routes.get(
+    '/admin/projects/:projectId/semantic-cache/summary',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Semantic cache hits, misses, embedding cost and the cost hits avoided (viewer)',
+        description:
+          'Every lookup pays for its embedding call, hit or miss; `net` is the cost the hits ' +
+          "avoided (their stored answers' tokens at the answering model's price) less that.",
+        security,
+        params: projectParams,
+        querystring: z.object({ range: z.enum(ANALYTICS_RANGES).default('24h') }).strict(),
+        response: { 200: semanticSummarySchema, ...errorResponses },
+      },
+    },
+    async (request) => {
+      const { projectId } = request.params;
+      const { range } = request.query;
+      await requireProjectRole(db, request, projectId, 'viewer');
+      const window = rangeWindow(range, clock.now());
+      const { rows } = await sql<Record<string, string | null>>`
+        SELECT count(*) FILTER (WHERE semantic_cache = 'hit') AS hit,
+               count(*) FILTER (WHERE semantic_cache = 'miss') AS miss,
+               count(*) FILTER (WHERE semantic_cache = 'error') AS error,
+               avg(semantic_similarity) FILTER (WHERE semantic_cache = 'hit') AS hit_similarity,
+               coalesce(sum(embedding_tokens), 0) AS embedding_tokens,
+               coalesce(sum(embedding_cost_micro_usd), 0) AS embedding_list,
+               coalesce(sum(embedding_billed_cost_micro_usd), 0) AS embedding_billed,
+               count(*) FILTER (WHERE embedding_deployment IS NOT NULL
+                                  AND embedding_cost_micro_usd IS NULL) AS embedding_unpriced,
+               coalesce(sum(semantic_avoided_cost_micro_usd), 0) AS avoided_list,
+               coalesce(sum(semantic_avoided_billed_cost_micro_usd), 0) AS avoided_billed,
+               count(*) FILTER (WHERE semantic_cache = 'hit'
+                                  AND semantic_avoided_cost_micro_usd IS NULL) AS avoided_unpriced
+          FROM request_records
+         WHERE project_id = ${projectId}
+           AND started_at >= ${new Date(window.from)}
+           AND started_at < ${new Date(window.to)}
+           AND semantic_cache IS NOT NULL`.execute(db);
+      const r = rows[0] ?? {};
+      const n = (key: string) => Number(r[key] ?? 0);
+      const embedding = {
+        listMicroUsd: n('embedding_list'),
+        billedMicroUsd: n('embedding_billed'),
+      };
+      const avoided = { listMicroUsd: n('avoided_list'), billedMicroUsd: n('avoided_billed') };
+      return {
+        range,
+        lookups: { hit: n('hit'), miss: n('miss'), error: n('error') },
+        hitSimilarity:
+          r.hit_similarity === null || r.hit_similarity === undefined
+            ? null
+            : Number(r.hit_similarity),
+        embedding: {
+          ...embedding,
+          tokens: n('embedding_tokens'),
+          unpriced: n('embedding_unpriced'),
+        },
+        avoided: { ...avoided, unpriced: n('avoided_unpriced') },
+        net: {
+          listMicroUsd: avoided.listMicroUsd - embedding.listMicroUsd,
+          billedMicroUsd: avoided.billedMicroUsd - embedding.billedMicroUsd,
+        },
+      };
     },
   );
 }

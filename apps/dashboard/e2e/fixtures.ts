@@ -21,6 +21,8 @@ import type {
   RequestPage,
   Role,
   SecurityResponse,
+  SemanticSettings,
+  SemanticSummary,
   Window,
 } from '../src/api.js';
 
@@ -281,6 +283,21 @@ export function emptyResponses(role: Role): Responses {
       range: '24h',
       requests: { blocked: 0, flagged: 0, masked: 0 },
     },
+    [`/admin/projects/${PROJECT_ID}/semantic-cache`]: {
+      enabled: true,
+      available: true,
+      embeddingModel: 'nomic-embed-text',
+      defaultThreshold: 0.995,
+      policy: { mode: 'off', threshold: null, ttlSeconds: 3600, maxEntries: 1000 },
+    } satisfies SemanticSettings,
+    [`/admin/projects/${PROJECT_ID}/semantic-cache/summary`]: {
+      range: '24h',
+      lookups: { hit: 0, miss: 0, error: 0 },
+      hitSimilarity: null,
+      embedding: { listMicroUsd: 0, billedMicroUsd: 0, tokens: 0, unpriced: 0 },
+      avoided: { listMicroUsd: 0, billedMicroUsd: 0, unpriced: 0 },
+      net: { listMicroUsd: 0, billedMicroUsd: 0 },
+    } satisfies SemanticSummary,
     '/admin/models': { deployments: [], models: [] },
     '/admin/models/quotas': { deployments: [] } satisfies QuotaUsageResponse,
     '/admin/analytics/cost-comparison': {
@@ -471,6 +488,15 @@ export function sampleResponses(role: Role): Responses {
       range: '24h',
       requests: { blocked: 1, flagged: 0, masked: 1 },
     },
+    // 2 hits avoided $0.003; 10 lookups' embedding calls cost $0.000040 (free tier: billed $0).
+    [`/admin/projects/${PROJECT_ID}/semantic-cache/summary`]: {
+      range: '24h',
+      lookups: { hit: 2, miss: 7, error: 1 },
+      hitSimilarity: 0.9971,
+      embedding: { listMicroUsd: 40, billedMicroUsd: 0, tokens: 400, unpriced: 0 },
+      avoided: { listMicroUsd: 3_000, billedMicroUsd: 0, unpriced: 0 },
+      net: { listMicroUsd: 2_960, billedMicroUsd: 0 },
+    } satisfies SemanticSummary,
     // chat-pair overridden for this project: its second deployment moved first.
     [`/admin/projects/${PROJECT_ID}/routes`]: {
       enabled: true,

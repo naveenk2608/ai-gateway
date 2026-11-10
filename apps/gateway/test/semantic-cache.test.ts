@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { ManualClock } from '@ai-gateway/shared';
+import { ManualClock, uuidv7 } from '@ai-gateway/shared';
 import { pruneSemanticCache } from '@ai-gateway/worker';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -10,7 +10,7 @@ import type { MockProvider } from '../src/providers/mock.js';
 import { chatCompletionRequestSchema } from '../src/proxy/schema.js';
 import { parseSemanticPolicy, type SemanticPolicy } from '../src/semantic/policy.js';
 import { SemanticCache, type Embedder } from '../src/semantic/semantic-cache.js';
-import { createApiKey, createProject } from './db-fixtures.js';
+import { createApiKey, createProject, createUser } from './db-fixtures.js';
 import { sendJson, startFakeUpstream, type FakeUpstream } from './fake-upstream.js';
 import { captureLogger, sseData, testConfig } from './helpers.js';
 
@@ -30,6 +30,9 @@ const PARAPHRASE = 'Tell me the capital city of France.';
 const LOOSER = 'Which city is the capital of France?';
 
 const tag = randomBytes(3).toString('hex');
+// Model names of this file only, so its prices never apply to another file's requests.
+const ANSWER_MODEL = `sem-answer-${tag}`;
+const VEC_MODEL = `vec-model-${tag}`;
 let upstream: FakeUpstream;
 let gateway: Gateway;
 let url: string;
@@ -45,19 +48,19 @@ beforeAll(async () => {
     sendJson(res, 200, {
       object: 'list',
       data: [{ object: 'embedding', index: 0, embedding: vector }],
-      model: 'vec-model',
+      model: VEC_MODEL,
       usage: { prompt_tokens: 7, total_tokens: 7 },
     });
   });
   const models = parseModelsConfig(
     {
       deployments: {
-        answer: { provider: 'mock', mock: { completionTokens: 5 } },
+        answer: { provider: 'mock', model: ANSWER_MODEL, mock: { completionTokens: 5 } },
         'answer-2': { provider: 'mock', mock: { completionTokens: 5 } },
         vec: {
           provider: 'openai-compatible',
           type: 'embeddings',
-          model: 'vec-model',
+          model: VEC_MODEL,
           baseUrl: `${upstream.url}/v1`,
           apiKeyEnv: 'TEST_UPSTREAM_KEY',
           embedding: { dimensions: 3 },
@@ -75,6 +78,8 @@ beforeAll(async () => {
     testConfig({
       SEMANTIC_CACHE_ENABLED: 'true',
       SEMANTIC_CACHE_EMBEDDING_MODEL: 'sem-embed',
+      RUN_WORKER_IN_PROCESS: 'true',
+      WORKER_BLOCK_MS: '100',
       EVENTS_STREAM: `test:semantic:${tag}`,
       EVENTS_DLQ_STREAM: `test:semantic:${tag}:dlq`,
       EVENTS_CONSUMER_GROUP: `semantic-${tag}`,
@@ -83,6 +88,29 @@ beforeAll(async () => {
     { models, env: { TEST_UPSTREAM_KEY: 'test-key-not-secret' } },
   );
   await gateway.start();
+  // $1 per million input tokens for the embedding model; $2 and $4 for the chat model.
+  await gateway.db
+    .insertInto('model_prices')
+    .values([
+      {
+        id: uuidv7(),
+        provider: 'openai-compatible',
+        model: VEC_MODEL,
+        input_micro_usd_per_mtok: 1_000_000,
+        output_micro_usd_per_mtok: 0,
+        effective_from: new Date(0),
+      },
+      {
+        id: uuidv7(),
+        provider: 'mock',
+        model: ANSWER_MODEL,
+        input_micro_usd_per_mtok: 2_000_000,
+        output_micro_usd_per_mtok: 4_000_000,
+        effective_from: new Date(0),
+      },
+    ])
+    .execute();
+  await gateway.prices.refresh();
   url = `http://127.0.0.1:${(gateway.app.server.address() as AddressInfo).port}`;
 });
 
@@ -125,6 +153,7 @@ async function chat(
   const isStream = res.headers.get('content-type')?.startsWith('text/event-stream') === true;
   return {
     status: res.status,
+    requestId: res.headers.get('x-request-id'),
     cache: res.headers.get('x-gateway-cache'),
     similarity: res.headers.get('x-gateway-semantic-similarity'),
     body: isStream ? await res.text() : ((await res.json()) as Record<string, unknown>),
@@ -254,6 +283,123 @@ describe('semantic cache through the gateway', () => {
     expect(calls('answer') - before).toBe(1);
     // One try only: a lookup is an optimisation.
     expect(embedCalls() - embedsBefore).toBe(1);
+  });
+});
+
+/** The request's record once the worker has stored it. */
+async function record(requestId: string) {
+  for (let i = 0; i < 200; i++) {
+    const row = await gateway.db
+      .selectFrom('request_records')
+      .selectAll()
+      .where('id', '=', requestId)
+      .executeTakeFirst();
+    if (row) return row;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`request ${requestId} was not stored`);
+}
+
+describe('semantic cache accounting', () => {
+  it('records hits like cache hits with their similarity, and every embedding call as spend', async () => {
+    const a = await project({ mode: 'all', threshold: 0.9 });
+    const miss = await chat(a.key, Q);
+    await entries(a.id, 1);
+    const hit = await chat(a.key, PARAPHRASE);
+    const failed = await chat(a.key, 'Another text the embedding upstream refuses.');
+    expect(hit.cache).toBe('semantic');
+
+    const missRow = await record(miss.requestId!);
+    expect(missRow).toMatchObject({
+      cache_hit: false,
+      semantic_cache: 'miss',
+      semantic_similarity: null,
+      embedding_deployment: 'vec',
+      embedding_tokens: 7,
+      // 7 tokens at $1 per million: 7 micro-dollars, list and billed (a paid deployment).
+      embedding_cost_micro_usd: 7,
+      embedding_billed_cost_micro_usd: 7,
+      semantic_avoided_cost_micro_usd: null,
+    });
+
+    const hitRow = await record(hit.requestId!);
+    expect(hitRow).toMatchObject({
+      cache_hit: true,
+      attempt_count: 0,
+      semantic_cache: 'hit',
+      embedding_tokens: 7,
+      embedding_cost_micro_usd: 7,
+    });
+    expect(hitRow.semantic_similarity).toBeCloseTo(0.96, 5);
+    // The hit's usage row costs nothing, like any cache hit; what the stored answer cost at the
+    // chat model's price is the cost it avoided.
+    const usage = await gateway.db
+      .selectFrom('usage_events')
+      .selectAll()
+      .where('request_id', 'in', [miss.requestId!, hit.requestId!])
+      .execute();
+    const missUsage = usage.find((u) => u.request_id === miss.requestId)!;
+    const hitUsage = usage.find((u) => u.request_id === hit.requestId)!;
+    expect(hitUsage).toMatchObject({
+      cost_micro_usd: 0,
+      prompt_tokens: missUsage.prompt_tokens,
+      completion_tokens: missUsage.completion_tokens,
+    });
+    expect(Number(hitRow.semantic_avoided_cost_micro_usd)).toBe(Number(missUsage.cost_micro_usd));
+    expect(Number(missUsage.cost_micro_usd)).toBeGreaterThan(0);
+
+    // A failed embedding call is recorded as an error and costs nothing.
+    expect(await record(failed.requestId!)).toMatchObject({
+      semantic_cache: 'error',
+      embedding_deployment: null,
+      embedding_cost_micro_usd: null,
+    });
+
+    // The project's spend counts both calls, the embedding calls included.
+    const spent = await gateway.db
+      .selectFrom('budget_periods')
+      .select((eb) => eb.fn.sum<string>('spent_micro_usd').as('spent'))
+      .where('project_id', '=', a.id)
+      .executeTakeFirstOrThrow();
+    const failedUsage = await gateway.db
+      .selectFrom('usage_events')
+      .select('cost_micro_usd')
+      .where('request_id', '=', failed.requestId!)
+      .executeTakeFirstOrThrow();
+    expect(Number(spent.spent)).toBe(
+      Number(missUsage.cost_micro_usd) + Number(failedUsage.cost_micro_usd) + 7 + 7,
+    );
+
+    // The admin summary shows the embedding cost of hits and misses against the cost avoided.
+    const viewer = await createUser(gateway.db, [{ projectId: a.id, role: 'viewer' }]);
+    const login = await fetch(`${url}/admin/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: viewer.email, password: viewer.password }),
+    });
+    const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const summary = await fetch(`${url}/admin/projects/${a.id}/semantic-cache/summary`, {
+      headers: { cookie },
+    });
+    expect(summary.status).toBe(200);
+    const avoided = Number(missUsage.cost_micro_usd);
+    expect(await summary.json()).toEqual({
+      range: '24h',
+      lookups: { hit: 1, miss: 1, error: 1 },
+      hitSimilarity: expect.closeTo(0.96, 5) as number,
+      embedding: { listMicroUsd: 14, billedMicroUsd: 14, tokens: 14, unpriced: 0 },
+      avoided: { listMicroUsd: avoided, billedMicroUsd: avoided, unpriced: 0 },
+      net: { listMicroUsd: avoided - 14, billedMicroUsd: avoided - 14 },
+    });
+    const settings = await fetch(`${url}/admin/projects/${a.id}/semantic-cache`, {
+      headers: { cookie },
+    });
+    expect(await settings.json()).toMatchObject({
+      enabled: true,
+      available: true,
+      embeddingModel: 'sem-embed',
+      policy: { mode: 'all', threshold: 0.9 },
+    });
   });
 });
 

@@ -255,6 +255,10 @@ describe('project isolation', () => {
       ],
       ['GET /admin/projects/:projectId/semantic-cache', `/admin/projects/${t.b}/semantic-cache`],
       [
+        'GET /admin/projects/:projectId/semantic-cache/summary',
+        `/admin/projects/${t.b}/semantic-cache/summary`,
+      ],
+      [
         'PUT /admin/projects/:projectId/semantic-cache',
         `/admin/projects/${t.b}/semantic-cache`,
         { mode: 'header' },
