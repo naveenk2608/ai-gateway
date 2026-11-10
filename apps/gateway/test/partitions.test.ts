@@ -116,10 +116,15 @@ describe('monthly partitions for the raw tables (migration 0017)', () => {
     const rows = samples(now);
 
     // The schema as it was before 0017, with rows in three months.
+    // Later migrations are left out of both copies: this cycles 0017 alone up, down and up.
     const before = await mkdtemp(join(tmpdir(), 'gw-partitions-'));
+    const through = await mkdtemp(join(tmpdir(), 'gw-partitions-0017-'));
     for (const file of await readdir(DEFAULT_MIGRATIONS_DIR)) {
-      if (!file.startsWith('0017') && !file.startsWith('0018') && !file.startsWith('0019')) {
+      if (file.slice(0, 4) < '0017') {
         await copyFile(join(DEFAULT_MIGRATIONS_DIR, file), join(before, file));
+      }
+      if (file.slice(0, 4) <= '0017') {
+        await copyFile(join(DEFAULT_MIGRATIONS_DIR, file), join(through, file));
       }
     }
     await migrateDatabase({ databaseUrl: url, dir: before, logger });
@@ -132,7 +137,7 @@ describe('monthly partitions for the raw tables (migration 0017)', () => {
 
     // Up.
     expect(
-      await migrateDatabase({ databaseUrl: url, dir: DEFAULT_MIGRATIONS_DIR, logger }),
+      await migrateDatabase({ databaseUrl: url, dir: through, logger }),
     ).toContain(MIGRATION);
     await withClient(url, async (c) => {
       expect(await partitioned(c)).toEqual([
@@ -243,7 +248,7 @@ describe('monthly partitions for the raw tables (migration 0017)', () => {
     });
     // And up again, as a later deploy would.
     expect(
-      await migrateDatabase({ databaseUrl: url, dir: DEFAULT_MIGRATIONS_DIR, logger }),
+      await migrateDatabase({ databaseUrl: url, dir: through, logger }),
     ).toEqual([MIGRATION]);
     await withClient(url, async (c) => {
       expect(await counts(c)).toEqual([2, 2, 2]);
