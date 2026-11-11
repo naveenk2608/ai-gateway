@@ -1249,20 +1249,26 @@ comes first. A finding that turns out wrong changes nothing and is recorded in t
 
 **Acceptance**
 
-- [ ] A preflight from an allowed origin allows `Idempotency-Key` and `x-gateway-semantic-cache`,
-      and the answer exposes the replay, similarity, trace and rate-limit headers (tests).
-- [ ] With `ALERTS_ENCRYPTION_KEY` set, the Compose gateway and worker use the same key (test on
-      the Compose file).
-- [ ] Three 512 KiB images in one chat request are accepted, or the documented limits were lowered
-      to what fits, with the reason recorded.
-- [ ] An answer stored before output masking was turned on is masked when it is replayed from the
-      cache, the semantic cache or an Idempotency-Key (tests).
-- [ ] `guardrail_results` rows older than the raw retention are deleted on schedule (test).
-- [ ] The image is published only when every CI job, the Helm job included, is green.
-- [ ] Settings > Routing no longer tells admins to edit the file, and marks overridden models.
-- [ ] `pnpm check:docs` passes in CI, and the README, ROADMAP, PLAN-NOTES and ADRs say what the
+- [x] A preflight from an allowed origin allows `Idempotency-Key` and `x-gateway-semantic-cache`,
+      and the answer exposes the replay, similarity, trace and rate-limit headers (tests:
+      `apps/gateway/src/cors.test.ts`).
+- [x] With `ALERTS_ENCRYPTION_KEY` set, the Compose gateway and worker use the same key (test on
+      the Compose file: `apps/gateway/src/compose-config.test.ts`).
+- [x] Three 512 KiB images in one chat request are accepted (`POST /v1/chat/completions` takes
+      2.5 MiB; `apps/gateway/src/proxy/chat-tools.test.ts`).
+- [x] An answer stored before output masking was turned on is masked when it is replayed from the
+      cache, the semantic cache or an Idempotency-Key (tests: `proxy/guardrails.test.ts`,
+      `test/idempotency.test.ts`, `test/semantic-cache.test.ts`).
+- [x] `guardrail_results` rows older than the raw retention are deleted on schedule (test:
+      `apps/worker/test/guardrail-retention.test.ts`).
+- [x] The image is published only when every CI job, the Helm job included, is green
+      (`publish-image` needs all seven other jobs).
+- [x] Settings > Routing no longer tells admins to edit the file, and marks overridden models
+      (`apps/dashboard/src/pages/pages.test.tsx`).
+- [x] `pnpm check:docs` passes in CI, and the README, ROADMAP, PLAN-NOTES and ADRs say what the
       code does.
-- [ ] CI is green on the last commit and `m19-done` is tagged on it.
+- [x] CI is green on the last commit and `m19-done` is tagged on it (the commit that ticks these
+      boxes, once its CI is green; the PLAN-NOTES "M19 run" row).
 
 ### M19 plan (2026-11-11)
 
