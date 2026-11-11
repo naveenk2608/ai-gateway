@@ -1242,6 +1242,102 @@ cap, an embedding failure falling back to a normal request, and the accounting.
 
 **Part F — wrap-up**: README, ADR 040, PLAN-NOTES rows, ticked checks, the "M18 run" row.
 
+## M19 — Phase 2 fixes
+
+**Goal.** Fix the bugs and inconsistencies an audit of the repository found at `fe5e581`
+(2026-11-10). No new features. The audit read the code and ran nothing, so each finding is
+confirmed in the code before it is fixed; for Parts A to E a test that fails because of the bug
+comes first. A finding that turns out wrong changes nothing and is recorded in the PLAN-NOTES
+"M19 run" row.
+
+**Acceptance**
+
+- [ ] A preflight from an allowed origin allows `Idempotency-Key` and `x-gateway-semantic-cache`,
+      and the answer exposes the replay, similarity, trace and rate-limit headers (tests).
+- [ ] With `ALERTS_ENCRYPTION_KEY` set, the Compose gateway and worker use the same key (test on
+      the Compose file).
+- [ ] Three 512 KiB images in one chat request are accepted, or the documented limits were lowered
+      to what fits, with the reason recorded.
+- [ ] An answer stored before output masking was turned on is masked when it is replayed from the
+      cache, the semantic cache or an Idempotency-Key (tests).
+- [ ] `guardrail_results` rows older than the raw retention are deleted on schedule (test).
+- [ ] The image is published only when every CI job, the Helm job included, is green.
+- [ ] Settings > Routing no longer tells admins to edit the file, and marks overridden models.
+- [ ] `pnpm check:docs` passes in CI, and the README, ROADMAP, PLAN-NOTES and ADRs say what the
+      code does.
+- [ ] CI is green on the last commit and `m19-done` is tagged on it.
+
+### M19 plan (2026-11-11)
+
+Order A → L, small commits pushed to `main`, CI checked after each push (Render deploys every
+commit). No new dependency and no migration are expected. The PLAN-NOTES "M19 run" row is the
+resume note, updated at the end of every part.
+
+**Part A — CORS for the headers added since M12.** The preflight also allows `IDEMPOTENCY_HEADER`
+(`proxy/idempotency.ts`) and `SEMANTIC_HEADER` (`semantic/policy.ts`); answers also expose
+`REPLAYED_HEADER`, `SIMILARITY_HEADER`, `traceparent` and the six `x-ratelimit-*` names, each taken
+from an exported constant of the module that sets it (the `traceparent` and rate-limit names
+become constants). Tests in `cors.test.ts` first; README "Using the API" and a note on ADR 021.
+
+**Part B — the alert key in Compose.** The gateway service gets `ALERTS_ENCRYPTION_KEY` like the
+worker. The same pair (`API_KEY_PEPPER`, `ALERTS_ENCRYPTION_KEY`) is checked in
+`bench/compose.yaml`, `infra/compose/aws-demo.yml`, the Helm chart and the Terraform templates,
+and a gap is fixed in the file (nothing is applied anywhere). A unit test reads
+`docker-compose.yml` and fails unless both services take both settings from the same variables.
+
+**Part C — image limits against the body limit.** First read how the chat handler holds the body
+(guardrail scan, idempotency fingerprint, cache key, coalescing, semantic cache). If none copies
+or stores image data, `POST /v1/chat/completions` gets its own body limit,
+`MAX_IMAGES_PER_REQUEST × MAX_IMAGE_DATA_URL_BYTES + 1 MiB`, and every other route keeps 1 MiB;
+otherwise the 1 MiB limit stays and the documented image limits are lowered to fit. Tests for
+three 512 KiB images, a body over the new limit and another route over 1 MiB; README and a note on
+ADR 028.
+
+**Part D — output guardrails on stored answers.** `replay()` runs a stored answer through the
+same output detectors as a fresh one when the project's guardrails check output (mask or flag,
+findings on the trace), without the JSON schema check or its retry; an Idempotency-Key replay is
+then the first answer as the project's guardrails allow it now. Tests per path (exact cache,
+Idempotency-Key, semantic cache, coalesced follower; JSON and stream); notes on ADR 032 and 035.
+
+**Part E — retention for `guardrail_results`.** The worker's retention pass (both consumers, so
+also in the gateway with `RUN_WORKER_IN_PROCESS`) deletes rows older than the raw partitions'
+cutoff in batches like `pruneIdempotencyKeys`, and nothing when `RAW_PARTITIONS_ENABLED` is false
+or `RAW_RETENTION_MONTHS` is 0. Tests for the cutoff, the batches and both off switches; ADR 039
+note, README and `.env.example`. One PLAN-NOTES row on the retention of `audit_logs`,
+`provider_health_events`, `budget_reservations` and `failed_events` (nothing built).
+
+**Part F — publish only when every job is green.** `publish-image` also needs `helm`, and every
+other job that runs on a push to `main`.
+
+**Part G — Settings > Routing.** The text says these are the models file's routes and that a
+model's route can be overridden for the selected project on the Models page (linked); each model
+with an active override for the selected project gets a badge (from
+`GET /admin/projects/:projectId/routes`). Page tests, and the browser test if it reads the tab.
+
+**Part H — small fixes.** The seed's "Prices:" line says what it seeds; `.env.example` gains
+`SEED_ADMIN_EMAIL`, `LOCALSTACK_PORT`, `JAEGER_UI_PORT` and `OTLP_HTTP_PORT` with their defaults
+from the code; the first comment of `errors.ts` describes the type as it is.
+
+**Part I — README.** The dashboard, admin API, analytics, data model and error tables, scheduled
+traffic, Cloudflare's quota group, observability history, security decisions, rate-limit
+headers, repository layout and status paragraph brought up to the code, every value taken from
+the code; a dated note on ADR 017.
+
+**Part J — ROADMAP, PLAN-NOTES and ADRs.** "Where the project stands" dated and corrected, the
+"Next milestones" heading covering M18, the M11 real-key check ticked with what failed; the
+PLAN-NOTES rows that later work closed get a dated sentence and a status (each read first); a
+dated note on ADR 018.
+
+**Part K — `pnpm check:docs`.** A script under `scripts/` with a unit test, run in CI's `check`
+job: it names every gateway or worker config setting missing from `.env.example`, every
+registered `/v1` or `/admin` route missing from the README, and every table in
+`packages/shared/src/node/db.ts` missing from the README's data model table. No network, no
+running gateway.
+
+**Part L — wrap-up.** Ticked checks, the finished run row, the live check (`/ready` and one
+`mock-1` request on the demo, or the commands for the owner), and `m19-done` on the last green
+commit.
+
 ## Stretch
 
 Pick one after M17:
