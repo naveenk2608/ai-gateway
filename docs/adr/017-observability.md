@@ -89,3 +89,11 @@ whatever clients send.
 - There is no trace store: following a request means searching logs for its `traceId`.
   Exporting traces (OTLP) and exemplars on histograms are recorded as later options.
 - `tracestate` is not forwarded to providers.
+
+## Note (2026-11-12, M19): three days of local history, and traces
+
+The Compose Prometheus keeps three days of history (`--storage.tsdb.retention.time=3d`, still
+capped at 256 MB) since M17, not the one day above: the SLO rules' longest alert window is three
+days (ADR 038, `docs/slo.md`). Traces are no longer only IDs in the logs either: OpenTelemetry
+export to an OTLP endpoint (Jaeger in Compose) came in M17 (ADR 037). Exemplars on histograms are
+still not done.

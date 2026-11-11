@@ -23,8 +23,11 @@ the dashboard, a memory cap for the cache, and failure penalties in peak EWMA), 
 (M16: personal data masked or blocked before the model, JSON answers checked after it), cloud
 and operations (M17: a Helm chart tested on kind, OpenTelemetry tracing, SLO burn-rate alerts, and
 monthly partitions with retention), and a semantic cache (M18: opt-in per project, in Postgres
-with pgvector, with its false-hit rate measured on labelled pairs). What comes next is
-in [docs/ROADMAP.md](docs/ROADMAP.md).
+with pgvector, with its false-hit rate measured on labelled pairs). The roadmap is finished; M19
+fixed what an audit of the finished code found (CORS for the newer headers, the alert key in
+Compose, the image body limit, output guardrails on stored answers, retention and docs). What could
+come next is under [Future work](#future-work) and in the roadmap's
+[unscheduled list](docs/ROADMAP.md#not-scheduled).
 Architecture decisions are in [docs/adr/](docs/adr/), the costs of the main trade-offs in
 [docs/trade-offs.md](docs/trade-offs.md).
 
@@ -524,6 +527,7 @@ can help.
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | The body failed validation. |
+| 400 | `FST_ERR_CTP_INVALID_JSON_BODY`, `FST_ERR_CTP_EMPTY_JSON_BODY` | The body is not JSON, or is empty, with a JSON content type (the web framework's own codes). |
 | 400 | `model_endpoint_mismatch` | A chat model sent to `/v1/embeddings`, or an embeddings model to `/v1/chat/completions`. |
 | 400 | `unsupported_parameter` | `dimensions` on an embeddings model that does not take it, or outside its range. |
 | 400 | `model_capability_unsupported` | No deployment of the model supports what the request uses (tools, a `tool_choice`, a response format, images); `param` names the field. |
@@ -531,22 +535,30 @@ can help.
 | 400 | `guardrail_blocked` | The project's guardrails block a value type found in the request (named, never shown) or a blocked word. |
 | 400 | `guardrail_prompt_too_large` | The estimated prompt is above the project's guardrail cap. |
 | 400 | `invalid_idempotency_key` | The `Idempotency-Key` header is not one quoted string of 1 to 255 printable ASCII characters. |
+| 400 | `upstream_rejected_request` | The provider refused the request as invalid; its own error text is not passed on. |
 | 401 | `invalid_api_key` | Missing, unknown, revoked or expired key. |
 | 429 | `too_many_invalid_api_keys` | The client IP sent too many key IDs that do not exist; refused before any key lookup, with `retry-after`. |
 | 403 | `model_not_allowed` | The model is outside the project's allow-list. |
 | 404 | `model_not_found` | No such model, or none of its deployments is enabled. |
+| 404 | `not_found` | No such route (for example `/v1/completions`, which the gateway does not serve). |
 | 409 | `idempotency_key_in_progress` | A request with the same `Idempotency-Key` is still running, with `retry-after`. |
 | 409 | `idempotency_answer_not_stored` | The request with this `Idempotency-Key` completed, but its answer was too large to keep. |
+| 413 | `FST_ERR_CTP_BODY_TOO_LARGE` | The body is over the route's limit: 2.5 MiB on `/v1/chat/completions`, 1 MiB elsewhere. |
+| 415 | `FST_ERR_CTP_INVALID_MEDIA_TYPE` | A content type other than JSON. |
 | 422 | `idempotency_key_reused` | The `Idempotency-Key` was used with a different body. |
 | 429 | `rpm_limit_exceeded`, `tpm_limit_exceeded`, `concurrency_limit_exceeded` | A key or project limit, with `retry-after`. |
 | 429 | `budget_exceeded` | The monthly budget is used up; `retry-after` is the start of next month. |
-| 429 | `upstream_rate_limited` | The last deployment tried was rate limited by its provider. |
+| 429 | `upstream_rate_limited` | The last deployment tried was rate limited by its provider, or no deployment could be tried because they are waiting out a provider's 429 (with `retry-after`). |
+| 429 | `upstream_quota_exhausted` | No deployment could be tried and at least one is out of its free-tier quota (ADR 025); `retry-after` is when the first quota or cooldown clears. |
 | 502 | `upstream_error`, `upstream_unavailable`, `upstream_invalid_response`, `upstream_auth_failed`, `upstream_model_not_found` | The providers tried failed or are misconfigured (the last failure is reported). |
 | 502 | `guardrail_output_failed` | The answer did not match the requested JSON format, also after one retry on the next deployment. |
+| 500 | `internal_error` | An unexpected failure in the gateway (logged with the request ID). |
 | 503 | `deployments_unavailable` | Every deployment of the model has an open circuit breaker. |
+| 503 | `auth_unavailable` | The API key could not be checked (its lookup in Postgres failed); retry shortly. |
+| 503 | `shutting_down` | The instance is draining before it stops; retry. |
 | 503 | `idempotency_unavailable` | Postgres is unreachable, so a request with an `Idempotency-Key` cannot be checked. |
 | 503 | `limits_unavailable` | Redis is unreachable and `LIMITS_FAIL_MODE=closed`; only requests with limits are affected. |
-| 504 | `upstream_timeout` | The deployment's timeout passed. |
+| 504 | `upstream_timeout` | The deployment's timeout passed, or `REQUEST_DEADLINE_MS` (50 s) passed before the response started. |
 
 A failure after a stream has started is sent as a final `{"error": ...}` event and the stream
 ends without `[DONE]`.
@@ -791,7 +803,7 @@ attempt and why.
 | Mistral | "restrictive", shown only in the console | none | Mistral docs, 2026-11-03 |
 | NVIDIA NIM | no official figure (forum reports 40/min) | none | 2026-11-03 |
 | OpenRouter `:free` | 20/min; 50/day per account without purchased credits | 20/min, 50/day | [limits](https://openrouter.ai/docs/api/reference/limits), 2026-11-03 |
-| Cloudflare Workers AI | 10,000 Neurons/day; 300 requests/min | 300/min; 129,000 tokens/day (derived from the Neurons) | [pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), [limits](https://developers.cloudflare.com/workers-ai/platform/limits/), 2026-11-03 |
+| Cloudflare Workers AI | 10,000 Neurons/day; 300 requests/min | 300/min; quota group `cloudflare-free-neurons` (10,000 Neurons a day, shared with the `bge-large-en-v1.5` embeddings; each try counted at its model's Neurons per million tokens, ADR 025) | [pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) (rechecked 2026-11-08), [limits](https://developers.cloudflare.com/workers-ai/platform/limits/), 2026-11-03 |
 | Z.AI | GLM-4.7-Flash free; no published rate limit | none | [pricing](https://docs.z.ai/guides/overview/pricing), 2026-11-03 |
 
 [docs/providers.md](docs/providers.md) has every model ID, list price and limit with its source
@@ -864,12 +876,12 @@ curl -s -X PATCH "http://127.0.0.1:8080/admin/projects/$PROJECT_ID" \
 | `budget.maxRequestCostMicroUsd` | The most one request may reserve; a costlier request gets a 400. |
 | `budget.softThresholdPct` | From this share of the monthly budget (default 80%), routing tries the cheapest deployments first, whatever the model's policy, and records why on the attempt (`budget at 82%: cheapest first; ...`). At 100% requests are refused. Editable in Settings → Limits and budget; every change is audited. |
 
-Successful `/v1/chat/completions` replies, streams and cache hits included, carry OpenAI's
-rate-limit headers, taken from the same script with no extra Redis call: `x-ratelimit-limit-requests`,
+Successful `/v1/chat/completions` and `/v1/embeddings` replies, streams, cache hits and
+Idempotency-Key replays included, carry OpenAI's rate-limit headers, taken from the same script with no extra Redis call: `x-ratelimit-limit-requests`,
 `x-ratelimit-remaining-requests` and `x-ratelimit-reset-requests` for `requestsPerMinute`, and the
 same three ending in `-tokens` for `tokensPerMinute`. Each set comes from whichever of the key's
 and the project's limits has less left. Remaining tokens are counted as reserved (the prompt
-estimate plus the output cap), and a reset is the time until the bucket is full again, written as
+estimate, plus the output cap for chat), and a reset is the time until the bucket is full again, written as
 OpenAI does (`12s`, `1m0s`). A set is left out when no such limit applies; rejected requests get
 `retry-after` instead.
 
@@ -1028,18 +1040,23 @@ function verify(secret, headers, body, toleranceSeconds = 300) {
 [.github/workflows/traffic.yml](.github/workflows/traffic.yml) runs
 [scripts/traffic.mjs](scripts/traffic.mjs) every two hours (and on demand from the Actions tab),
 so the live demo's real providers carry some traffic and the dashboard has data. Each run waits up
-to two minutes for the sleeping host to wake, then sends six requests: `chat-default`,
-`chat-fast` and `chat-variety` streamed, `chat-cheap`, and one prompt twice at temperature 0 for
-the cache. Output caps are 8 to 48 tokens. CI runs `node scripts/traffic.mjs --dry-run`, which
+to two minutes for the sleeping host to wake, then sends seven requests: `chat-default`,
+`chat-fast` and `chat-variety` streamed, `chat-cheap`, one prompt twice at temperature 0 for the
+cache, and one short `gemini-embedding-001` embeddings request (since M13). Output caps are 8 to 48
+tokens. CI runs `node scripts/traffic.mjs --dry-run`, which
 prints the plan and sends nothing. The job is skipped on forks, and without its secrets its steps
 are skipped and it succeeds.
 
-What it sends a day, against the free limits: 12 runs × 6 requests = **72 requests a day**, each
-under about 150 tokens with the providers' own prompt overhead, so **under about 11,000 tokens a
-day** in all. That is under 8% of one Groq model's 1,000 requests and 6% of its 200,000 tokens a
-day, under 9% of Cloudflare's 129,000-token daily quota, and far from the 30/min and 20/min
-limits; OpenRouter's 50 a day is reached only if almost everything else fails, and its quota then
-skips it. Gemini, Mistral, NVIDIA and Z.AI publish no per-model numbers.
+What it sends a day, against the free limits: 12 runs × 7 requests = **84 requests a day**: 72
+chat requests, each under about 150 tokens with the providers' own prompt overhead, and 12
+embeddings of one short sentence, so **under about 11,000 tokens a day** in all. The chat requests
+are under 8% of one Groq model's 1,000 requests and 6% of its 200,000 tokens a day (the embeddings
+go to Gemini). Cloudflare's two deployments share the quota group `cloudflare-free-neurons`
+(10,000 Neurons a day, ADR 025): even if every chat request went to Llama 4 Scout, at 24,545 and
+77,273 Neurons per million input and output tokens one counts at most 7 Neurons (rounded up), so
+about 500 a day, 5% of the group. They are far from the 30/min and 20/min limits; OpenRouter's 50
+a day is reached only if almost everything else fails, and its quota then skips it. Gemini,
+Mistral, NVIDIA and Z.AI publish no per-model numbers.
 
 To turn it on (once):
 
@@ -1082,15 +1099,24 @@ settings, `owner` also manages members.
 | --- | --- |
 | `POST /admin/auth/login`, `POST /admin/auth/logout`, `GET /admin/me` | any user |
 | `GET /admin/projects`, `POST /admin/projects` (the creator becomes owner) | any user |
+| `GET /admin/models` (deployments and routing policies from the models file), `GET /admin/models/quotas` (free-tier quota use and 429 cooldowns per deployment) | any user |
 | `GET /admin/projects/:projectId` | viewer |
 | `PATCH /admin/projects/:projectId` (name, `allowedModels`, `limits`, `budget`) | admin |
 | `GET /admin/analytics/...` (see [Analytics](#analytics)) | viewer |
 | `GET /admin/requests/:requestId`: the request, its usage and every attempt with its routing reason | viewer |
 | `GET /admin/projects/:projectId/members` | viewer |
-| `POST`, `PATCH`, `DELETE /admin/projects/:projectId/members[/:userId]` | owner |
+| `POST /admin/projects/:projectId/members`, `PATCH /admin/projects/:projectId/members/:userId`, `DELETE /admin/projects/:projectId/members/:userId` | owner |
 | `GET /admin/projects/:projectId/api-keys` | viewer |
-| `POST .../api-keys` (name, `limits`, optional `expiresInSeconds`), `PATCH .../api-keys/:apiKeyId` (name, `limits`), `.../revoke`, `.../rotate` | admin |
+| `POST /admin/projects/:projectId/api-keys` (name, `limits`, optional `expiresInSeconds`), `PATCH /admin/projects/:projectId/api-keys/:apiKeyId` (name, `limits`), `POST /admin/projects/:projectId/api-keys/:apiKeyId/revoke`, `POST /admin/projects/:projectId/api-keys/:apiKeyId/rotate` | admin |
 | `GET /admin/projects/:projectId/audit-logs` | admin |
+| `GET /admin/projects/:projectId/alerts`: the destinations (URLs masked) and recent deliveries ([Webhook alerts](#webhook-alerts)) | viewer |
+| `POST /admin/projects/:projectId/alerts/destinations` (a generic one returns its signing secret once), `DELETE /admin/projects/:projectId/alerts/destinations/:destinationId`, `POST /admin/projects/:projectId/alerts/destinations/:destinationId/test` | admin |
+| `GET /admin/projects/:projectId/guardrails` (the policy), `GET /admin/projects/:projectId/guardrails/results` (requests whose checks found something), `GET /admin/projects/:projectId/guardrails/summary` (blocked, flagged and masked counts) ([Guardrails](#guardrails)) | viewer |
+| `PUT /admin/projects/:projectId/guardrails` | admin |
+| `GET /admin/projects/:projectId/routes` (each model's file route and this project's override), `GET /admin/projects/:projectId/routes/:model/history` ([Models and routing](#models-and-routing)) | viewer |
+| `PUT /admin/projects/:projectId/routes/:model` (a new version), `POST /admin/projects/:projectId/routes/:model/rollback`, `POST /admin/projects/:projectId/routes/:model/reset` | admin |
+| `GET /admin/projects/:projectId/semantic-cache` (the settings), `GET /admin/projects/:projectId/semantic-cache/summary` (hits, misses, embedding cost, cost avoided) | viewer |
+| `PUT /admin/projects/:projectId/semantic-cache` | admin |
 
 Another project's resources answer 404, exactly like ones that do not exist. Every change writes
 an `audit_logs` row in the same transaction. Logins are limited per email and per client IP
@@ -1106,15 +1132,15 @@ reloads keep them. Dark is the default theme, with a light one in the top bar.
 
 | Page | Shows |
 | --- | --- |
-| Overview | KPI cards (requests, error rate, p95 latency, cost, cache hits) with sparklines, requests by outcome over time, recent requests, spend this month against the budget, gateway readiness |
+| Overview | KPI cards (requests, error rate, p95 latency, cost, cache hits) with sparklines, requests by outcome over time, recent requests, spend this month against the budget, gateway readiness, and how many requests the guardrails blocked, flagged and masked |
 | Requests | Filters (status, key, model, provider), a dense paginated list with latency bars, and a side panel with each request's attempt timings and routing history |
-| Cost | KPI cards (spend, cost per request, tokens, projected month or "not enough data"), cost per interval, spend by model as shares, breakdowns by project, key, provider and model with each row's share, budgets as meters |
-| Models | p50/p95 latency bars, a table of latency, TTFT, tokens per second, cost, failure and fallback rates (not answer quality), every deployment with its breaker state |
+| Cost | KPI cards (spend, cost per request, tokens, projected month or "not enough data"), cost per interval, spend by model as shares, breakdowns by project, key, provider and model with each row's share, what the same tokens would cost on every priced model, budgets as meters, and the semantic cache's hits, embedding cost and cost avoided |
+| Models | p50/p95 latency bars, a table of latency, TTFT, tokens per second, cost, failure and fallback rates (not answer quality), the route editor for the selected project (policy and targets saved as versions, with history, rollback and reset; read-only for viewers), and every deployment with its breaker state and its free-tier quota meters |
 | Reliability | KPI cards for failures, retries, fallbacks and attempts; their trend; errors by code; each deployment's numbers; breaker states per instance and their changes |
-| Security | Rejections by kind (limits, budget, model policy), over time, by reason and by key with shares |
+| Security | Rejections by kind (limits, budget, model policy), over time, by reason and by key with shares; guardrails: the project's settings (admins edit) and its flagged and blocked requests with filters |
 | Infrastructure | Worker lag, pending events, dead letters and dependency checks, the pipeline in detail, and the answering instance's process readings |
 | Playground | A chat through `/v1` with a short-lived key for the project; see [Playground](#playground) |
-| Settings | Tabs: Project (name, ID, allowed models), Limits and budget (each limit with the busiest minute of the last hour as a meter, the month's spend against the budget), Members, API keys, Routing (read-only, from the models file) |
+| Settings | Tabs: Project (name, ID, allowed models), Limits and budget (each limit with the busiest minute of the last hour as a meter, the month's spend against the budget), Members, API keys, Alerts (webhook destinations and their deliveries), Semantic cache (mode, threshold, lifetime, row cap), Routing (the models file's routes, read-only, with the models this project overrides marked) |
 
 Some things are shown as "not measured" or "not tracked" because the gateway does not record
 them: change against a previous period, deployment uptime, in-flight requests against the
@@ -1138,6 +1164,7 @@ caller belongs to; another project's ID is a 404.
 | `GET /admin/analytics/requests?limit&cursor` | Requests in the range, newest first, keyset-paginated |
 | `GET /admin/analytics/models` | Per model and deployment: latency, TTFT, output tokens per second, cost, failure and fallback rates |
 | `GET /admin/analytics/cost` | Spend by provider, model, project and key; a cost series; budgets with alerts at 80% and 100%; a monthly projection |
+| `GET /admin/analytics/cost-comparison` | The range's prompt and completion tokens priced under every priced model, cheapest first, next to what they cost at list price with the models actually used |
 | `GET /admin/analytics/reliability` | Errors by code, retries, fallbacks per deployment, breaker states and changes |
 | `GET /admin/analytics/security` | Rejections by reason (rate, token, concurrency, budget, policy) and by key |
 | `GET /admin/analytics/infra` | Usage stream length, unread and pending events, dead letters, Postgres and Redis round trips, measured now |
@@ -1190,12 +1217,17 @@ migrations.
 | --- | --- |
 | `users`, `user_sessions`, `project_members` | Dashboard users (argon2id passwords), sessions, roles per project |
 | `projects`, `api_keys` | Tenants with their limits, budget and allowed models; keys as `key_id` plus an HMAC of the secret |
-| `model_deployments`, `routing_policies` | What the dashboard shows and edits about routing (the models file is the source) |
+| `model_deployments`, `routing_policies` | Tables from the first schema (migration 0001) that no code reads or writes: deployments and routes come from the models file, and per-project overrides live in `route_overrides` (ADR 034) |
 | `model_prices` | Versioned, immutable prices (`effective_from`) |
 | `request_records`, `provider_attempts`, `usage_events` | One row per request, per upstream attempt with its routing reason, and per usage event (`UNIQUE(event_id)`) |
 | `budget_periods`, `budget_reservations` | The monthly spend ledger and the audit of each reservation |
 | `usage_rollups_minute`, `_hour`, `_day` | Analytics with latency histogram buckets (ADR 015) |
 | `provider_health_events`, `audit_logs`, `failed_events` | Breaker transitions, every admin change, dead-lettered events |
+| `idempotency_keys` | Each `Idempotency-Key` with its request's fingerprint and, once it completed, the answer a replay repeats, kept for `IDEMPOTENCY_KEY_TTL_HOURS` (ADR 032) |
+| `alert_destinations`, `alert_deliveries` | Webhook destinations with their URLs and signing secrets encrypted, and the outbox of alerts with each delivery's attempts (ADR 033) |
+| `route_overrides` | Every version of a project's route override per model, with who made it (ADR 034) |
+| `guardrail_results` | What each request's guardrail checks found: type, count and action, never the value (ADR 035) |
+| `semantic_cache_entries` | The opt-in semantic cache: an embedding (pgvector), a context hash and the stored answer per entry, with its expiry (ADR 040) |
 
 ### Security decisions
 
@@ -1205,8 +1237,11 @@ migrations.
   (HTTPS-only in production), roles per project, logins limited per email and per IP (ADR 007).
 - **Tenancy**: every query on a project's data filters by the caller's project; another
   project's resources answer 404, exactly like missing ones.
-- **No prompts or completions stored** by default; the optional cache keeps completions in Redis
-  for its TTL and only a hash of the prompt (ADR 013).
+- **No prompts stored**, and no completions by default. The optional exact cache keeps completions
+  in Redis for its TTL with only a hash of the prompt (ADR 013). A request that sends an
+  `Idempotency-Key` has its answer kept in Postgres for `IDEMPOTENCY_KEY_TTL_HOURS` (24) so a retry
+  gets it again (ADR 032), and the opt-in semantic cache keeps answers and the embeddings of the
+  last user message in Postgres until they expire (ADR 040); neither keeps the prompt itself.
 - **Limits fail closed** when Redis is down, unless `LIMITS_FAIL_MODE=open` (ADR 010).
 - **Untrusted upstreams**: provider errors are normalized and never passed to clients raw; model
   output never changes policy.
@@ -1236,7 +1271,8 @@ which are not published to the host, so no token is involved. Grafana's datasour
 dashboard are provisioned from [infra/compose/observability/](infra/compose/observability/). The
 dashboard shows traffic, latency p50/p95, 5xx and failed attempts, rejections, retries and
 fallbacks, breakers, TTFT, stream lag and pending, the dead-letter stream, buffered and dropped
-events, cache hit ratio, estimate error, batch times and memory. History is kept for one day.
+events, cache hit ratio, estimate error, batch times and memory. History is kept for three days
+(capped at 256 MB), the longest SLO alert window.
 
 **Scraping a gateway.** `GET /metrics` on the gateway's port exists only when `METRICS_TOKEN` is
 set (32+ characters), and needs `Authorization: Bearer <token>`. A missing or wrong token gets
@@ -1494,6 +1530,7 @@ infra/compose    Docker Compose stack (compose.yaml at the root includes it); ob
                  LocalStack (SQS); aws-demo.yml is the AWS demo instance's override
 infra/terraform  AWS: demo/ and full/ setups, modules/ (network, Docker host), tests run with
                  a mocked provider, scripts/check.mjs (tags, no NAT gateway)
+infra/helm       the Kubernetes chart (ai-gateway/) and the kind smoke test CI runs (ci/)
 scripts          formatting, the demo, and traffic.mjs (the scheduled demo traffic)
 bench            k6 scenarios, the bench Compose stack, `pnpm bench` and the report generator;
                  results/ holds the committed runs
@@ -1501,7 +1538,10 @@ docs/adr         architecture decision records
 docs/aws-deployment.md   the AWS guide (cost, deploy, destroy)
 docs/trade-offs.md       consistency, retries, reservation accuracy, cache correctness
 docs/ROADMAP.md  the milestones, with scope and acceptance checks
+docs/PLAN-NOTES.md       deferred work, decisions to review and known issues, newest first
 docs/providers.md        every provider's model IDs, prices and free limits, with sources
+docs/benchmarks.md       the benchmark report, generated from bench/results/ (`pnpm bench:report`)
+docs/slo.md              the SLOs, their burn-rate alerts and why the targets were chosen
 ```
 
 ## Known limitations
