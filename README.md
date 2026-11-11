@@ -1365,8 +1365,8 @@ rates per threshold from labelled pairs and committed vectors
 
 ## Container image
 
-Every push to `main` that passes CI publishes the gateway image to the GitHub Container
-Registry, tagged with the commit SHA and `main`, and signs it with cosign keyless signing (GitHub
+Every push to `main` on which every CI job passes (the Helm chart's install on kind included)
+publishes the gateway image to the GitHub Container Registry, tagged with the commit SHA and `main`, and signs it with cosign keyless signing (GitHub
 Actions' OIDC identity, no stored key; ADR 027). Before that, CI scans the image with Trivy and
 fails on CRITICAL vulnerabilities that have a fix (exceptions, each with a reason, go in
 `.trivyignore`), and keeps a CycloneDX SBOM and the full scan result as build artifacts

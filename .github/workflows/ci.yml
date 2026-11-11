@@ -277,8 +277,9 @@ jobs:
 
   publish-image:
     name: Publish and sign the gateway image (main only)
-    # Only the image that was scanned, and only once every other check has passed.
-    needs: [check, integration, dashboard-e2e, images, terraform, gateway-image]
+    # Only the image that was scanned, and only once every other job has passed: every job in
+    # this workflow, the Helm chart's install included (the chart's default tag is `main`).
+    needs: [check, integration, dashboard-e2e, images, terraform, helm, gateway-image]
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       github.repository == 'naveenk2608/ai-gateway'
