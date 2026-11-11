@@ -15,6 +15,7 @@ import type { WorkerMetrics } from './metrics.js';
 import type { DeadLetterAlerts } from './alerts/detect.js';
 import { maintainPartitions, type PartitionSettings } from './partitions.js';
 import {
+  pruneGuardrailResults,
   pruneIdempotencyKeys,
   pruneRollups,
   pruneSemanticCache,
@@ -336,6 +337,12 @@ export class SqsUsageConsumer implements EventConsumer {
         }
       } catch (err) {
         this.#o.logger.warn({ err }, 'raw table partition maintenance failed');
+      }
+      try {
+        const results = await pruneGuardrailResults(this.#o.db, now, this.#o.partitions);
+        if (results > 0) this.#o.logger.info({ deleted: results }, 'old guardrail results deleted');
+      } catch (err) {
+        this.#o.logger.warn({ err }, 'guardrail result retention failed');
       }
     }
   }

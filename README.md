@@ -1317,7 +1317,9 @@ promtool test rules.
 `provider_attempts` and `usage_events` are partitioned by month (on each event's own time, so a
 re-delivered event is still stored once). The worker keeps the current month and the next three
 created and drops months older than `RAW_RETENTION_MONTHS` (6) before the current one; rollups keep
-the analytics far longer. `RAW_RETENTION_MONTHS=0` keeps everything.
+the analytics far longer. Guardrail findings (`guardrail_results`) older than the same cutoff are
+deleted on the same schedule, so they go with the requests they describe. `RAW_RETENTION_MONTHS=0`
+(or `RAW_PARTITIONS_ENABLED=false`) keeps everything.
 
 ## Benchmarks
 

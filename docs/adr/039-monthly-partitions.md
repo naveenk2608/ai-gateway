@@ -65,3 +65,16 @@ table and costs I/O. Effectively-once accounting (ADR 014) depends on unique key
   months ahead, moving default rows, dropping by retention) and migrates down and up again; the
   local Compose database (15,396 request records, 6,596 usage rows) migrated through 0017 with every
   row kept and the integration suites that use these tables passing on it.
+
+## Note (2026-11-11, M19): guardrail findings follow the raw rows
+
+`guardrail_results` (migration 0016, ADR 035) holds one row per check that found something in a
+request, keyed by the request's start time, but it was never pruned while the requests it points
+to were dropped after `RAW_RETENTION_MONTHS`. The retention pass of both consumers (the worker's,
+on Redis Streams or SQS, and the gateway's with `RUN_WORKER_IN_PROCESS`) now deletes its rows
+older than the same cutoff the raw partitions use (the start of the month `RAW_RETENTION_MONTHS`
+before the current one), in batches of 1,000 like the other retention deletes, right after the
+partition maintenance. The same switches apply: nothing is deleted when `RAW_PARTITIONS_ENABLED`
+is false or `RAW_RETENTION_MONTHS` is 0. The table is not partitioned (no migration in this
+change); its rows are small and few per request. Tests: `apps/worker/test/guardrail-retention.test.ts`
+(the cutoff, batches, both off switches, and the consumer's schedule).

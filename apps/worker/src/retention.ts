@@ -1,5 +1,6 @@
 import type { Db } from '@ai-gateway/shared/node';
 import { sql } from 'kysely';
+import { monthStart, type PartitionSettings } from './partitions.js';
 
 /** How long each rollup table keeps its rows (ADR 015). */
 export interface RollupRetention {
@@ -78,6 +79,35 @@ export async function pruneSemanticCache(db: Db, now: number, batchSize = 1_000)
           WHERE expires_at <= ${new Date(now)}
           ORDER BY expires_at
           LIMIT ${batchSize}
+       )`.execute(db);
+    const n = Number(result.numAffectedRows ?? 0n);
+    deleted += n;
+    if (n < batchSize) return deleted;
+  }
+}
+
+/**
+ * Deletes guardrail findings (migration 0016, ADR 035) older than the raw rows' cutoff (ADR 039):
+ * the start of the month RAW_RETENTION_MONTHS before the current one, where the raw partitions
+ * are dropped, so findings go with the requests they describe (both are keyed by the request's
+ * start). In batches like the other retention deletes; nothing when partitions are off
+ * (RAW_PARTITIONS_ENABLED) or RAW_RETENTION_MONTHS is 0, as for the raw tables. Returns how many
+ * rows were deleted.
+ */
+export async function pruneGuardrailResults(
+  db: Db,
+  now: number,
+  settings: PartitionSettings,
+  batchSize = 1_000,
+): Promise<number> {
+  if (!settings.enabled || settings.retentionMonths <= 0) return 0;
+  const cutoff = monthStart(now, -settings.retentionMonths);
+  let deleted = 0;
+  for (;;) {
+    const result = await sql`
+      DELETE FROM guardrail_results
+       WHERE id IN (
+         SELECT id FROM guardrail_results WHERE created_at < ${cutoff} LIMIT ${batchSize}
        )`.execute(db);
     const n = Number(result.numAffectedRows ?? 0n);
     deleted += n;
