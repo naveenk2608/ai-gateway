@@ -102,3 +102,16 @@ origin.
   viewers), the deep link to a request, the pasted key (used for `/v1`, named, kept out of storage,
   refused when malformed, replaced by the automatic key when rejected), and the page at 375 px in
   Chromium, with and without a pasted key.
+
+## Note (2026-11-11, M19): CORS for the headers added since M12
+
+The allow and expose lists stayed as M10 left them while later milestones added headers, so a
+page on an allowed origin could not send an `Idempotency-Key` (M15, ADR 032) or
+`x-gateway-semantic-cache` (M18, ADR 040), nor read `idempotent-replayed`,
+`x-gateway-semantic-similarity`, `traceparent` (ADR 017) or the six `x-ratelimit-*` headers (M12).
+The preflight now also allows `idempotency-key` and `x-gateway-semantic-cache`, and `/v1` answers
+to an allowed origin also expose those response headers. Each name is taken from the constant of
+the module that sets or reads it (`proxy/idempotency.ts`, `semantic/policy.ts`,
+`proxy/rate-limit-headers.ts`, the shared trace context), so a renamed header changes both lists.
+Everything else is unchanged: no credentials, nothing for other origins or for paths outside
+`/v1` (`cors.test.ts`).

@@ -74,6 +74,9 @@ export function childSpan(
   };
 }
 
+/** The W3C Trace Context request and response header (ADR 017). */
+export const TRACEPARENT_HEADER = 'traceparent';
+
 /** The `traceparent` header naming `span` as the parent of whatever receives it. */
 export function formatTraceparent(span: TraceContext): string {
   return `00-${span.traceId}-${span.spanId}-${span.flags}`;

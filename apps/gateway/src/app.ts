@@ -6,6 +6,7 @@ import {
   startSpan,
   traceLogFields,
   formatTraceparent,
+  TRACEPARENT_HEADER,
   uuidv7,
   type TraceContext,
 } from '@ai-gateway/shared';
@@ -125,7 +126,7 @@ export function buildApp({
   const app = Fastify({
     loggerInstance,
     childLoggerFactory(parent, bindings, options, rawRequest) {
-      const header = rawRequest.headers.traceparent;
+      const header = rawRequest.headers[TRACEPARENT_HEADER];
       const span = startSpan(typeof header === 'string' ? header : undefined);
       spans.set(rawRequest, span);
       return parent.child({ ...bindings, ...traceLogFields(span) }, options);
@@ -173,7 +174,7 @@ export function buildApp({
       request.traceContext = { ...request.traceContext, flags: '01' };
     }
     void reply.header('x-request-id', request.id);
-    void reply.header('traceparent', formatTraceparent(request.traceContext));
+    void reply.header(TRACEPARENT_HEADER, formatTraceparent(request.traceContext));
     // Requests on kept-alive sockets can still arrive during the drain; turn them away.
     if (closing) return sendError(reply, shuttingDown);
   });

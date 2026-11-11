@@ -20,11 +20,31 @@ export function formatReset(ms: number): string {
   return `${rest}s`;
 }
 
+/** The OpenAI-style rate-limit headers, per bucket kind: what is allowed, left, and when full. */
+export const RATE_LIMIT_HEADERS = {
+  requests: {
+    limit: 'x-ratelimit-limit-requests',
+    remaining: 'x-ratelimit-remaining-requests',
+    reset: 'x-ratelimit-reset-requests',
+  },
+  tokens: {
+    limit: 'x-ratelimit-limit-tokens',
+    remaining: 'x-ratelimit-remaining-tokens',
+    reset: 'x-ratelimit-reset-tokens',
+  },
+} as const;
+
+/** Every header name `setRateLimitHeaders` may set (CORS exposes them, ADR 021). */
+export const RATE_LIMIT_HEADER_NAMES: readonly string[] = Object.values(RATE_LIMIT_HEADERS).flatMap(
+  (names) => Object.values(names),
+);
+
 function setBucket(reply: FastifyReply, kind: 'requests' | 'tokens', bucket: BucketState): void {
+  const names = RATE_LIMIT_HEADERS[kind];
   void reply
-    .header(`x-ratelimit-limit-${kind}`, String(bucket.limit))
-    .header(`x-ratelimit-remaining-${kind}`, String(bucket.remaining))
-    .header(`x-ratelimit-reset-${kind}`, formatReset(bucket.resetMs));
+    .header(names.limit, String(bucket.limit))
+    .header(names.remaining, String(bucket.remaining))
+    .header(names.reset, formatReset(bucket.resetMs));
 }
 
 /**

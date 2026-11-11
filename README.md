@@ -305,9 +305,12 @@ fallback, the deployments passed over first in `x-gateway-fallback-from` (they f
 circuit breaker was open).
 
 Browser pages on other origins may call `/v1` when their origin is listed in `ALLOWED_ORIGINS`
-(comma-separated exact origins, empty by default; ADR 021). They may send `Authorization` and
-read `x-request-id`, the two routing headers, `x-gateway-cache` and `retry-after`. The admin API
-and every other path never answer other origins.
+(comma-separated exact origins, empty by default; ADR 021). They may send `Authorization`,
+`Content-Type`, `traceparent`, `x-gateway-cache`, `Idempotency-Key` and
+`x-gateway-semantic-cache`, and read `x-request-id`, the two routing headers, `x-gateway-cache`,
+`retry-after`, `idempotent-replayed`, `x-gateway-semantic-similarity`, `traceparent` and the six
+`x-ratelimit-*` headers. Credentials are never allowed. The admin API and every other path never
+answer other origins.
 
 ### Tools, JSON output and images
 

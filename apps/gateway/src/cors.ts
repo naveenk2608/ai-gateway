@@ -1,18 +1,40 @@
+import { TRACEPARENT_HEADER } from '@ai-gateway/shared';
 import type { FastifyInstance } from 'fastify';
 import { CACHE_HEADER } from './cache/response-cache.js';
+import { IDEMPOTENCY_HEADER, REPLAYED_HEADER } from './proxy/idempotency.js';
+import { RATE_LIMIT_HEADER_NAMES } from './proxy/rate-limit-headers.js';
 import { DEPLOYMENT_HEADER, FALLBACK_HEADER } from './proxy/routing-headers.js';
+import { SEMANTIC_HEADER, SIMILARITY_HEADER } from './semantic/policy.js';
 
-/** Response headers a browser page may read: the request ID, how it was routed, when to retry. */
+/**
+ * Response headers a browser page may read: the request ID, how it was routed, when to retry,
+ * whether it was an Idempotency-Key replay or a semantic hit, its trace, and the rate limits left.
+ * Each name comes from the module that sets it, so the list follows the code.
+ */
 export const EXPOSED_HEADERS = [
   'x-request-id',
   DEPLOYMENT_HEADER,
   FALLBACK_HEADER,
   CACHE_HEADER,
   'retry-after',
+  REPLAYED_HEADER,
+  SIMILARITY_HEADER,
+  TRACEPARENT_HEADER,
+  ...RATE_LIMIT_HEADER_NAMES,
 ];
 
-/** Request headers a page may send: the API key, the JSON body, trace context, cache opt-in. */
-const ALLOWED_HEADERS = ['authorization', 'content-type', 'traceparent', CACHE_HEADER];
+/**
+ * Request headers a page may send: the API key, the JSON body, trace context, cache opt-in,
+ * an Idempotency-Key, and the semantic cache opt-in or opt-out.
+ */
+const ALLOWED_HEADERS = [
+  'authorization',
+  'content-type',
+  TRACEPARENT_HEADER,
+  CACHE_HEADER,
+  IDEMPOTENCY_HEADER,
+  SEMANTIC_HEADER,
+];
 
 /** How long a browser may reuse a preflight answer. */
 const PREFLIGHT_MAX_AGE_SECONDS = 600;

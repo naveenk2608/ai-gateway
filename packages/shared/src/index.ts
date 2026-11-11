@@ -48,5 +48,6 @@ export {
   parseTraceparent,
   startSpan,
   traceLogFields,
+  TRACEPARENT_HEADER,
   type TraceContext,
 } from './trace-context.js';

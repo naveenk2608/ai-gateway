@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { captureLogger } from '../test/helpers.js';
 import { buildApp } from './app.js';
 import { GatewayError } from './errors.js';
+import { setRateLimitHeaders } from './proxy/rate-limit-headers.js';
 
 const PLAYGROUND = 'https://playground.example.com';
 const OTHER = 'https://evil.example.net';
@@ -27,14 +28,51 @@ describe('CORS for /v1', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['access-control-allow-origin']).toBe(PLAYGROUND);
     expect(res.headers['access-control-allow-credentials']).toBeUndefined();
-    expect(String(res.headers['access-control-expose-headers']).split(', ')).toEqual([
-      'x-request-id',
-      'x-gateway-deployment',
-      'x-gateway-fallback-from',
-      'x-gateway-cache',
-      'retry-after',
-    ]);
+    expect(String(res.headers['access-control-expose-headers']).split(', ')).toEqual(
+      expect.arrayContaining([
+        'x-request-id',
+        'x-gateway-deployment',
+        'x-gateway-fallback-from',
+        'x-gateway-cache',
+        'retry-after',
+      ]),
+    );
     expect(res.headers.vary).toContain('Origin');
+  });
+
+  it('exposes the headers added since M12: replays, similarity, trace and rate limits', async () => {
+    const res = await testApp().inject({ url: '/v1/things', headers: { origin: PLAYGROUND } });
+    const exposed = String(res.headers['access-control-expose-headers']).split(', ');
+    expect(exposed).toEqual(
+      expect.arrayContaining([
+        'idempotent-replayed',
+        'x-gateway-semantic-similarity',
+        'traceparent',
+        'x-ratelimit-limit-requests',
+        'x-ratelimit-remaining-requests',
+        'x-ratelimit-reset-requests',
+        'x-ratelimit-limit-tokens',
+        'x-ratelimit-remaining-tokens',
+        'x-ratelimit-reset-tokens',
+      ]),
+    );
+    expect(new Set(exposed).size).toBe(exposed.length);
+  });
+
+  it('names in the expose list every rate-limit header a reply carries', async () => {
+    const app = testApp();
+    app.get('/v1/limits', (_request, reply) => {
+      setRateLimitHeaders(reply, {
+        requests: { limit: 60, remaining: 59, resetMs: 1000 },
+        tokens: { limit: 1000, remaining: 900, resetMs: 6000 },
+      });
+      return { ok: true };
+    });
+    const res = await app.inject({ url: '/v1/limits', headers: { origin: PLAYGROUND } });
+    const exposed = String(res.headers['access-control-expose-headers']).split(', ');
+    const sent = Object.keys(res.headers).filter((name) => name.startsWith('x-ratelimit-'));
+    expect(sent).toHaveLength(6);
+    expect(exposed).toEqual(expect.arrayContaining(sent));
   });
 
   it('sends no CORS headers to an origin that is not listed', async () => {
@@ -75,20 +113,50 @@ describe('CORS for /v1', () => {
     expect(String(res.headers['access-control-allow-headers'])).toContain('content-type');
   });
 
+  it('lets a page send Idempotency-Key and the semantic cache header (M15, M18)', async () => {
+    const res = await testApp().inject({
+      method: 'OPTIONS',
+      url: '/v1/chat/completions',
+      headers: {
+        origin: PLAYGROUND,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers':
+          'authorization, content-type, idempotency-key, x-gateway-semantic-cache',
+      },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(String(res.headers['access-control-allow-headers']).split(', ')).toEqual(
+      expect.arrayContaining([
+        'authorization',
+        'content-type',
+        'traceparent',
+        'x-gateway-cache',
+        'idempotency-key',
+        'x-gateway-semantic-cache',
+      ]),
+    );
+  });
+
   it('gives a preflight from another origin nothing to allow', async () => {
     const res = await testApp().inject({
       method: 'OPTIONS',
       url: '/v1/chat/completions',
-      headers: { origin: OTHER, 'access-control-request-method': 'POST' },
+      headers: {
+        origin: OTHER,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'idempotency-key, x-gateway-semantic-cache',
+      },
     });
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
     expect(res.headers['access-control-allow-methods']).toBeUndefined();
+    expect(res.headers['access-control-allow-headers']).toBeUndefined();
   });
 
   it('keeps the admin API same-origin, even for an allowed origin', async () => {
     const app = testApp();
     const res = await app.inject({ url: '/admin/me', headers: { origin: PLAYGROUND } });
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers['access-control-expose-headers']).toBeUndefined();
     const preflight = await app.inject({
       method: 'OPTIONS',
       url: '/admin/me',
