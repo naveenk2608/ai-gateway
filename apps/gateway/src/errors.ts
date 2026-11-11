@@ -1,4 +1,8 @@
-/** OpenAI-style error `type` values the gateway emits so far; later milestones add more. */
+/**
+ * The OpenAI-style error `type` of every error body the gateway sends: `rate_limit_error` for 429,
+ * `server_error` for 5xx and `invalid_request_error` for every other 4xx, unless an error sets
+ * its own. Clients tell errors apart by `code`.
+ */
 export type ErrorType = 'invalid_request_error' | 'rate_limit_error' | 'server_error';
 
 export interface ErrorBody {

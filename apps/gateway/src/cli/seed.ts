@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { generateApiKey } from '../auth/api-keys.js';
 import { bootstrap } from '../auth/bootstrap.js';
 import { DEFAULT_MIGRATIONS_DIR } from '../gateway.js';
-import { SEED_PRICES } from './seed-prices.js';
+import { SEED_PRICES, seedPricesLine } from './seed-prices.js';
 
 const config = loadConfigOrExit(
   z.object({
@@ -72,7 +72,7 @@ try {
       ? `Admin:    ${config.SEED_ADMIN_EMAIL} / ${password}`
       : `Admin:    ${config.SEED_ADMIN_EMAIL} already exists; password unchanged`,
     `API key:  ${key.plaintext}`,
-    'Prices:   mock (demo, $1 / $2 per million tokens), gpt-oss-20b on Groq, gemini-3.5-flash-lite',
+    seedPricesLine(),
     '',
     'The password and key are shown only now. Use the key as `Authorization: Bearer <key>`.',
   ];
