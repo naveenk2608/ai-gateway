@@ -93,3 +93,12 @@ Sources, checked 2026-11-09:
   body and 400 for a malformed key; a repeat waiting on the same instance; 409 while another
   instance holds the key; a client leaving mid-stream; a failure releasing the key; expiry and the
   worker's deletion; two projects with one key; an answer above the cap; embeddings).
+
+## Note (2026-11-11, M19): a replay is the first answer as the guardrails allow it now
+
+A replay is the first request's answer as the project's output guardrails (ADR 035) allow it when
+the replay is served: if output masking was turned on after the answer was stored, the replay is
+masked, and its findings are recorded on the replaying request. The stored row keeps what was
+stored; the answer is masked on the way out, so turning masking off later serves it as first sent.
+The JSON schema check is not repeated. Everything else a replay repeats (status, routing headers,
+the response ID) is unchanged (`test/idempotency.test.ts`).

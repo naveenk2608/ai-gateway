@@ -561,7 +561,19 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
         };
         const deadlineAt =
           routing.deadlineMs === undefined ? undefined : trace.startedAt + routing.deadlineMs;
-        /** Answers with a complete answer the request did not call for: a hit, a flight's or a replay. */
+        /**
+         * A stored answer (the exact or semantic cache's, a flight's, an Idempotency-Key's) through
+         * this project's output detectors as they are now, as a fresh answer goes: masked or
+         * flagged, with its findings on this request's record. It was stored, perhaps before
+         * output checks were on, by a request whose JSON schema check already ran, so that check
+         * and its retry are not repeated (ADR 035 note of 2026-11-11).
+         */
+        const guardStored = (answer: ChatResult): ChatResult =>
+          outputGuard ? scanAnswer(answer, outputGuard, findings) : answer;
+        /**
+         * Answers with a complete answer the request did not call for: a hit, a flight's or a
+         * replay, already through `guardStored`.
+         */
         const replay = (answer: ChatResult, m: ResponseMeta = meta) => {
           trace.markFirstToken();
           trace.setUsage(answer.usage);
@@ -604,7 +616,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
               void reply.header(name, value);
             }
             void reply.header(REPLAYED_HEADER, 'true');
-            return replay(kept.data.answer, kept.data.meta);
+            return replay(guardStored(kept.data.answer), kept.data.meta);
           };
           let claim: Claim;
           try {
@@ -702,8 +714,9 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           void reply.header(CACHE_HEADER, hit ? 'hit' : 'miss');
           if (hit) {
             trace.cacheHit = true;
-            await keep(hit);
-            return replay(hit);
+            const answer = guardStored(hit);
+            await keep(answer);
+            return replay(answer);
           }
         }
         const store = cache && key ? (result: ChatResult) => cache.set(key, result) : undefined;
@@ -727,6 +740,8 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
           } catch (err) {
             throw upstreamFailure(err);
           }
+          // The leader's answer went through the leader's checks; this request's apply too.
+          answer = guardStored(answer);
           await keep(answer);
           return replay(answer);
         }
@@ -783,8 +798,9 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
             void reply.header(SIMILARITY_HEADER, (semantic.record.similarity ?? 0).toFixed(4));
             flight?.resolve(semantic.hit);
             leaveFlight?.();
-            await keep(semantic.hit);
-            return replay(semantic.hit);
+            const answer = guardStored(semantic.hit);
+            await keep(answer);
+            return replay(answer);
           }
         }
         /** Who made the answer: the deployment that served it, for the cost a later hit avoids. */

@@ -3,8 +3,9 @@ import type { AddressInfo } from 'node:net';
 import { ManualClock, uuidv7 } from '@ai-gateway/shared';
 import { pruneSemanticCache } from '@ai-gateway/worker';
 import { sql } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createGateway, type Gateway } from '../src/gateway.js';
+import { guardrailPolicySchema } from '../src/guardrails/policy.js';
 import { parseModelsConfig } from '../src/models-config.js';
 import type { MockProvider } from '../src/providers/mock.js';
 import { chatCompletionRequestSchema } from '../src/proxy/schema.js';
@@ -527,5 +528,74 @@ describe('semantic cache storage: TTL and the row cap', () => {
     ]);
     // Another project's rows are not touched by this project's cap.
     expect(await entries(other, 1)).toBe(1);
+  });
+});
+
+describe('semantic hits and output guardrails (M19)', () => {
+  const EMAIL = 'jane.doe@example.com';
+
+  it('masks a hit stored before output masking was on, plain and streamed, and records it', async () => {
+    const a = await project({ mode: 'all', threshold: 0.9 });
+    const spy = vi
+      .spyOn(gateway.registry.deployment('answer')!.provider, 'chat')
+      .mockResolvedValueOnce({
+        content: `Write to ${EMAIL}`,
+        finishReason: 'stop',
+        usage: { promptTokens: 5, completionTokens: 4, totalTokens: 9 },
+      });
+    try {
+      // Stored while the project had no output checks.
+      const first = await chat(a.key, Q);
+      expect(contentOf(first.body)).toBe(`Write to ${EMAIL}`);
+      await entries(a.id, 1);
+
+      // Output masking turned on, as the admin API saves it.
+      await gateway.db
+        .updateTable('projects')
+        .set({
+          guardrails: JSON.stringify(guardrailPolicySchema.parse({ output: { email: 'mask' } })),
+        })
+        .where('id', '=', a.id)
+        .execute();
+      gateway.verifier.invalidateProject(a.id);
+
+      const hit = await chat(a.key, PARAPHRASE);
+      expect(hit.cache).toBe('semantic');
+      expect(contentOf(hit.body)).toBe('Write to [EMAIL]');
+      const streamed = await chat(a.key, PARAPHRASE, { stream: true });
+      expect(streamed.cache).toBe('semantic');
+      expect(streamed.body as string).not.toContain(EMAIL);
+      const text = sseData(streamed.body as string)
+        .filter((d) => d !== '[DONE]')
+        .map((d) => (JSON.parse(d) as { choices: { delta: { content?: string } }[] }).choices[0])
+        .map((c) => c?.delta.content ?? '')
+        .join('');
+      expect(text).toBe('Write to [EMAIL]');
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // Each hit records its finding, as a fresh answer would.
+      const ids = [hit.requestId!, streamed.requestId!];
+      await vi.waitFor(
+        async () => {
+          const rows = await gateway.db
+            .selectFrom('guardrail_results')
+            .select(['request_id', 'stage', 'check', 'action', 'findings'])
+            .where('request_id', 'in', ids)
+            .execute();
+          expect(rows.map((r) => r.request_id).sort()).toEqual([...ids].sort());
+          for (const row of rows) {
+            expect(row).toMatchObject({
+              stage: 'output',
+              check: 'email',
+              action: 'mask',
+              findings: 1,
+            });
+          }
+        },
+        { timeout: 15_000, interval: 200 },
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

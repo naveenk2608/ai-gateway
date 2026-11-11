@@ -98,3 +98,17 @@ ms). That is small next to a model's latency (ADR 019); requests with no checks 
   unmasked value, schema retry and failure, a value split across stream chunks),
   `test/guardrails.test.ts` (the admin API, the results and counts against Postgres) and the
   worker's `test/guardrail-records.test.ts`.
+
+## Note (2026-11-11, M19): stored answers go through the output detectors
+
+Answers were masked before they were cached, shared with coalesced followers or stored for an
+Idempotency-Key, but an answer served from the exact cache, the semantic cache, an
+Idempotency-Key replay or a coalesced flight was sent as stored. So an answer stored before a
+project turned on output masking (or by a leader that started before it) was served unmasked
+until it expired. Every such answer now goes through the project's output detectors as they are
+when it is served, as a fresh answer does: masked or flagged, with its findings recorded on that
+request. The JSON schema check and its retry are not run again: the request that made the answer
+was checked, and a replay calls no provider. Answers already masked when stored hold only
+placeholders, so they find nothing again; flagged values are recorded on each request that is
+served them. Tests: `proxy/guardrails.test.ts` (exact cache as JSON and as a stream, flag, a
+coalesced follower), `test/idempotency.test.ts` and `test/semantic-cache.test.ts`.

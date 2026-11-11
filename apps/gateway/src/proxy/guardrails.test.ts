@@ -17,11 +17,15 @@ import { parseModelsConfig } from '../models-config.js';
 import type { ChatRequest, ChatResult, EmbeddingRequest, StreamEvent } from '../providers/types.js';
 import { createRegistry } from '../providers/registry.js';
 import { registerChatCompletions } from './chat-completions.js';
+import { Coalescer } from './coalesce.js';
 import { registerEmbeddings } from './embeddings.js';
 
 // Guardrails through the /v1 handlers (M16, ADR 035): what the provider received, what the client
 // got, and what the request's record holds.
-function setup(policy: GuardrailPolicyInput, { cache = false } = {}) {
+function setup(
+  policy: GuardrailPolicyInput,
+  { cache = false, coalescer = null }: { cache?: boolean; coalescer?: Coalescer | null } = {},
+) {
   const clock = systemClock;
   const { logger } = captureLogger();
   const models = parseModelsConfig(
@@ -73,6 +77,7 @@ function setup(policy: GuardrailPolicyInput, { cache = false } = {}) {
     admission,
     routing,
     cache: responseCache,
+    coalescer,
     guardrailsEnabled: true,
   };
   registerChatCompletions(app, options);
@@ -95,7 +100,7 @@ function setup(policy: GuardrailPolicyInput, { cache = false } = {}) {
   }
   const post = (payload: object, url = '/v1/chat/completions') =>
     app.inject({ method: 'POST', url, headers: { authorization }, payload });
-  return { app, post, received, events, provider, stored };
+  return { app, post, received, events, provider, stored, record };
 }
 
 const say = (content: string, extra: object = {}) => ({
@@ -340,5 +345,104 @@ describe('guardrails after the model', () => {
     expect(
       res.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content,
     ).toBe('Call [PHONE]');
+  });
+});
+
+describe('output guardrails on stored answers (M19)', () => {
+  const EMAIL = 'jane.doe@example.com';
+  const masking = { output: { email: 'mask' } } as const;
+  const ask = (extra: object = {}) => say('Who do I write to?', { temperature: 0, ...extra });
+  const content = (res: { json: <T>() => T }) =>
+    res.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content;
+  const streamedText = (body: string) =>
+    sseData(body)
+      .filter((d) => d !== '[DONE]')
+      .map(
+        (d) =>
+          (JSON.parse(d) as { choices: { delta: { content?: string } }[] }).choices[0]?.delta
+            .content ?? '',
+      )
+      .join('');
+  const maskedFinding = [{ stage: 'output', check: 'email', count: 1, action: 'mask' }];
+
+  it('masks a cache hit stored before output masking was on, as JSON and as a stream', async () => {
+    const { post, provider, record, events, stored } = setup({}, { cache: true });
+    const upstream = vi.spyOn(provider('first'), 'chat').mockResolvedValue({
+      content: `Write to ${EMAIL}`,
+      finishReason: 'stop',
+      usage: null,
+    });
+    const first = await post(ask());
+    expect(content(first)).toBe(`Write to ${EMAIL}`);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect([...stored.values()].join('')).toContain(EMAIL);
+
+    record.guardrails = guardrailPolicySchema.parse(masking);
+    const hit = await post(ask());
+    expect(hit.headers['x-gateway-cache']).toBe('hit');
+    expect(content(hit)).toBe('Write to [EMAIL]');
+    expect(hit.body).not.toContain(EMAIL);
+    expect(events.events.at(-1)!.guardrails).toEqual(maskedFinding);
+
+    const streamed = await post(ask({ stream: true }));
+    expect(streamed.headers['x-gateway-cache']).toBe('hit');
+    expect(streamed.body).not.toContain(EMAIL);
+    expect(streamedText(streamed.body)).toBe('Write to [EMAIL]');
+    expect(events.events.at(-1)!.guardrails).toEqual(maskedFinding);
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it('only records a flagged value in a cache hit: the client gets it as stored', async () => {
+    const { post, provider, record, events } = setup({}, { cache: true });
+    vi.spyOn(provider('first'), 'chat').mockResolvedValue({
+      content: `Write to ${EMAIL}`,
+      finishReason: 'stop',
+      usage: null,
+    });
+    await post(ask());
+    await new Promise((resolve) => setImmediate(resolve));
+    record.guardrails = guardrailPolicySchema.parse({ output: { email: 'flag' } });
+    const hit = await post(ask());
+    expect(hit.headers['x-gateway-cache']).toBe('hit');
+    expect(content(hit)).toBe(`Write to ${EMAIL}`);
+    expect(events.events.at(-1)!.guardrails).toEqual([
+      { stage: 'output', check: 'email', count: 1, action: 'flag' },
+    ]);
+  });
+
+  it("masks a coalesced follower's answer when its leader started before masking was on", async () => {
+    const coalescer = new Coalescer(true);
+    const join = coalescer.join.bind(coalescer);
+    let followerJoined: () => void = () => {};
+    const joined = new Promise<void>((resolve) => (followerJoined = resolve));
+    vi.spyOn(coalescer, 'join').mockImplementation((key: string) => {
+      const found = join(key);
+      if (!found.leader) followerJoined();
+      return found;
+    });
+    const { post, provider, record, events } = setup({}, { coalescer });
+    let answer: (result: ChatResult) => void = () => {};
+    let called: () => void = () => {};
+    const reachedUpstream = new Promise<void>((resolve) => (called = resolve));
+    const upstream = vi.spyOn(provider('first'), 'chat').mockImplementation(() => {
+      called();
+      return new Promise<ChatResult>((resolve) => (answer = resolve));
+    });
+    const leader = post(ask());
+    await reachedUpstream;
+    record.guardrails = guardrailPolicySchema.parse(masking);
+    const follower = post(ask());
+    // The follower joins the leader's flight; then the leader's answer arrives.
+    await joined;
+    answer({ content: `Write to ${EMAIL}`, finishReason: 'stop', usage: null });
+    const [led, followed] = await Promise.all([leader, follower]);
+    expect(content(led)).toBe(`Write to ${EMAIL}`);
+    expect(followed.headers['x-gateway-cache']).toBe('coalesced');
+    expect(content(followed)).toBe('Write to [EMAIL]');
+    expect(upstream).toHaveBeenCalledTimes(1);
+    const followerEvent = events.events.find(
+      (e) => e.request.id === followed.headers['x-request-id'],
+    );
+    expect(followerEvent?.guardrails).toEqual(maskedFinding);
   });
 });

@@ -5,6 +5,7 @@ import { pruneIdempotencyKeys } from '@ai-gateway/worker';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createGateway, type Gateway } from '../src/gateway.js';
 import { parseModelsConfig } from '../src/models-config.js';
+import { guardrailPolicySchema, type GuardrailPolicyInput } from '../src/guardrails/policy.js';
 import { requestFingerprint } from '../src/proxy/idempotency.js';
 import type { MockProvider } from '../src/providers/mock.js';
 import { createApiKey, createProject } from './db-fixtures.js';
@@ -39,8 +40,8 @@ const models = parseModelsConfig(
 
 let gateway: Gateway;
 let url: string;
-const keys: Record<'a' | 'b', string> = { a: '', b: '' };
-const projects: Record<'a' | 'b', string> = { a: '', b: '' };
+const keys: Record<'a' | 'b' | 'c', string> = { a: '', b: '', c: '' };
+const projects: Record<'a' | 'b' | 'c', string> = { a: '', b: '', c: '' };
 
 beforeAll(async () => {
   gateway = createGateway(
@@ -62,6 +63,9 @@ beforeAll(async () => {
   projects.b = await createProject(gateway.db);
   keys.a = (await createApiKey(gateway.db, projects.a)).plaintext;
   keys.b = (await createApiKey(gateway.db, projects.b)).plaintext;
+  // Project c turns on output masking half way through a test (M19).
+  projects.c = await createProject(gateway.db);
+  keys.c = (await createApiKey(gateway.db, projects.c)).plaintext;
 });
 
 afterAll(async () => {
@@ -89,7 +93,7 @@ function send(
     project = 'a',
     signal,
     path = '/v1/chat/completions',
-  }: { key?: string; project?: 'a' | 'b'; signal?: AbortSignal; path?: string } = {},
+  }: { key?: string; project?: 'a' | 'b' | 'c'; signal?: AbortSignal; path?: string } = {},
 ) {
   return fetch(`${url}${path}`, {
     method: 'POST',
@@ -348,5 +352,80 @@ describe('Idempotency-Key', () => {
     const onChat = await reply(send(chat('mock-fast'), { key: quoted(key) }));
     expect(onChat.status).toBe(200);
     expect(onChat.replayed).toBeNull();
+  });
+});
+
+describe('Idempotency-Key and output guardrails (M19)', () => {
+  const EMAIL = 'jane.doe@example.com';
+
+  /** Saves the project's guardrails as the admin API does, and drops its cached keys. */
+  async function setGuardrails(projectId: string, policy: GuardrailPolicyInput) {
+    await gateway.db
+      .updateTable('projects')
+      .set({ guardrails: JSON.stringify(guardrailPolicySchema.parse(policy)) })
+      .where('id', '=', projectId)
+      .execute();
+    gateway.verifier.invalidateProject(projectId);
+  }
+
+  it("replays the first answer as the project's output guardrails allow it now", async () => {
+    const spy = vi
+      .spyOn(gateway.registry.deployment('fast')!.provider, 'chat')
+      .mockResolvedValueOnce({
+        content: `Write to ${EMAIL}`,
+        finishReason: 'stop',
+        usage: { promptTokens: 5, completionTokens: 4, totalTokens: 9 },
+      });
+    try {
+      const raw = newKey();
+      const key = quoted(raw);
+      const body = chat('mock-fast');
+      // Stored while the project had no output checks.
+      const first = await reply(send(body, { key, project: 'c' }));
+      expect(first.status).toBe(200);
+      expect(first.text).toContain(EMAIL);
+      expect(JSON.stringify((await keyRow(projects.c, raw))?.response)).toContain(EMAIL);
+
+      await setGuardrails(projects.c, { output: { email: 'mask' } });
+      const again = await reply(send(body, { key, project: 'c' }));
+      expect(again).toMatchObject({ status: 200, replayed: 'true' });
+      expect(again.text).not.toContain(EMAIL);
+      expect(
+        (JSON.parse(again.text) as { choices: { message: { content: string } }[] }).choices[0]!
+          .message.content,
+      ).toBe('Write to [EMAIL]');
+
+      const streamed = await reply(send({ ...body, stream: true }, { key, project: 'c' }));
+      expect(streamed).toMatchObject({ status: 200, replayed: 'true' });
+      expect(streamed.text).not.toContain(EMAIL);
+      const text = sseData(streamed.text)
+        .filter((d) => d !== '[DONE]')
+        .map(
+          (d) =>
+            (JSON.parse(d) as { choices: { delta: { content?: string } }[] }).choices[0]?.delta
+              .content ?? '',
+        )
+        .join('');
+      expect(text).toBe('Write to [EMAIL]');
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // Each replay records its finding, as a fresh answer would.
+      await vi.waitFor(
+        async () => {
+          const rows = await gateway.db
+            .selectFrom('guardrail_results')
+            .select(['request_id', 'stage', 'check', 'action', 'findings'])
+            .where('request_id', 'in', [again.id, streamed.id])
+            .execute();
+          const finding = { stage: 'output', check: 'email', action: 'mask', findings: 1 };
+          expect(rows.map((r) => r.request_id).sort()).toEqual([again.id, streamed.id].sort());
+          for (const row of rows) expect(row).toMatchObject(finding);
+        },
+        { timeout: 15_000, interval: 200 },
+      );
+    } finally {
+      spy.mockRestore();
+      await setGuardrails(projects.c, {});
+    }
   });
 });

@@ -506,7 +506,10 @@ read; everything is off until turned on):
   once and then answers 502 `guardrail_output_failed`. The same detectors can mask or flag values
   in answers. Streams are masked as they go, holding back the last 256 characters so a value split
   across chunks is still caught; a streamed JSON request under `retry` is fetched whole and
-  replayed as a stream.
+  replayed as a stream. An answer served from the exact or semantic cache, an Idempotency-Key
+  replay or a coalesced request goes through the project's detectors as they are now, so an answer
+  stored before masking was turned on is masked too (the JSON schema check is not repeated: the
+  request that made the answer was checked).
 - **Records**: for each request, which checks found something and what they did (types, counts
   and actions, never values), listed on the Security page with filters and counted on the
   Overview. `GUARDRAILS_ENABLED=false` turns the feature off for every project. The checks take
