@@ -32,3 +32,12 @@ nginx in the container image.
 - M7: every page is tested in jsdom (Testing Library) for its loading, empty, error and data
   states, and in Chromium (Playwright) at 375 px; a CI script rejects array literals with numbers
   in dashboard source, so chart data cannot be written by hand.
+
+## Note (2026-11-12, M19): the gateway serves the dashboard
+
+Since ADR 021 (2026-10-31) the gateway serves the built dashboard itself at `/dashboard/`, from
+memory with a strict Content-Security-Policy (`apps/gateway/src/dashboard.ts`), so one service is
+enough on hosts such as Render's free plan. The nginx image this ADR describes is gone: the
+Dockerfile builds the dashboard into the gateway image, and no container in Compose, the Helm
+chart or Terraform runs nginx. The stack itself (React, Vite, TanStack Query and Table, Recharts)
+is unchanged.

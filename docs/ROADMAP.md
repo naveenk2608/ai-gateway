@@ -4,36 +4,27 @@ What is left to build, milestone by milestone, from M8 on. Each section
 has enough detail to start work from the repository alone: read this file, then
 [PLAN-NOTES.md](PLAN-NOTES.md) and the ADRs in [adr/](adr/).
 
-## Where the project stands (2026-10-31, after M10)
+## Where the project stands (2026-11-12, after M18 and the M19 fixes)
 
-- M0–M7 are done and tagged `m0-done` … `m7-done`: the OpenAI-compatible proxy (streaming and
-  non-streaming), API keys, admin auth and RBAC, the usage pipeline (Redis Stream → worker →
-  Postgres, effectively-once), Redis Lua limits and budget reservations, retries, breakers,
-  routing policies, the exact cache, the analytics API (rollups) and the full React dashboard.
+- M0–M18 are done and tagged `m0-done` … `m18-done` (every tag and its commit: the PLAN-NOTES
+  "Roadmap finished" row). M19 (below) fixes what an audit of the finished code found; it adds no
+  feature.
 - Live demo: <https://ai-gateway-8var.onrender.com> (Render free web service, Docker, deploys
   every commit on `main`). It runs the gateway image with `RUN_WORKER_IN_PROCESS=true` (the
-  free plan has no background workers), with Render's free Postgres and Key Value (Redis).
-- CI (`.github/workflows/ci.yml`) has five jobs: `check` (format, lint, dashboard-data check,
-  benchmark report check, typecheck, unit tests, build), `integration` (Postgres + Redis
-  services, LocalStack for the SQS tests), `dashboard-e2e` (Chromium at 375 px), `images` (all
-  Compose images build; the Prometheus config, the bench stack's and the AWS demo's Compose
-  files are valid) and `terraform` (fmt, validate, `terraform test` with a mocked AWS provider,
-  the tag check; no AWS credentials).
-- M8 (observability) is done: every acceptance check passed, including Render `/metrics`
-  answering 401 without the token or with a wrong one once `METRICS_TOKEN` was set. The owner
-  tags `m8-done`.
-- M9 (benchmarks) is done: the mock provider over HTTP, k6 scenarios that `pnpm bench` runs
-  against a two-instance Compose stack, results committed in `bench/results/`, and
-  `docs/benchmarks.md` generated from them and checked in CI. The owner tags `m9-done`.
-- M10 (AWS deployment and final docs) is built at zero cost: the SQS event bus and its worker
-  consumer (tested against LocalStack), Terraform for a demo and a full setup (tested with a
-  mocked provider, **never applied**), `docs/aws-deployment.md`, `docs/trade-offs.md`, the README
-  sections and a Postgres-outage test. The acceptance checks that need an AWS account are open
-  in PLAN-NOTES.
-- Accepted decisions are ADR 001–023; ADR 020 is the dashboard design system (tokens, shell,
-  shared components and the "not measured" rule), ADR 021 the Playground page (in the
-  dashboard, which the gateway serves at `/dashboard/`) and CORS for `/v1`, ADR 022 the AWS
-  layout and ADR 023 the SQS event bus.
+  free plan has no background workers). Its Postgres is on Neon's free plan (since 2026-11-03,
+  over the direct, unpooled connection; Neon also offers pgvector) and its Redis is Render's free
+  Key Value.
+- CI (`.github/workflows/ci.yml`) has eight jobs: `check` (format, lint, the dashboard-data check,
+  the benchmark report check, the traffic script's dry run, typecheck, unit tests, build),
+  `integration` (Postgres with pgvector, Redis, and LocalStack for the SQS tests), `dashboard-e2e`
+  (Chromium at 375 px), `images` (every Compose file and profile is valid, the Prometheus config
+  and SLO rules pass promtool, all Compose images build), `terraform` (fmt, validate,
+  `terraform test` with a mocked AWS provider, the tag check; no AWS credentials), `helm` (lint,
+  the values schema, an install on a throwaway kind cluster with a request through the Service),
+  `gateway-image` (SBOM and a Trivy scan of the gateway image) and, on `main` only, `publish-image`
+  (pushes and signs the scanned image once every other job has passed).
+- Accepted decisions are ADR 001–040 (in [adr/](adr/)); a changed decision gets a dated note in
+  its ADR. M10's acceptance checks that need an AWS account are still open.
 
 ## How to work on a milestone
 
@@ -244,7 +235,7 @@ then has an ADR file. (Written 2026-10-31; the trade-off notes are in `docs/trad
 - 2026-10-20 M0 "Local Compose Postgres uses trust auth… Production must supply credentials"
   (by design): credentials come from Secrets Manager.
 
-## Next milestones (M11–M17)
+## Next milestones (M11–M18)
 
 M0–M10 are built; M10's checks that need an AWS account stay open in PLAN-NOTES. M11–M17 come
 from comparing the gateway with other open-source gateways in November 2026: LiteLLM, Portkey,
@@ -283,8 +274,14 @@ instances, and budgets visibly work.
       keys, `chat-default` is as before (`default-models.test.ts`).
 - [x] Reference-price models are never routed (`cost-comparison.test.ts`, `default-models.test.ts`).
 - [x] The traffic script's dry run passes in CI.
-- [ ] Each new provider called once with a real key (health check, a call, a stream, usage):
-      not checked, no key was available (PLAN-NOTES).
+- [x] Each new provider called once with a real key (a call and a stream, with usage), on
+      2026-11-04 through the live demo with the keys set on Render (PLAN-NOTES tables "M11
+      real-provider checks" and "Rerun after the fixes"): Groq's three models, Gemini 3.5 and 3.1
+      Flash-Lite, Cloudflare Llama 4 Scout and NVIDIA DeepSeek V4.1 Flash answered, and Mistral
+      Large and GLM-4.7-Flash after the fixes. Still failing then: Gemini 3.8 Flash (a 5xx or a
+      reset connection), Mistral Small and Gemma 4 31B (provider 429s), and Nemotron 3 Super (404;
+      removed after M12). Not checked in that run: the health checks and the stored costs (the
+      admin API needs a dashboard login).
 - [ ] The scheduled traffic runs against the live demo: waits for the owner's `DEMO_BASE_URL` and
       `DEMO_API_KEY` secrets.
 
