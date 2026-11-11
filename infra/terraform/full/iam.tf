@@ -57,7 +57,7 @@ resource "aws_iam_role_policy" "gateway" {
         Sid      = "ReadSecrets"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [aws_secretsmanager_secret.app.arn, local.db_secret_arn]
+        Resource = [aws_secretsmanager_secret.app.arn, aws_secretsmanager_secret.alerts.arn, local.db_secret_arn]
       },
       {
         Sid      = "WriteLogs"
@@ -93,11 +93,11 @@ resource "aws_iam_role_policy" "worker" {
         Resource = [aws_sqs_queue.usage_dlq.arn]
       },
       {
-        # The worker needs the database password only.
+        # The worker needs the database password and the alert key only, never the app secret.
         Sid      = "ReadSecrets"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [local.db_secret_arn]
+        Resource = [aws_secretsmanager_secret.alerts.arn, local.db_secret_arn]
       },
       {
         Sid      = "WriteLogs"

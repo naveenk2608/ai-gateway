@@ -15,7 +15,8 @@ image:
 
 # An existing Secret in the release's namespace, never created by this chart. Its keys become
 # environment variables: DATABASE_URL, REDIS_URL and API_KEY_PEPPER are required; provider keys
-# (GROQ_API_KEY, ...) and METRICS_TOKEN are optional.
+# (GROQ_API_KEY, ...), METRICS_TOKEN and ALERTS_ENCRYPTION_KEY are optional. The gateway and the
+# worker read the same Secret, so they open webhook destination URLs with the same key (ADR 033).
 secretName: ai-gateway
 
 # The models file (config/models.json's format), mounted read-only and named by

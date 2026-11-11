@@ -76,6 +76,11 @@ override_resource {
   values = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ai-gateway-full-app-xyz" }
 }
 
+override_resource {
+  target = aws_secretsmanager_secret.alerts
+  values = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ai-gateway-full-alerts-xyz" }
+}
+
 variables {
   admin_email  = "owner@example.com"
   budget_email = "billing@example.com"
@@ -261,15 +266,19 @@ run "each_role_gets_only_what_it_uses" {
       for s in jsondecode(aws_iam_role_policy.gateway.policy).Statement : s.Sid => s
       }["ReadSecrets"].Resource) == toset([
       "arn:aws:secretsmanager:us-east-1:123456789012:secret:ai-gateway-full-app-xyz",
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:ai-gateway-full-alerts-xyz",
       "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds-db-credentials-abc",
     ])
-    error_message = "Gateways read the app secret and the database secret."
+    error_message = "Gateways read the app secret, the alert key and the database secret."
   }
   assert {
-    condition = {
+    condition = toset({
       for s in jsondecode(aws_iam_role_policy.worker.policy).Statement : s.Sid => s.Resource
-    }["ReadSecrets"] == ["arn:aws:secretsmanager:us-east-1:123456789012:secret:rds-db-credentials-abc"]
-    error_message = "The worker reads the database secret only, not the app secret."
+      }["ReadSecrets"]) == toset([
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:ai-gateway-full-alerts-xyz",
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds-db-credentials-abc",
+    ])
+    error_message = "The worker reads the alert key and the database secret only, not the app secret."
   }
   assert {
     condition = {
@@ -300,13 +309,25 @@ run "secrets_never_in_user_data" {
       for i in concat(aws_instance.gateway, [aws_instance.worker]) :
       !strcontains(i.user_data, random_password.redis_auth.result) &&
       !strcontains(i.user_data, random_password.bootstrap_admin.result) &&
-      !strcontains(i.user_data, random_id.api_key_pepper.hex)
+      !strcontains(i.user_data, random_id.api_key_pepper.hex) &&
+      !strcontains(i.user_data, random_bytes.alerts_encryption_key.base64)
     ])
     error_message = "Instances fetch secrets at boot; user data (readable from the instance) holds none."
   }
   assert {
-    condition     = aws_secretsmanager_secret.app.recovery_window_in_days == 7
+    condition     = aws_secretsmanager_secret.app.recovery_window_in_days == 7 && aws_secretsmanager_secret.alerts.recovery_window_in_days == 7
     error_message = "A deleted secret can be recovered for 7 days."
+  }
+  assert {
+    condition     = aws_secretsmanager_secret_version.alerts.secret_string == random_bytes.alerts_encryption_key.base64 && length(random_bytes.alerts_encryption_key.base64) == 44
+    error_message = "The alert key is 32 bytes, base64, as ALERTS_ENCRYPTION_KEY requires."
+  }
+  assert {
+    condition = alltrue([
+      for i in concat(aws_instance.gateway, [aws_instance.worker]) :
+      strcontains(i.user_data, "ALERTS_ENCRYPTION_KEY=$(secret \"arn:aws:secretsmanager:us-east-1:123456789012:secret:ai-gateway-full-alerts-xyz\")")
+    ])
+    error_message = "Gateways and the worker read the same alert key at boot, so the worker can open the destination URLs the gateways encrypt (ADR 033)."
   }
 }
 

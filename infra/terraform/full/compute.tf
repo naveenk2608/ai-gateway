@@ -4,21 +4,22 @@
 
 locals {
   host_settings = {
-    docker_setup   = module.docker_host.script
-    repository_url = var.repository_url
-    git_ref        = var.git_ref
-    region         = var.region
-    db_secret_arn  = local.db_secret_arn
-    db_address     = aws_db_instance.main.address
-    db_port        = aws_db_instance.main.port
-    queue_url      = aws_sqs_queue.usage.url
-    dlq_url        = aws_sqs_queue.usage_dlq.url
-    max_deliveries = var.worker_max_deliveries
-    visibility_ms  = local.visibility_timeout_seconds * 1000
-    app_secret_arn = aws_secretsmanager_secret.app.arn
-    redis_address  = aws_elasticache_replication_group.main.primary_endpoint_address
-    admin_email    = var.admin_email
-    secure_cookie  = local.https ? "true" : "false"
+    docker_setup      = module.docker_host.script
+    repository_url    = var.repository_url
+    git_ref           = var.git_ref
+    region            = var.region
+    db_secret_arn     = local.db_secret_arn
+    db_address        = aws_db_instance.main.address
+    db_port           = aws_db_instance.main.port
+    queue_url         = aws_sqs_queue.usage.url
+    dlq_url           = aws_sqs_queue.usage_dlq.url
+    max_deliveries    = var.worker_max_deliveries
+    visibility_ms     = local.visibility_timeout_seconds * 1000
+    app_secret_arn    = aws_secretsmanager_secret.app.arn
+    alerts_secret_arn = aws_secretsmanager_secret.alerts.arn
+    redis_address     = aws_elasticache_replication_group.main.primary_endpoint_address
+    admin_email       = var.admin_email
+    secure_cookie     = local.https ? "true" : "false"
   }
   user_data = {
     for role in local.roles :
@@ -59,7 +60,7 @@ resource "aws_instance" "gateway" {
   tags = merge(local.tags, { Name = "${local.name}-gateway-${count.index}", Role = "gateway" })
 
   # The secrets exist before the instance reads them at boot.
-  depends_on = [aws_secretsmanager_secret_version.app, aws_iam_role_policy.gateway]
+  depends_on = [aws_secretsmanager_secret_version.app, aws_secretsmanager_secret_version.alerts, aws_iam_role_policy.gateway]
 
   lifecycle {
     ignore_changes = [ami]
@@ -92,7 +93,7 @@ resource "aws_instance" "worker" {
 
   tags = merge(local.tags, { Name = "${local.name}-worker", Role = "worker" })
 
-  depends_on = [aws_iam_role_policy.worker]
+  depends_on = [aws_secretsmanager_secret_version.alerts, aws_iam_role_policy.worker]
 
   lifecycle {
     ignore_changes = [ami]

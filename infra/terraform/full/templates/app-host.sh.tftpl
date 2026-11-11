@@ -34,6 +34,7 @@ SQS_DLQ_URL=${dlq_url}
 AWS_REGION=${region}
 WORKER_MAX_DELIVERIES=${max_deliveries}
 WORKER_CLAIM_IDLE_MS=${visibility_ms}
+ALERTS_ENCRYPTION_KEY=$(secret "${alerts_secret_arn}")
 ENV
 %{ if role == "gateway" ~}
 app_secret=$(secret "${app_secret_arn}")

@@ -29,3 +29,22 @@ resource "aws_secretsmanager_secret_version" "app" {
     gemini_api_key           = var.gemini_api_key
   })
 }
+
+# The webhook alert key (ADR 033): the gateways encrypt destination URLs with it and the worker
+# decrypts them, so both read it. It has a secret of its own so the worker never reads the app
+# secret (provider keys, the Redis token, the admin password).
+resource "random_bytes" "alerts_encryption_key" {
+  length = 32
+}
+
+resource "aws_secretsmanager_secret" "alerts" {
+  name_prefix             = "${local.name}-alerts-"
+  description             = "ai-gateway: webhook alert encryption key (ALERTS_ENCRYPTION_KEY)"
+  recovery_window_in_days = 7
+  tags                    = merge(local.tags, { Name = "${local.name}-alerts" })
+}
+
+resource "aws_secretsmanager_secret_version" "alerts" {
+  secret_id     = aws_secretsmanager_secret.alerts.id
+  secret_string = random_bytes.alerts_encryption_key.base64
+}

@@ -986,7 +986,9 @@ https URL, and the events it gets:
   `RUN_WORKER_IN_PROCESS`), retried on the Standard Webhooks schedule (5 s, 5 min, 30 min, 2 h, ...
   24 h, with jitter) up to `ALERTS_MAX_ATTEMPTS`, then marked failed. The tab lists the latest
   deliveries, and **Send test** queues a test message. A standalone worker needs `API_KEY_PEPPER`
-  or `ALERTS_ENCRYPTION_KEY` to send.
+  or `ALERTS_ENCRYPTION_KEY` to send, with the same values as the gateway's: Compose passes both
+  to both services, the Helm chart's pods read one Secret, and the full AWS setup keeps the key in
+  a secret both instance kinds read.
 - Only https URLs are sent to, and never to private, loopback, link-local or cloud-metadata
   addresses (checked when each alert is sent, and the connection is pinned to the checked
   address); redirects are not followed. `ALERTS_ENABLED=false` switches alerts off.

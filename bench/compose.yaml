@@ -131,6 +131,9 @@ services:
       WORKER_CLAIM_IDLE_MS: 5000
       # Metrics for the accounting check, on this network only and without a token.
       METRICS_HOST: 0.0.0.0
+      # Webhook alerts (ADR 033): the same pepper as the gateways, so the worker opens destination
+      # URLs with the key they encrypt them with (the benchmarks add no destination).
+      API_KEY_PEPPER: ${BENCH_API_KEY_PEPPER:?pnpm bench sets it}
     depends_on:
       postgres:
         condition: service_healthy

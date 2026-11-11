@@ -66,6 +66,9 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       # Required: set it in .env (`openssl rand -hex 32`); the gateway exits without it.
       API_KEY_PEPPER: ${API_KEY_PEPPER:-}
+      # Webhook alerts (ADR 033): the key that opens destination URLs, derived from the pepper
+      # unless ALERTS_ENCRYPTION_KEY is set; without either, alerts are queued but not sent.
+      ALERTS_ENCRYPTION_KEY: ${ALERTS_ENCRYPTION_KEY:-}
       # Tracing (ADR 037): http://jaeger:4318 with `--profile tracing`; unset, it stays off.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # Plain HTTP on localhost, so the session cookie cannot be HTTPS-only.
