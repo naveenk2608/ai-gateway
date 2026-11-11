@@ -8,7 +8,7 @@ import { z } from 'zod';
 
 /** At most this many images per request (Groq documents 3 for its vision model, the fewest). */
 export const MAX_IMAGES_PER_REQUEST = 3;
-/** At most this many bytes per `data:` image URL; the whole body stays under 1 MiB. */
+/** At most this many bytes per `data:` image URL; the chat route's body limit makes room for them. */
 export const MAX_IMAGE_DATA_URL_BYTES = 512 * 1024;
 /** Longest `https:` image URL accepted. */
 const MAX_IMAGE_URL_LENGTH = 2_048;

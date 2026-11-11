@@ -13,7 +13,7 @@ import { buildApp } from '../app.js';
 import { parseModelsConfig } from '../models-config.js';
 import type { MockProvider } from '../providers/mock.js';
 import { createRegistry } from '../providers/registry.js';
-import { registerChatCompletions } from './chat-completions.js';
+import { CHAT_BODY_LIMIT_BYTES, registerChatCompletions } from './chat-completions.js';
 
 const deployments = {
   fast: { provider: 'mock', mock: { latencyMs: 100, completionTokens: 5 } },
@@ -400,11 +400,12 @@ describe('POST /v1/chat/completions validation', () => {
     expect(res.headers['x-should-retry']).toBe('false');
   });
 
-  it('rejects bodies over 1 MiB with 413 before parsing', async () => {
+  it('rejects bodies over its own limit (three full images plus 1 MiB) with 413 before parsing', async () => {
     const { post } = setup();
+    expect(CHAT_BODY_LIMIT_BYTES).toBe(3 * 512 * 1024 + 1024 * 1024);
     const huge = {
       model: 'mock-fast',
-      messages: [{ role: 'user', content: 'x'.repeat(1024 * 1024) }],
+      messages: [{ role: 'user', content: 'x'.repeat(CHAT_BODY_LIMIT_BYTES) }],
     };
     const res = await post(huge, { sleeps: 0 });
     expect(res.statusCode).toBe(413);

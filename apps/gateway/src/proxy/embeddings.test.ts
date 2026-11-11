@@ -7,7 +7,7 @@ import {
   testAdmission,
   testRouting,
 } from '../../test/helpers.js';
-import { buildApp } from '../app.js';
+import { BODY_LIMIT_BYTES, buildApp } from '../app.js';
 import type { Limiter } from '../limits/limiter.js';
 import { UNLIMITED, type UsagePolicy } from '../limits/policy.js';
 import type { PriceRow } from '../limits/prices.js';
@@ -199,6 +199,13 @@ describe('POST /v1/embeddings', () => {
     const res = await embed({ model: 'mock-embed', input: 'a '.repeat(300_001) });
     expect(res.statusCode).toBe(400);
     expect(res.json<{ error: { message: string } }>().error.message).toMatch(/at most 300000/);
+  });
+
+  it('keeps the 1 MiB body limit that only chat completions raise (for images)', async () => {
+    const { embed } = setup();
+    const res = await embed({ model: 'mock-embed', input: 'a'.repeat(BODY_LIMIT_BYTES) });
+    expect(res.statusCode).toBe(413);
+    expect(res.json()).toMatchObject({ error: { type: 'invalid_request_error' } });
   });
 
   it('sends each model to its own endpoint', async () => {

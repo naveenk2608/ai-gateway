@@ -9,12 +9,13 @@ import {
   testAdmission,
   testRouting,
 } from '../../test/helpers.js';
-import { buildApp } from '../app.js';
+import { BODY_LIMIT_BYTES, buildApp } from '../app.js';
 import { parseModelsConfig } from '../models-config.js';
 import type { MockProvider } from '../providers/mock.js';
 import { createRegistry } from '../providers/registry.js';
 import { registerChatCompletions } from './chat-completions.js';
 import { IMAGE_TOKEN_ESTIMATE } from './estimate.js';
+import { MAX_IMAGE_DATA_URL_BYTES, MAX_IMAGES_PER_REQUEST } from './schema.js';
 
 const textOnly = { tools: false, json_object: false, json_schema: false, vision: false };
 
@@ -290,6 +291,25 @@ describe('capability-aware routing', () => {
     expect(res.json()).toMatchObject({
       error: { param: 'response_format', message: expect.stringContaining(what) as string },
     });
+  });
+
+  it('accepts the documented maximum: three data: images of 512 KiB each, past 1 MiB', async () => {
+    const { post, stats } = setup();
+    const prefix = 'data:image/png;base64,';
+    const url = prefix + 'A'.repeat(MAX_IMAGE_DATA_URL_BYTES - prefix.length);
+    expect(url).toHaveLength(512 * 1024);
+    const image = { type: 'image_url', image_url: { url } };
+    const payload = {
+      model: 'mock-tools',
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'Compare' }, image, image, image] },
+      ],
+    };
+    expect(JSON.stringify(payload).length).toBeGreaterThan(BODY_LIMIT_BYTES);
+    expect(MAX_IMAGES_PER_REQUEST).toBe(3);
+    const res = await post(payload);
+    expect(res.statusCode).toBe(200);
+    expect(stats('tools').requests).toBe(1);
   });
 
   it('needs vision for images, and tools for a conversation that holds tool calls', async () => {

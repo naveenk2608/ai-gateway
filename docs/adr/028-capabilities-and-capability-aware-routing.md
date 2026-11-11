@@ -69,3 +69,16 @@ output).
   the estimate and the cache key; and, with the OpenAI SDK, the tool loop by hand and with
   `runTools` (streamed and not), `json_schema`, and a tools request on a route without tool
   support.
+
+## Note (2026-11-11, M19): a body limit that fits the image limits
+
+The image limits above (3 images, 512 KiB per `data:` URL) did not fit the 1 MiB body limit every
+route had, so a request with two full-size images already got 413. `POST /v1/chat/completions`
+now has its own body limit, computed from the constants: `MAX_IMAGES_PER_REQUEST` x
+`MAX_IMAGE_DATA_URL_BYTES` plus the 1 MiB other routes keep (2.5 MiB); every other route stays at
+1 MiB. Before raising it, the handler was read for copies of the body: the guardrail input scan
+and the provider request reuse the same strings, and the Idempotency-Key fingerprint, the exact
+cache key and the semantic cache's context key each serialize the request only to hash it (they
+keep the SHA-256 digest); nothing stores image data, and each attempt sends it upstream as
+before. Tests: three 512 KiB images reach the mock, a chat body over the new limit gets 413, and
+`/v1/embeddings` still refuses a body over 1 MiB.

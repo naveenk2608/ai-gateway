@@ -298,7 +298,8 @@ for await (const chunk of stream) process.stdout.write(chunk.choices[0]?.delta.c
 The body accepts OpenAI's chat parameters (`messages`, `max_tokens` or `max_completion_tokens`,
 `temperature`, `top_p`, `stop`, `seed`, penalties, `user`), plus tools, JSON output and image
 input (see [Tools, JSON output and images](#tools-json-output-and-images)), and rejects anything
-else (`logprobs`, `n > 1`, audio, ...) with a 400 naming the field. Bodies over 1 MiB get 413. Every response has a server-generated `x-request-id`; the logs for that
+else (`logprobs`, `n > 1`, audio, ...) with a 400 naming the field. Bodies over 1 MiB get 413, except on `POST /v1/chat/completions`, which takes up to 2.5 MiB
+(room for three 512 KiB `data:` images plus 1 MiB for the rest). Every response has a server-generated `x-request-id`; the logs for that
 request carry it as `requestId`, and each upstream call is logged once with its `attemptId`.
 A completion also names the deployment that answered in `x-gateway-deployment` and, after a
 fallback, the deployments passed over first in `x-gateway-fallback-from` (they failed, or their
@@ -322,7 +323,9 @@ with `tool_call_id`, and `image_url` parts in user messages (an `https:` URL or 
 `data:image/(png|jpeg|gif|webp);base64` URL, with `detail`). The old `functions` and
 `function_call` fields get a 400 that says to use `tools`. A request may hold at most 3 images
 (the fewest any configured vision model takes: Groq's Qwen) and 128 tools, and a `data:` URL at
-most 512 KiB; the gateway never fetches an image URL itself.
+most 512 KiB; the chat route's body limit (2.5 MiB, three such images plus 1 MiB) makes room for
+the maximum. The gateway never fetches an image URL itself, and keeps no image data: it is
+validated, hashed into the cache and idempotency keys, and sent to the provider.
 
 Replies follow OpenAI: `message.tool_calls`, `content: null` when the model only called tools,
 and `finish_reason: "tool_calls"`. Streams send each tool call's index, ID, type and name in one

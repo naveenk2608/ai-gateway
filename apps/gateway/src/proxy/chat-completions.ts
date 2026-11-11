@@ -5,6 +5,7 @@ import type { Clock } from '@ai-gateway/shared';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { BODY_LIMIT_BYTES } from '../app.js';
 import { apiKeyAuth } from '../auth/api-key-auth.js';
 import type { KeyVerifier } from '../auth/key-verifier.js';
 import { GatewayError } from '../errors.js';
@@ -63,6 +64,8 @@ import {
   chatCompletionRequestSchema,
   chatCompletionSchema,
   errorBodySchema,
+  MAX_IMAGE_DATA_URL_BYTES,
+  MAX_IMAGES_PER_REQUEST,
   type ChatCompletion,
   type ChatCompletionMessage,
   type ChatCompletionRequest,
@@ -107,6 +110,14 @@ interface ResponseMeta {
   created: number;
   model: string;
 }
+
+/**
+ * This route's body limit (M19): room for MAX_IMAGES_PER_REQUEST `data:` images of
+ * MAX_IMAGE_DATA_URL_BYTES each, plus the 1 MiB every other route keeps for the rest of the body
+ * (ADR 028). Image data is only read, hashed and sent upstream; nothing keeps it.
+ */
+export const CHAT_BODY_LIMIT_BYTES =
+  MAX_IMAGES_PER_REQUEST * MAX_IMAGE_DATA_URL_BYTES + BODY_LIMIT_BYTES;
 
 const internalError = new GatewayError('internal_error', 'Internal server error', {
   httpStatus: 500,
@@ -421,6 +432,7 @@ export function registerChatCompletions(app: FastifyInstance, options: ChatRoute
   app.withTypeProvider<ZodTypeProvider>().post(
     '/v1/chat/completions',
     {
+      bodyLimit: CHAT_BODY_LIMIT_BYTES,
       // Before body validation, so unauthenticated callers learn nothing about the payload.
       onRequest: apiKeyAuth(verifier),
       onError: (request, _reply, err, done) => {

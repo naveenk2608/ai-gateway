@@ -69,7 +69,10 @@ const metricsUnauthorized = new GatewayError(
   { httpStatus: 401 },
 );
 
-/** Request bodies above 1 MiB are rejected with 413 before parsing. */
+/**
+ * Request bodies above 1 MiB are rejected with 413 before parsing; POST /v1/chat/completions
+ * allows more for images (CHAT_BODY_LIMIT_BYTES).
+ */
 export const BODY_LIMIT_BYTES = 1024 * 1024;
 
 /** `/messages/0/role` -> `messages[0].role` */
