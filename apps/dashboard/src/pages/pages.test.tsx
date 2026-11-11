@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import type { ReactElement } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { emptyResponses, PROJECT_ID, sampleResponses } from '../../e2e/fixtures.js';
-import type { AnalyticsFilters, InfraResponse, Role } from '../api.js';
+import type { AnalyticsFilters, InfraResponse, ModelCatalog, Role } from '../api.js';
 import { Cost } from './Cost.js';
 import { Infrastructure } from './Infrastructure.js';
 import { Models } from './Models.js';
@@ -786,6 +786,39 @@ describe('Settings tabs', () => {
     expect(within(readOnly).getByLabelText<HTMLSelectElement>('Semantic cache mode').disabled).toBe(
       true,
     );
+  });
+
+  it("shows the models file's routes on the Routing tab and marks the ones this project overrides", async () => {
+    stubApi('data', 'admin', (responses) => {
+      const catalog = responses['/admin/models'] as ModelCatalog;
+      responses['/admin/models'] = {
+        ...catalog,
+        models: [
+          ...catalog.models,
+          {
+            name: 'chat-pair',
+            policy: 'priority',
+            targets: [
+              { deployment: 'groq-fast', weight: 1 },
+              { deployment: 'gemini-lite', weight: 1 },
+            ],
+            available: true,
+          },
+        ],
+      };
+    });
+    show(<Settings projectId={PROJECT_ID} userId="u" tab="routing" />);
+    // chat-pair has an active override for this project; mock-1 has none.
+    const badge = await screen.findByText('overridden');
+    expect(badge.closest('tr')!.textContent).toContain('chat-pair');
+    const plain = screen
+      .getAllByText('mock-1')
+      .map((e) => e.closest('tr'))
+      .find((tr) => tr !== null)!;
+    expect(within(plain).queryByText('overridden')).toBeNull();
+    expect(screen.queryByText(/edit that file/)).toBeNull();
+    expect(screen.getByText(/routes from the gateway.s models file/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Models page' }).getAttribute('href')).toBe('#models');
   });
 
   it('opens the tab in the URL and falls back to the first for an unknown one', () => {

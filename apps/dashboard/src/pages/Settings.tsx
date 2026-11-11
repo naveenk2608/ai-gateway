@@ -12,6 +12,7 @@ import {
   type ModelCatalog,
   type OverviewResponse,
   type Project,
+  type ProjectRoutes,
   type Role,
 } from '../api.js';
 import {
@@ -602,12 +603,31 @@ function Members({ projectId, role, userId }: { projectId: string; role: Role; u
   );
 }
 
-/** Deployments and routing policies, read-only: they come from the gateway's models file. */
-function Routing({ catalog }: { catalog: ModelCatalog }) {
+/**
+ * Deployments and routing policies from the gateway's models file, read-only here. A project admin
+ * overrides a model's route for the selected project on the Models page (ADR 034); the models with
+ * an active override for this project are marked.
+ */
+function Routing({
+  catalog,
+  routes,
+}: {
+  catalog: ModelCatalog;
+  /** This project's routes, when loaded: which models have an active override. */
+  routes: ProjectRoutes | undefined;
+}) {
+  const overridden = new Set(
+    (routes?.models ?? []).filter((m) => m.override !== null).map((m) => m.name),
+  );
   return (
     <>
       <p className="muted small">
-        Read from the gateway&apos;s models file at startup; edit that file to add or change models.
+        These are the routes from the gateway&apos;s models file, read at startup. A model&apos;s
+        route can be overridden for the selected project on the <a href="#models">Models page</a>
+        {routes && !routes.enabled
+          ? ' when routing overrides are on (they are off on this gateway)'
+          : ''}
+        .
       </p>
       <h3>Models and routing policies</h3>
       <div className="table-wrap">
@@ -625,6 +645,14 @@ function Routing({ catalog }: { catalog: ModelCatalog }) {
                 <td className="strong">
                   {m.name}
                   {!m.available && <span className="badge alert-exceeded">unavailable</span>}
+                  {overridden.has(m.name) && (
+                    <span
+                      className="badge tone-warning"
+                      title="This project routes the model differently: see the Models page."
+                    >
+                      overridden
+                    </span>
+                  )}
                 </td>
                 <td>
                   <span className="badge tone-accent">{m.policy}</span>
@@ -737,6 +765,13 @@ export function Settings({
   });
   const current = settingsTab(tab);
   const data = project.data;
+  // Which models this project overrides (ADR 034), for the Routing tab's badges; the same query
+  // as the Models page's route editor, so a saved override shows here too.
+  const routes = useQuery({
+    queryKey: ['routes', projectId],
+    queryFn: ({ signal }) => api<ProjectRoutes>(`/admin/projects/${projectId}/routes`, { signal }),
+    enabled: current === 'routing',
+  });
 
   // Every tab but Routing depends on the project (and the viewer's role in it).
   const needsProject = current !== 'routing';
@@ -787,7 +822,7 @@ export function Settings({
             isEmpty={(c) => c.models.length === 0 && c.deployments.length === 0}
             empty="The models file configures no models or deployments."
           >
-            {(c) => <Routing catalog={c} />}
+            {(c) => <Routing catalog={c} routes={routes.data} />}
           </QueryCard>
         ))}
     </Tabs>
