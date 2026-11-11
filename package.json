@@ -14,6 +14,7 @@
     "test:e2e": "pnpm --filter @ai-gateway/dashboard test:e2e",
     "lint": "eslint .",
     "check:dashboard-data": "tsx scripts/check-dashboard-data.ts",
+    "check:docs": "tsx --conditions=development scripts/check-docs.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --workspace-concurrency=1 typecheck",
     "format": "tsx scripts/format.ts --write",
     "format:check": "tsx scripts/format.ts --check",

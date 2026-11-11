@@ -241,6 +241,7 @@ In Compose the gateway reaches Ollama on the host at `host.docker.internal:11434
 | `pnpm test:int` | Integration tests against Compose Postgres and Redis (`docker compose up -d` first): API contracts, isolation, Lua limits across two instances, routing and breakers, the usage pipeline, the OpenAI SDK |
 | `pnpm test:e2e` | The dashboard in Chromium at 375 px, with API answers from fixtures (`pnpm --filter @ai-gateway/dashboard exec playwright install chromium` once) |
 | `pnpm check:dashboard-data` | Fails on hand-written numbers in dashboard chart data |
+| `pnpm check:docs` | Fails, naming what is missing, when a gateway or worker setting is not in `.env.example`, a `/v1` or `/admin` route the gateway registers is not named here as `METHOD /path`, or a table in `packages/shared/src/node/db.ts` is not in the [data model](#data-model) table |
 | `pnpm bench:report --check` | Fails when [docs/benchmarks.md](docs/benchmarks.md) differs from what the committed benchmark results generate |
 | `pnpm lint`, `pnpm typecheck`, `pnpm format` | ESLint, `tsc`, Prettier |
 | `terraform test` in `infra/terraform/{modules/network,demo,full}` | The AWS Terraform against a mocked provider; see [Deploying to AWS](#deploying-to-aws) |
@@ -1221,7 +1222,7 @@ migrations.
 | `model_prices` | Versioned, immutable prices (`effective_from`) |
 | `request_records`, `provider_attempts`, `usage_events` | One row per request, per upstream attempt with its routing reason, and per usage event (`UNIQUE(event_id)`) |
 | `budget_periods`, `budget_reservations` | The monthly spend ledger and the audit of each reservation |
-| `usage_rollups_minute`, `_hour`, `_day` | Analytics with latency histogram buckets (ADR 015) |
+| `usage_rollups_minute`, `usage_rollups_hour`, `usage_rollups_day` | Analytics with latency histogram buckets (ADR 015) |
 | `provider_health_events`, `audit_logs`, `failed_events` | Breaker transitions, every admin change, dead-lettered events |
 | `idempotency_keys` | Each `Idempotency-Key` with its request's fingerprint and, once it completed, the answer a replay repeats, kept for `IDEMPOTENCY_KEY_TTL_HOURS` (ADR 032) |
 | `alert_destinations`, `alert_deliveries` | Webhook destinations with their URLs and signing secrets encrypted, and the outbox of alerts with each delivery's attempts (ADR 033) |
@@ -1531,7 +1532,8 @@ infra/compose    Docker Compose stack (compose.yaml at the root includes it); ob
 infra/terraform  AWS: demo/ and full/ setups, modules/ (network, Docker host), tests run with
                  a mocked provider, scripts/check.mjs (tags, no NAT gateway)
 infra/helm       the Kubernetes chart (ai-gateway/) and the kind smoke test CI runs (ci/)
-scripts          formatting, the demo, and traffic.mjs (the scheduled demo traffic)
+scripts          formatting, the demo, traffic.mjs (the scheduled demo traffic), and the
+                 dashboard-data and docs checks
 bench            k6 scenarios, the bench Compose stack, `pnpm bench` and the report generator;
                  results/ holds the committed runs
 docs/adr         architecture decision records

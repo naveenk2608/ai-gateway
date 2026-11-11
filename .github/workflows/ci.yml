@@ -32,6 +32,8 @@ jobs:
       - run: pnpm lint
       # No hard-coded numbers in dashboard chart data (M7).
       - run: pnpm check:dashboard-data
+      # .env.example, the README's routes and its data model table follow the code (M19).
+      - run: pnpm check:docs
       # docs/benchmarks.md is exactly what the committed k6 results generate (M9, ADR 019).
       - run: pnpm bench:report --check
       # The scheduled traffic script (M11) plans its requests without sending any.
